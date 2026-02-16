@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
+import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard,
   Calendar,
@@ -32,6 +33,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 
 interface NavItem {
   icon: React.ElementType;
@@ -41,32 +43,33 @@ interface NavItem {
 }
 
 const adminNavItems: NavItem[] = [
-  { icon: LayoutDashboard, label: 'Dashboard', href: '/admin' },
-  { icon: Calendar, label: 'Events', href: '/admin/events' },
-  { icon: Users, label: 'Participants', href: '/admin/participants' },
-  { icon: Mail, label: 'Invitations', href: '/admin/invitations' },
-  { icon: FileText, label: 'Registrations', href: '/admin/registrations' },
-   { icon: Flag, label: 'Delegations', href: '/admin/delegations' },
-  { icon: FileCheck2, label: 'Visas', href: '/admin/visas' },
-  { icon: Plane, label: 'Air Travel', href: '/admin/travel' },
-  { icon: Hotel, label: 'Accommodation', href: '/admin/accommodation' },
-  { icon: Bus, label: 'Transportation', href: '/admin/transportation' },
-  { icon: BadgeCheck, label: 'Accreditation', href: '/admin/accreditation' },
-  { icon: Package, label: 'Equipment', href: '/admin/equipment' },
-  { icon: Users2, label: 'Crowd Management', href: '/admin/crowd' },
-  { icon: FolderKanban, label: 'Projects', href: '/admin/projects' },
-  { icon: Shield, label: 'Manage Staff', href: '/admin/subadmins' },
+  { icon: LayoutDashboard, label: 'common.dashboard', href: '/admin' },
+  { icon: Calendar, label: 'common.events', href: '/admin/events' },
+  { icon: Users, label: 'common.participants', href: '/admin/participants' },
+  { icon: Mail, label: 'common.invitations', href: '/admin/invitations' },
+  { icon: FileText, label: 'common.registrations', href: '/admin/registrations' },
+   { icon: Flag, label: 'common.delegations', href: '/admin/delegations' },
+  { icon: FileCheck2, label: 'common.visas', href: '/admin/visas' },
+  { icon: Plane, label: 'common.travel', href: '/admin/travel' },
+  { icon: Hotel, label: 'common.accommodation', href: '/admin/accommodation' },
+  { icon: Bus, label: 'common.transportation', href: '/admin/transportation' },
+  { icon: BadgeCheck, label: 'common.accreditation', href: '/admin/accreditation' },
+  { icon: Package, label: 'common.equipment', href: '/admin/equipment' },
+  { icon: Users2, label: 'common.crowd_management', href: '/admin/crowd' },
+  { icon: FolderKanban, label: 'common.projects', href: '/admin/projects' },
+  { icon: Shield, label: 'common.manage_staff', href: '/admin/subadmins' },
 ];
 
 const systemNavItems: NavItem[] = [
-  { icon: BarChart3, label: 'Reports', href: '/admin/reports' },
-  { icon: Shield, label: 'Audit Log', href: '/admin/audit' },
-  { icon: Bell, label: 'Notifications', href: '/admin/notifications' },
+  { icon: BarChart3, label: 'common.reports', href: '/admin/reports' },
+  { icon: Shield, label: 'common.audit_log', href: '/admin/audit' },
+  { icon: Bell, label: 'common.notifications', href: '/admin/notifications' },
 ];
 
 export const AdminSidebar: React.FC = () => {
+  const { t } = useTranslation();
   const location = useLocation();
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   const { user, logout } = useAuth();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
 
@@ -85,11 +88,11 @@ export const AdminSidebar: React.FC = () => {
           <CollapsibleTrigger className="nav-link nav-link-inactive w-full justify-between">
             <span className="flex items-center gap-3">
               <Icon className="h-5 w-5" />
-              {item.label}
+              {t(item.label)}
             </span>
             <ChevronDown className="h-4 w-4" />
           </CollapsibleTrigger>
-          <CollapsibleContent className="pl-11 space-y-1">
+          <CollapsibleContent className="ps-11 space-y-1">
             {item.children.map((child) => (
               <Link
                 key={child.href}
@@ -102,7 +105,7 @@ export const AdminSidebar: React.FC = () => {
                 )}
                 onClick={() => setIsMobileOpen(false)}
               >
-                {child.label}
+                {t(child.label)}
               </Link>
             ))}
           </CollapsibleContent>
@@ -120,7 +123,7 @@ export const AdminSidebar: React.FC = () => {
         onClick={() => setIsMobileOpen(false)}
       >
         <Icon className="h-5 w-5" />
-        {item.label}
+        {t(item.label)}
       </Link>
     );
   };
@@ -128,13 +131,16 @@ export const AdminSidebar: React.FC = () => {
   const SidebarContent = () => (
     <>
       {/* Logo */}
-      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-6">
+      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-6 ">
 
         <img
           src="/neomoraWhite.png"
           alt="NeoMora"
           className="h-6 w-auto"
         />
+        <div className="ms-auto">
+            <LanguageSwitcher />
+        </div>
       </div>
 
       {/* Navigation */}
@@ -176,8 +182,8 @@ export const AdminSidebar: React.FC = () => {
           className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
           onClick={handleLogout}
         >
-          <LogOut className="h-4 w-4 mr-2" />
-          Sign out
+          <LogOut className="h-4 w-4 me-2" />
+          {t('common.sign_out')}
         </Button>
       </div>
     </>
@@ -205,7 +211,7 @@ export const AdminSidebar: React.FC = () => {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed left-0 top-0 z-40 h-screen w-64 flex-col bg-sidebar transition-transform lg:translate-x-0',
+          'fixed start-0 top-0 z-40 h-screen w-64 flex-col bg-sidebar transition-transform lg:translate-x-0',
           isMobileOpen ? 'translate-x-0' : '-translate-x-full',
           'flex'
         )}

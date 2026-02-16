@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
@@ -55,7 +56,9 @@ const isValidEmail = (email: string) => {
   return emailRegex.test(email);
 };
 
+
 const ParticipantsPage: React.FC = () => {
+  const { t } = useTranslation();
   const [participants, setParticipants] = useState<EMSParticipant[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -196,7 +199,7 @@ const ParticipantsPage: React.FC = () => {
   const columns: Column<ParticipantWithStatus>[] = [
     {
       key: 'name',
-      header: 'Participant',
+      header: t('common.participant'),
       sortable: true,
       accessor: (row) => (
         <div className="flex items-center gap-3">
@@ -214,7 +217,7 @@ const ParticipantsPage: React.FC = () => {
     },
     {
       key: 'role',
-      header: 'Role',
+      header: t('participants.role'),
       sortable: true,
       accessor: (row) => (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground">
@@ -224,13 +227,13 @@ const ParticipantsPage: React.FC = () => {
     },
     {
       key: 'nationality',
-      header: 'Nationality',
+      header: t('participants.nationality'),
       sortable: true,
       accessor: (row) => row.nationality || '-',
     },
     {
       key: 'organization',
-      header: 'Organization',
+      header: t('participants.organization'),
       sortable: true,
       accessor: (row) => (
         <span className="text-sm">{row.organization || '-'}</span>
@@ -238,7 +241,7 @@ const ParticipantsPage: React.FC = () => {
     },
     {
       key: 'invitation',
-      header: 'Invitation',
+      header: t('common.invitation'),
       accessor: (row) => (
         row.invitationStatus ? (
           <StatusBadge status={row.invitationStatus} size="sm" />
@@ -249,7 +252,7 @@ const ParticipantsPage: React.FC = () => {
     },
     {
       key: 'registration',
-      header: 'Registration',
+      header: t('common.registration'),
       accessor: (row) => (
         row.registrationStatus ? (
           <StatusBadge status={row.registrationStatus} size="sm" />
@@ -301,7 +304,7 @@ const ParticipantsPage: React.FC = () => {
     <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label htmlFor="firstName">First Name *</Label>
+          <Label htmlFor="firstName">{t('participants.first_name')} *</Label>
           <Input
             id="firstName"
             placeholder="First name"
@@ -310,7 +313,7 @@ const ParticipantsPage: React.FC = () => {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="lastName">Last Name *</Label>
+          <Label htmlFor="lastName">{t('participants.last_name')} *</Label>
           <Input
             id="lastName"
             placeholder="Last name"
@@ -320,7 +323,7 @@ const ParticipantsPage: React.FC = () => {
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="email">Email *</Label>
+        <Label htmlFor="email">{t('participants.email')} *</Label>
         <Input
           id="email"
           type="email"
@@ -343,10 +346,10 @@ const ParticipantsPage: React.FC = () => {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="nationality">Nationality</Label>
+          <Label htmlFor="nationality">{t('participants.nationality')}</Label>
           <Input
             id="nationality"
-            placeholder="e.g., USA"
+            placeholder={t('participants.nationality')}
             value={formData.nationality}
             onChange={(e) => setFormData(prev => ({ ...prev, nationality: e.target.value }))}
           />
@@ -369,10 +372,10 @@ const ParticipantsPage: React.FC = () => {
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label htmlFor="organization">Organization</Label>
+          <Label htmlFor="organization">{t('participants.organization')}</Label>
           <Input
             id="organization"
-            placeholder="Organization name"
+            placeholder={t('participants.organization')}
             value={formData.organization}
             onChange={(e) => setFormData(prev => ({ ...prev, organization: e.target.value }))}
           />
@@ -411,18 +414,18 @@ const ParticipantsPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Participants"
+        title={t('participants.title')}
         subtitle={`${filteredData.length} participants`}
-        breadcrumbs={[{ label: 'Participants' }]}
+        breadcrumbs={[{ label: t('participants.title') }]}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 mr-2" />
-              Export
+              <Download className="h-4 w-4 me-2" />
+              {t('common.export')}
             </Button>
             <Button size="sm" onClick={() => setIsAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Participant
+              <Plus className="h-4 w-4 me-2" />
+              {t('participants.add_participant')}
             </Button>
           </div>
         }

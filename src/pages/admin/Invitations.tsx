@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -45,7 +46,9 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
 
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
 
+
 const InvitationsPage: React.FC = () => {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState('campaigns');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -683,12 +686,12 @@ const InvitationsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Invitations"
-        description="Manage invitation campaigns and track RSVP responses"
+        title={t('invitations.title')}
+        description={t('invitations.description')}
         action={
           <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetWizard(); }}>
             <DialogTrigger asChild>
-              <Button><Plus className="h-4 w-4 mr-2" />Create Campaign</Button>
+              <Button><Plus className="h-4 w-4 me-2" />{t('invitations.create_campaign')}</Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
@@ -733,10 +736,10 @@ const InvitationsPage: React.FC = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatsCard title="Total Sent" value={stats.totalSent} icon={Send} />
-        <StatsCard title="Delivered" value={stats.delivered} icon={Mail} />
-        <StatsCard title="Accepted" value={stats.accepted} icon={CheckCircle} />
-        <StatsCard title="Campaigns" value={stats.campaigns} icon={Users} />
+        <StatsCard title={t('invitations.total_sent')} value={stats.totalSent} icon={Send} />
+        <StatsCard title={t('invitations.delivered')} value={stats.delivered} icon={Mail} />
+        <StatsCard title={t('invitations.accepted')} value={stats.accepted} icon={CheckCircle} />
+        <StatsCard title={t('invitations.campaigns')} value={stats.campaigns} icon={Users} />
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -779,11 +782,11 @@ const InvitationsPage: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Campaign</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Audience</TableHead>
-                    <TableHead>Responses</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>{t('common.campaign')}</TableHead>
+                    <TableHead>{t('common.event')}</TableHead>
+                    <TableHead>{t('common.audience')}</TableHead>
+                    <TableHead>{t('common.responses')}</TableHead>
+                    <TableHead>{t('common.status')}</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>

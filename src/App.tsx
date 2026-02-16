@@ -8,6 +8,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { ParticipantSessionProvider } from "@/contexts/ParticipantSessionContext";
 import { ManagerSessionProvider } from "@/contexts/ManagerSessionContext";
 import { initializeStore } from "@/lib/emsStore";
+import "@/lib/i18n";
 
 // Layouts
 import { AdminLayout } from "@/components/layout/AdminLayout";

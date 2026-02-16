@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -18,7 +19,9 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
 
+
 const EventsPage: React.FC = () => {
+  const { t } = useTranslation();
   const [events, setEvents] = useState<EMSEvent[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -326,12 +329,12 @@ const EventsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Events"
-        description="Manage your events and track participant engagement"
+        title={t('events.title')}
+        description={t('events.description')}
         action={
           <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetForm(); }}>
             <DialogTrigger asChild>
-              <Button><Plus className="h-4 w-4 mr-2" />Create Event</Button>
+              <Button><Plus className="h-4 w-4 me-2" />{t('events.create_event')}</Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
@@ -350,29 +353,29 @@ const EventsPage: React.FC = () => {
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatsCard title="Total Events" value={stats.total} icon={Calendar} />
-        <StatsCard title="Published" value={stats.published} icon={Calendar} trend={stats.published > 0 ? { value: 50, isPositive: true } : undefined} />
-        <StatsCard title="Ongoing" value={stats.ongoing} icon={Calendar} />
-        <StatsCard title="Drafts" value={stats.draft} icon={Calendar} />
+        <StatsCard title={t('events.total_events')} value={stats.total} icon={Calendar} />
+        <StatsCard title={t('events.published')} value={stats.published} icon={Calendar} trend={stats.published > 0 ? { value: 50, isPositive: true } : undefined} />
+        <StatsCard title={t('events.ongoing')} value={stats.ongoing} icon={Calendar} />
+        <StatsCard title={t('events.drafts')} value={stats.draft} icon={Calendar} />
       </div>
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute start-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             placeholder="Search events..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
+            className="ps-10"
           />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-full sm:w-40">
-            <SelectValue placeholder="Status" />
+            <SelectValue placeholder={t('events.status_label')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="all">{t('events.status_label')}</SelectItem>
             <SelectItem value="Draft">Draft</SelectItem>
             <SelectItem value="Published">Published</SelectItem>
             <SelectItem value="Ongoing">Ongoing</SelectItem>
@@ -389,7 +392,7 @@ const EventsPage: React.FC = () => {
             <h3 className="text-lg font-semibold mb-2">No events yet</h3>
             <p className="text-muted-foreground mb-4">Create your first event to get started with invitations and registrations.</p>
             <Button onClick={() => setIsCreateOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />Create Event
+              <Plus className="h-4 w-4 me-2" />{t('events.create_event')}
             </Button>
           </CardContent>
         </Card>

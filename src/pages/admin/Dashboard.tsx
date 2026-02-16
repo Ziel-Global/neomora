@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -22,7 +23,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Link } from 'react-router-dom';
 
+
 const AdminDashboard: React.FC = () => {
+  const { t } = useTranslation();
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState<ReturnType<typeof getDashboardStats> | null>(null);
 
@@ -54,7 +57,7 @@ const AdminDashboard: React.FC = () => {
     return (
       <div className="space-y-6">
         <PageHeader
-          title="Dashboard"
+          title={t('common.dashboard')}
           subtitle="Overview of event operations"
         />
         <CardGridSkeleton count={8} />
@@ -65,13 +68,13 @@ const AdminDashboard: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Dashboard"
+        title={t('common.dashboard')}
         subtitle={`${events[0]?.name || 'Event'} - ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm">
-              <Calendar className="h-4 w-4 mr-2" />
-              Change Event
+              <Calendar className="h-4 w-4 me-2" />
+              {t('common.change_event')}
             </Button>
             <Button size="sm">
               Export Report
@@ -83,14 +86,14 @@ const AdminDashboard: React.FC = () => {
       {/* KPI Grid */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Total Invited"
+          title={t('common.total_invited')}
           value={stats?.invited || 0}
           icon={Users}
           trend={{ value: 12, isPositive: true }}
           description="vs last event"
         />
         <StatsCard
-          title="RSVP Confirmed"
+          title={t('common.rsvp_confirmed')}
           value={stats?.rsvpYes || 0}
           icon={CheckCircle2}
           variant="success"
@@ -98,14 +101,14 @@ const AdminDashboard: React.FC = () => {
           description={`${stats?.rsvpPending || 0} pending`}
         />
         <StatsCard
-          title="Registrations"
+          title={t('common.registrations')}
           value={stats?.regApproved || 0}
           icon={FileText}
           variant="primary"
           description={`${stats?.regPending || 0} under review`}
         />
         <StatsCard
-          title="Pending Docs"
+          title={t('common.pending_docs')}
           value={(stats?.regPending || 0) + (stats?.visaPending || 0)}
           icon={Clock}
           variant="warning"
@@ -116,26 +119,26 @@ const AdminDashboard: React.FC = () => {
       {/* Secondary Stats */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Visas Approved"
+          title={t('common.visas_approved')}
           value={stats?.visaApproved || 0}
           icon={FileText}
           variant="success"
           description={`${stats?.visaPending || 0} in process`}
         />
         <StatsCard
-          title="Travel Booked"
+          title={t('common.travel_booked')}
           value={stats?.travelTicketed || 0}
           icon={Plane}
           description={`${stats?.travelPending || 0} pending`}
         />
         <StatsCard
-          title="Rooms Allocated"
+          title={t('common.rooms_allocated')}
           value={stats?.accomAllocated || 0}
           icon={Hotel}
           description="Across all hotels"
         />
         <StatsCard
-          title="Badges Ready"
+          title={t('common.badges_ready')}
           value={(stats?.badgesPrinted || 0) + (stats?.badgesReady || 0)}
           icon={BadgeCheck}
           variant="success"
@@ -150,7 +153,7 @@ const AdminDashboard: React.FC = () => {
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-base font-semibold flex items-center gap-2">
               <Bell className="h-4 w-4 text-status-warning" />
-              Alerts & Notifications
+              {t('common.alerts_notifications')}
             </CardTitle>
             <Button variant="ghost" size="sm">
               View All
@@ -179,7 +182,7 @@ const AdminDashboard: React.FC = () => {
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-base font-semibold flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-accent" />
-              Recent Activity
+              {t('common.recent_activity')}
             </CardTitle>
             <Button variant="ghost" size="sm">
               View All
@@ -207,7 +210,7 @@ const AdminDashboard: React.FC = () => {
       {/* Quick Actions */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base font-semibold">Quick Actions</CardTitle>
+          <CardTitle className="text-base font-semibold">{t('common.quick_actions')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -215,7 +218,7 @@ const AdminDashboard: React.FC = () => {
               <Button variant="outline" className="w-full justify-between h-auto py-4">
                 <span className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
-                  Review Registrations
+                  {t('common.review_registrations')}
                 </span>
                 <span className="bg-status-warning-bg text-status-warning text-xs px-2 py-0.5 rounded-full">
                   {stats?.regPending || 0}
@@ -226,7 +229,7 @@ const AdminDashboard: React.FC = () => {
               <Button variant="outline" className="w-full justify-between h-auto py-4">
                 <span className="flex items-center gap-2">
                   <FileText className="h-4 w-4" />
-                  Process Visas
+                  {t('common.process_visas')}
                 </span>
                 <span className="bg-status-warning-bg text-status-warning text-xs px-2 py-0.5 rounded-full">
                   {stats?.visaPending || 0}
@@ -237,7 +240,7 @@ const AdminDashboard: React.FC = () => {
               <Button variant="outline" className="w-full justify-between h-auto py-4">
                 <span className="flex items-center gap-2">
                   <BadgeCheck className="h-4 w-4" />
-                  Print Badges
+                  {t('common.print_badges')}
                 </span>
                 <span className="bg-status-info-bg text-status-info text-xs px-2 py-0.5 rounded-full">
                   {stats?.badgesReady || 0}
@@ -246,9 +249,9 @@ const AdminDashboard: React.FC = () => {
             </Link>
             <Link to="/admin/participants">
               <Button variant="outline" className="w-full justify-start h-auto py-4">
-                <Users className="h-4 w-4 mr-2" />
-                View All Participants
-                <ArrowRight className="h-4 w-4 ml-auto" />
+                <Users className="h-4 w-4 me-2" />
+                {t('common.view_all_participants')}
+                <ArrowRight className="h-4 w-4 ms-auto" />
               </Button>
             </Link>
           </div>
