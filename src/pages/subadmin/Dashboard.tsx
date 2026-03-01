@@ -1,4 +1,4 @@
-import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -25,64 +25,65 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
-// Pending items by module
-const pendingItems = [
-  { module: 'Registrations', icon: FileText, count: 8, urgent: 3, href: '/subadmin/registrations' },
-  { module: 'Visa Documents', icon: FileCheck2, count: 15, urgent: 5, href: '/subadmin/visas' },
-  { module: 'Travel Requests', icon: Plane, count: 5, urgent: 2, href: '/subadmin/travel' },
-  { module: 'Accommodation', icon: Hotel, count: 3, urgent: 0, href: '/subadmin/accommodation' },
-  { module: 'Accreditation', icon: BadgeCheck, count: 7, urgent: 4, href: '/subadmin/accreditation' },
-  { module: 'Equipment', icon: Package, count: 2, urgent: 0, href: '/subadmin/equipment' },
-];
-
-const recentActivity = [
-  { id: 1, action: 'Approved registration', participant: 'Sarah Mitchell', time: '5 min ago', type: 'success' },
-  { id: 2, action: 'Flagged document', participant: 'Hans Mueller', time: '12 min ago', type: 'warning' },
-  { id: 3, action: 'Updated travel itinerary', participant: 'Priya Sharma', time: '25 min ago', type: 'info' },
-  { id: 4, action: 'Rejected photo upload', participant: 'Carlos Rodriguez', time: '1 hour ago', type: 'error' },
-  { id: 5, action: 'Allocated room', participant: 'Mohammed Al-Rashid', time: '2 hours ago', type: 'success' },
-];
-
-const upcomingDeadlines = [
-  { task: 'Visa batch submission', date: '2024-07-20', daysLeft: 3 },
-  { task: 'Badge printing queue review', date: '2024-07-22', daysLeft: 5 },
-  { task: 'Transport manifest finalization', date: '2024-07-25', daysLeft: 8 },
-  { task: 'Hotel rooming list confirmation', date: '2024-07-28', daysLeft: 11 },
-];
-
 const SubAdminDashboard: React.FC = () => {
+  const { t } = useTranslation();
+
+  // Pending items by module
+  const pendingItems = [
+    { module: t('common.registrations'), icon: FileText, count: 8, urgent: 3, href: '/subadmin/registrations' },
+    { module: t('common.visas'), icon: FileCheck2, count: 15, urgent: 5, href: '/subadmin/visas' },
+    { module: t('common.travel'), icon: Plane, count: 5, urgent: 2, href: '/subadmin/travel' },
+    { module: t('common.accommodation'), icon: Hotel, count: 3, urgent: 0, href: '/subadmin/accommodation' },
+    { module: t('common.accreditation'), icon: BadgeCheck, count: 7, urgent: 4, href: '/subadmin/accreditation' },
+    { module: t('common.equipment'), icon: Package, count: 2, urgent: 0, href: '/subadmin/equipment' },
+  ];
+
+  const recentActivity = [
+    { id: 1, action: t('common.activity.reg_approved'), participant: 'Sarah Mitchell', time: t('common.activity.min_ago', { count: 5 }), type: 'success' },
+    { id: 2, action: t('common.activity.flagged_doc'), participant: 'Hans Mueller', time: t('common.activity.min_ago', { count: 12 }), type: 'warning' },
+    { id: 3, action: t('common.activity.updated_travel'), participant: 'Priya Sharma', time: t('common.activity.min_ago', { count: 25 }), type: 'info' },
+    { id: 4, action: t('common.activity.rejected_photo'), participant: 'Carlos Rodriguez', time: t('common.activity.hour_ago', { count: 1 }), type: 'error' },
+    { id: 5, action: t('common.activity.allocated_room'), participant: 'Mohammed Al-Rashid', time: t('common.activity.hours_ago', { count: 2 }), type: 'success' },
+  ];
+
+  const upcomingDeadlines = [
+    { task: t('common.visas'), date: '2024-07-20', daysLeft: 3 },
+    { task: t('common.accreditation'), date: '2024-07-22', daysLeft: 5 },
+    { task: t('common.transportation'), date: '2024-07-25', daysLeft: 8 },
+    { task: t('common.accommodation'), date: '2024-07-28', daysLeft: 11 },
+  ];
   const totalPending = pendingItems.reduce((acc, item) => acc + item.count, 0);
   const totalUrgent = pendingItems.reduce((acc, item) => acc + item.urgent, 0);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Operations Dashboard"
-        description="Review and process pending items across all modules"
+        title={t('common.ops_dashboard')}
+        description={t('common.ops_dashboard_desc')}
       />
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatsCard
-          title="Pending Reviews"
+          title={t('common.pending_reviews')}
           value={totalPending}
           icon={ClipboardCheck}
           trend={{ value: 12, isPositive: false }}
         />
         <StatsCard
-          title="Urgent Items"
+          title={t('common.urgent_items')}
           value={totalUrgent}
           icon={AlertTriangle}
           trend={{ value: 3, isPositive: false }}
         />
         <StatsCard
-          title="Processed Today"
+          title={t('common.processed_today')}
           value={24}
           icon={CheckCircle2}
           trend={{ value: 15, isPositive: true }}
         />
         <StatsCard
-          title="Avg. Processing Time"
+          title={t('common.avg_processing_time')}
           value="2.4h"
           icon={Clock}
           trend={{ value: 8, isPositive: true }}
@@ -93,7 +94,7 @@ const SubAdminDashboard: React.FC = () => {
         {/* Pending by Module */}
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle className="text-lg">Pending Items by Module</CardTitle>
+            <CardTitle className="text-lg">{t('common.pending_by_module')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -112,10 +113,10 @@ const SubAdminDashboard: React.FC = () => {
                       <div>
                         <p className="font-medium">{item.module}</p>
                         <p className="text-sm text-muted-foreground">
-                          {item.count} pending
+                          {item.count} {t('common.pending')}
                           {item.urgent > 0 && (
                             <span className="text-destructive ml-1">
-                              ({item.urgent} urgent)
+                              ({item.urgent} {t('common.urgent_items').toLowerCase()})
                             </span>
                           )}
                         </p>
@@ -134,7 +135,7 @@ const SubAdminDashboard: React.FC = () => {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Calendar className="h-5 w-5 text-muted-foreground" />
-              Upcoming Deadlines
+              {t('common.upcoming_deadlines')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -150,7 +151,7 @@ const SubAdminDashboard: React.FC = () => {
                   <Badge
                     variant={deadline.daysLeft <= 3 ? 'destructive' : deadline.daysLeft <= 7 ? 'secondary' : 'outline'}
                   >
-                    {deadline.daysLeft}d left
+                    {t('common.days_left', { count: deadline.daysLeft })}
                   </Badge>
                 </div>
               ))}
@@ -164,7 +165,7 @@ const SubAdminDashboard: React.FC = () => {
         {/* Quick Actions */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Quick Processing Queue</CardTitle>
+            <CardTitle className="text-lg">{t('common.quick_queue')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -172,12 +173,12 @@ const SubAdminDashboard: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <FileCheck2 className="h-5 w-5 text-amber-600" />
                   <div>
-                    <p className="font-medium text-sm">5 Visa Documents Awaiting Review</p>
+                    <p className="font-medium text-sm">{t('common.alerts.visa_deadline', { count: 5 })}</p>
                     <p className="text-xs text-muted-foreground">SLA: Review within 24 hours</p>
                   </div>
                 </div>
                 <Button size="sm" asChild>
-                  <Link to="/subadmin/visas">Review Now</Link>
+                  <Link to="/subadmin/visas">{t('common.view')}</Link>
                 </Button>
               </div>
 
@@ -185,12 +186,12 @@ const SubAdminDashboard: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <BadgeCheck className="h-5 w-5 text-blue-600" />
                   <div>
-                    <p className="font-medium text-sm">7 Badge Photos Need Validation</p>
+                    <p className="font-medium text-sm">{t('common.alerts.pending_review', { count: 7 })}</p>
                     <p className="text-xs text-muted-foreground">Check photo quality standards</p>
                   </div>
                 </div>
                 <Button size="sm" variant="outline" asChild>
-                  <Link to="/subadmin/accreditation">Validate</Link>
+                  <Link to="/subadmin/accreditation">{t('common.status')}</Link>
                 </Button>
               </div>
 
@@ -213,18 +214,17 @@ const SubAdminDashboard: React.FC = () => {
         {/* Recent Activity */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Recent Activity</CardTitle>
+            <CardTitle className="text-lg">{t('common.recent_activity')}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {recentActivity.map((activity) => (
                 <div key={activity.id} className="flex items-start gap-3">
-                  <div className={`p-1.5 rounded-full mt-0.5 ${
-                    activity.type === 'success' ? 'bg-emerald-100 text-emerald-600' :
+                  <div className={`p-1.5 rounded-full mt-0.5 ${activity.type === 'success' ? 'bg-emerald-100 text-emerald-600' :
                     activity.type === 'warning' ? 'bg-amber-100 text-amber-600' :
-                    activity.type === 'error' ? 'bg-red-100 text-red-600' :
-                    'bg-blue-100 text-blue-600'
-                  }`}>
+                      activity.type === 'error' ? 'bg-red-100 text-red-600' :
+                        'bg-blue-100 text-blue-600'
+                    }`}>
                     <CheckCircle2 className="h-3 w-3" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -245,7 +245,7 @@ const SubAdminDashboard: React.FC = () => {
       {/* Module Progress Overview */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Module Completion Overview</CardTitle>
+          <CardTitle className="text-lg">{t('common.module_overview')}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -259,7 +259,7 @@ const SubAdminDashboard: React.FC = () => {
               return (
                 <div key={stat.name} className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">{stat.name}</span>
+                    <span className="text-muted-foreground">{t(`common.${stat.name.toLowerCase()}`)}</span>
                     <span className="font-medium">{progress}%</span>
                   </div>
                   <Progress value={progress} className="h-2" />

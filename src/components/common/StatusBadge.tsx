@@ -1,5 +1,5 @@
-import React from 'react';
 import { cn } from '@/lib/utils';
+import { useTranslation } from 'react-i18next';
 import {
   CheckCircle2,
   XCircle,
@@ -104,6 +104,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   variant,
   className,
 }) => {
+  const { t } = useTranslation();
   // Map external variant names to internal ones
   const mapVariant = (v?: string): StatusVariant => {
     if (!v) return 'neutral';
@@ -133,7 +134,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       )}
     >
       {showIcon && <Icon className={cn('h-3 w-3', size === 'sm' && 'h-2.5 w-2.5')} />}
-      {status}
+      {t(`common.${status.toLowerCase().replace(/\s+/g, '_')}`, { defaultValue: status })}
     </span>
   );
 };

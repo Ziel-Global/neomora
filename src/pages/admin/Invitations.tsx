@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -49,6 +50,7 @@ const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge',
 
 const InvitationsPage: React.FC = () => {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('campaigns');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -258,13 +260,13 @@ const InvitationsPage: React.FC = () => {
       case 1:
         return (
           <div className="space-y-4">
-            <h3 className="font-medium">Step 1: Select Event</h3>
+            <h3 className="font-medium">{t('invitations.step_1_select_event')}</h3>
             {events.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
-                  <p className="text-muted-foreground mb-2">No events created yet</p>
-                  <Button variant="outline" onClick={() => window.location.href = '/admin/events'}>
-                    Create Event First
+                  <p className="text-muted-foreground mb-2">{t('invitations.no_events_created')}</p>
+                  <Button variant="outline" onClick={() => navigate('/admin/events')}>
+                    {t('invitations.create_event_first')}
                   </Button>
                 </CardContent>
               </Card>
@@ -272,7 +274,7 @@ const InvitationsPage: React.FC = () => {
               <>
                 <Select value={selectedEventId} onValueChange={setSelectedEventId}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Choose an event" />
+                    <SelectValue placeholder={t('invitations.choose_event')} />
                   </SelectTrigger>
                   <SelectContent>
                     {events.map(event => (
@@ -281,15 +283,15 @@ const InvitationsPage: React.FC = () => {
                   </SelectContent>
                 </Select>
                 <div className="grid gap-2">
-                  <Label>Campaign Name *</Label>
+                  <Label>{t('invitations.campaign_name_label')}</Label>
                   <Input
-                    placeholder="e.g., Initial Invitation Wave"
+                    placeholder={t('invitations.campaign_name_placeholder')}
                     value={campaignName}
                     onChange={(e) => setCampaignName(e.target.value)}
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>RSVP Deadline *</Label>
+                  <Label>{t('invitations.rsvp_deadline_label')}</Label>
                   <Input
                     type="date"
                     value={rsvpDeadline}
@@ -303,13 +305,14 @@ const InvitationsPage: React.FC = () => {
       case 2:
         return (
           <div className="space-y-4">
-            <h3 className="font-medium">Step 2: Select Audience</h3>
+            <h3 className="font-medium">{t('invitations.step_2_select_audience')}</h3>
+            node
             {participants.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
-                  <p className="text-muted-foreground mb-2">No participants in system</p>
-                  <Button variant="outline" onClick={() => window.location.href = '/admin/participants'}>
-                    Add Participants First
+                  <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
+                  <Button variant="outline" onClick={() => navigate('/admin/participants')}>
+                    {t('invitations.add_participants_first')}
                   </Button>
                 </CardContent>
               </Card>
@@ -337,7 +340,7 @@ const InvitationsPage: React.FC = () => {
                       setSelectedParticipantIds([]);
                     }}
                   >
-                    Filter by Delegation
+                    {t('invitations.filter_by_delegation')}
                   </Button>
                   <Button
                     variant={audienceMode === 'individual' ? 'default' : 'outline'}
@@ -348,13 +351,13 @@ const InvitationsPage: React.FC = () => {
                       setSelectedDelegations([]);
                     }}
                   >
-                    Select Individuals
+                    {t('invitations.select_individuals')}
                   </Button>
                 </div>
 
                 {audienceMode === 'role' && (
                   <div className="grid gap-2">
-                    <Label>Filter by Role (leave empty for all)</Label>
+                    <Label>{t('invitations.filter_by_role_label')}</Label>
                     <div className="flex flex-wrap gap-2">
                       {ROLES.map(role => (
                         <Badge
@@ -372,7 +375,7 @@ const InvitationsPage: React.FC = () => {
 
                 {audienceMode === 'delegation' && (
                   <div className="grid gap-2">
-                    <Label>Filter by Delegation (Organization)</Label>
+                    <Label>{t('invitations.filter_by_delegation_label')}</Label>
                     <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
                       {Array.from(new Set(participants.map(p => p.organization).filter(Boolean))).sort().map(org => (
                         <Badge
@@ -387,7 +390,7 @@ const InvitationsPage: React.FC = () => {
                       {/* Handle Empty/No Organization case if needed, though filter(Boolean) removes them */}
                     </div>
                     {Array.from(new Set(participants.map(p => p.organization).filter(Boolean))).length === 0 && (
-                      <p className="text-sm text-muted-foreground">No delegations found.</p>
+                      <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
                     )}
                   </div>
                 )}
@@ -397,7 +400,7 @@ const InvitationsPage: React.FC = () => {
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
-                        placeholder="Search participants by name or email..."
+                        placeholder={t('invitations.search_participants_placeholder')}
                         value={participantSearchTerm}
                         onChange={(e) => setParticipantSearchTerm(e.target.value)}
                         className="pl-10"
@@ -406,7 +409,7 @@ const InvitationsPage: React.FC = () => {
                     <div className="max-h-60 overflow-y-auto border rounded-lg">
                       {filteredParticipantsForSelection.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-4">
-                          No participants found
+                          {t('invitations.no_participants_found')}
                         </p>
                       ) : (
                         filteredParticipantsForSelection.map(p => (
@@ -441,7 +444,7 @@ const InvitationsPage: React.FC = () => {
                         size="sm"
                         onClick={() => setSelectedParticipantIds([])}
                       >
-                        Clear Selection
+                        {t('invitations.clear_selection')}
                       </Button>
                     )}
                   </div>
@@ -449,8 +452,8 @@ const InvitationsPage: React.FC = () => {
 
                 <Card>
                   <CardContent className="p-4">
-                    <p className="text-sm text-muted-foreground">Selected audience</p>
-                    <p className="text-2xl font-bold">{getFilteredAudience().length} participants</p>
+                    <p className="text-sm text-muted-foreground">{t('invitations.selected_audience')}</p>
+                    <p className="text-2xl font-bold">{t('common.participants_count', { count: getFilteredAudience().length })}</p>
                   </CardContent>
                 </Card>
               </>
@@ -461,11 +464,11 @@ const InvitationsPage: React.FC = () => {
         const selectedEvent3 = events.find(e => e.id === selectedEventId);
         return (
           <div className="space-y-4">
-            <h3 className="font-medium">Step 3: Choose Template</h3>
+            <h3 className="font-medium">{t('invitations.step_3_choose_template')}</h3>
             {templates.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
-                  <p className="text-muted-foreground">No templates available. Default templates will be used.</p>
+                  <p className="text-muted-foreground">{t('invitations.no_templates_available')}</p>
                 </CardContent>
               </Card>
             ) : (
@@ -490,12 +493,12 @@ const InvitationsPage: React.FC = () => {
                                 {isVIP ? (
                                   <>
                                     <Crown className="h-3 w-3 mr-1" />
-                                    VIP
+                                    {t('invitations.vip')}
                                   </>
                                 ) : (
                                   <>
                                     <Star className="h-3 w-3 mr-1" />
-                                    Standard
+                                    {t('invitations.standard')}
                                   </>
                                 )}
                               </Badge>
@@ -513,7 +516,7 @@ const InvitationsPage: React.FC = () => {
                               }}
                             >
                               <Eye className="h-4 w-4 mr-1" />
-                              Preview
+                              {t('invitations.preview')}
                             </Button>
                             <Checkbox checked={selectedTemplateId === template.id} />
                           </div>
@@ -525,9 +528,9 @@ const InvitationsPage: React.FC = () => {
               </div>
             )}
             <div className="grid gap-2">
-              <Label>Customize Message (Optional)</Label>
+              <Label>{t('invitations.customize_message')}</Label>
               <Textarea
-                placeholder="Add custom message..."
+                placeholder={t('invitations.customize_message_placeholder')}
                 rows={4}
                 value={customMessage}
                 onChange={(e) => setCustomMessage(e.target.value)}
@@ -542,34 +545,37 @@ const InvitationsPage: React.FC = () => {
 
         return (
           <div className="space-y-4">
-            <h3 className="font-medium">Step 4: Review & Create</h3>
+            <h3 className="font-medium">{t('invitations.step_4_review_create')}</h3>
             <Card>
               <CardContent className="p-4 space-y-2">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Event:</span>
+                  <span className="text-muted-foreground">{t('common.event')}:</span>
                   <span>{selectedEvent?.name || '-'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Campaign:</span>
+                  <span className="text-muted-foreground">{t('common.campaign')}:</span>
                   <span>{campaignName || '-'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Audience:</span>
-                  <span>{audience.length} participants</span>
+                  <span className="text-muted-foreground">{t('common.audience')}:</span>
+                  <span>{t('common.participants_count', { count: audience.length })}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Template:</span>
+                  <span className="text-muted-foreground">{t('invitations.templates')}:</span>
                   <span>{selectedTemplate?.name || '-'}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">RSVP Deadline:</span>
+                  <span className="text-muted-foreground">{t('invitations.rsvp_deadline')}:</span>
                   <span>{rsvpDeadline || '-'}</span>
                 </div>
               </CardContent>
             </Card>
             <p className="text-sm text-muted-foreground">
-              This will create {audience.length} invitation(s) in draft status.
-              You can review and send them from the campaign details.
+              {audience.length === 1
+                ? t('invitations.review_create_desc_singular')
+                : t('invitations.review_create_desc_plural', { count: audience.length })}
+              <br />
+              {t('invitations.review_create_subdesc')}
             </p>
           </div>
         );
@@ -591,7 +597,7 @@ const InvitationsPage: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{selectedCampaign.name}</DialogTitle>
             <DialogDescription>
-              {event?.name} • {campInvitations.length} invitations
+              {event?.name} • {t('common.participants_count', { count: campInvitations.length })}
             </DialogDescription>
           </DialogHeader>
 
@@ -599,25 +605,25 @@ const InvitationsPage: React.FC = () => {
             <Card>
               <CardContent className="p-3 text-center">
                 <p className="text-2xl font-bold">{selectedCampaign.stats.sentCount}</p>
-                <p className="text-xs text-muted-foreground">Sent</p>
+                <p className="text-xs text-muted-foreground">{t('invitations.delivered')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
                 <p className="text-2xl font-bold text-success">{selectedCampaign.stats.acceptedCount}</p>
-                <p className="text-xs text-muted-foreground">Accepted</p>
+                <p className="text-xs text-muted-foreground">{t('invitations.accepted')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
                 <p className="text-2xl font-bold text-warning">{selectedCampaign.stats.maybeCount}</p>
-                <p className="text-xs text-muted-foreground">Maybe</p>
+                <p className="text-xs text-muted-foreground">{t('common.maybe')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
                 <p className="text-2xl font-bold text-destructive">{selectedCampaign.stats.declinedCount}</p>
-                <p className="text-xs text-muted-foreground">Declined</p>
+                <p className="text-xs text-muted-foreground">{t('events.declined')}</p>
               </CardContent>
             </Card>
           </div>
@@ -625,15 +631,15 @@ const InvitationsPage: React.FC = () => {
           {selectedCampaign.status === 'Draft' && (
             <div className="bg-muted/50 p-4 rounded-lg flex items-center justify-between mb-4">
               <div>
-                <p className="font-medium">Campaign not sent yet</p>
-                <p className="text-sm text-muted-foreground">Click send to deliver all invitations</p>
+                <p className="font-medium">{t('invitations.campaign_not_sent')}</p>
+                <p className="text-sm text-muted-foreground">{t('invitations.click_send_to_deliver')}</p>
               </div>
               <Button onClick={() => {
                 handleSendCampaign(selectedCampaign.id);
                 setSelectedCampaign(campaignStore.getById(selectedCampaign.id) || null);
               }}>
                 <Send className="h-4 w-4 mr-2" />
-                Send Now
+                {t('invitations.send_now')}
               </Button>
             </div>
           )}
@@ -641,10 +647,10 @@ const InvitationsPage: React.FC = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Participant</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Sent</TableHead>
-                <TableHead>Responded</TableHead>
+                <TableHead>{t('common.participant')}</TableHead>
+                <TableHead>{t('common.status')}</TableHead>
+                <TableHead>{t('invitations.delivered')}</TableHead>
+                <TableHead>{t('invitations.accepted')}</TableHead>
                 <TableHead></TableHead>
               </TableRow>
             </TableHeader>
@@ -695,7 +701,7 @@ const InvitationsPage: React.FC = () => {
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Create Invitation Campaign</DialogTitle>
+                <DialogTitle>{t('invitations.create_campaign_title')}</DialogTitle>
               </DialogHeader>
               {/* Progress indicator */}
               <div className="flex justify-between mb-6">
@@ -712,7 +718,7 @@ const InvitationsPage: React.FC = () => {
               {renderWizardStep()}
               <DialogFooter className="mt-6">
                 <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
-                  Previous
+                  {t('invitations.previous')}
                 </Button>
                 {wizardStep < 4 ? (
                   <Button
@@ -723,10 +729,10 @@ const InvitationsPage: React.FC = () => {
                       (wizardStep === 3 && !selectedTemplateId)
                     }
                   >
-                    Next
+                    {t('invitations.next')}
                   </Button>
                 ) : (
-                  <Button onClick={handleCreateCampaign}>Create Campaign</Button>
+                  <Button onClick={handleCreateCampaign}>{t('common.create')}</Button>
                 )}
               </DialogFooter>
             </DialogContent>
@@ -744,9 +750,9 @@ const InvitationsPage: React.FC = () => {
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="campaigns">Campaigns</TabsTrigger>
-          <TabsTrigger value="invitations">All Invitations</TabsTrigger>
-          <TabsTrigger value="templates">Templates</TabsTrigger>
+          <TabsTrigger value="campaigns">{t('invitations.campaigns')}</TabsTrigger>
+          <TabsTrigger value="invitations">{t('invitations.all_invitations')}</TabsTrigger>
+          <TabsTrigger value="templates">{t('invitations.templates')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="campaigns" className="space-y-4 mt-4">
@@ -754,7 +760,7 @@ const InvitationsPage: React.FC = () => {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search campaigns..."
+                placeholder={t('invitations.search_placeholder')}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-10"
@@ -769,11 +775,11 @@ const InvitationsPage: React.FC = () => {
             <Card className="border-dashed">
               <CardContent className="p-8 text-center">
                 <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="font-medium mb-2">No campaigns yet</h3>
-                <p className="text-muted-foreground mb-4">Create your first invitation campaign to start inviting participants</p>
+                <h3 className="font-medium mb-2">{t('invitations.no_campaigns_yet')}</h3>
+                <p className="text-muted-foreground mb-4">{t('invitations.no_campaigns_desc')}</p>
                 <Button onClick={() => setIsCreateOpen(true)}>
                   <Plus className="h-4 w-4 mr-2" />
-                  Create Campaign
+                  {t('invitations.create_campaign')}
                 </Button>
               </CardContent>
             </Card>
@@ -829,11 +835,11 @@ const InvitationsPage: React.FC = () => {
                               setSelectedCampaign(campaign);
                               setViewCampaignOpen(true);
                             }}>
-                              <Eye className="h-4 w-4 mr-2" />View Details
+                              <Eye className="h-4 w-4 mr-2" />{t('invitations.view_details')}
                             </DropdownMenuItem>
                             {campaign.status === 'Draft' && (
                               <DropdownMenuItem onClick={() => handleSendCampaign(campaign.id)}>
-                                <Send className="h-4 w-4 mr-2" />Send Campaign
+                                <Send className="h-4 w-4 mr-2" />{t('invitations.send_campaign')}
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
@@ -859,8 +865,8 @@ const InvitationsPage: React.FC = () => {
             <Card className="border-dashed">
               <CardContent className="p-8 text-center">
                 <Send className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="font-medium mb-2">No invitations yet</h3>
-                <p className="text-muted-foreground">Invitations will appear here once you create and send a campaign</p>
+                <h3 className="font-medium mb-2">{t('invitations.no_invitations_yet')}</h3>
+                <p className="text-muted-foreground">{t('invitations.invitations_appear_here')}</p>
               </CardContent>
             </Card>
           ) : (
@@ -868,11 +874,11 @@ const InvitationsPage: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Participant</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>RSVP Deadline</TableHead>
-                    <TableHead>Sent</TableHead>
+                    <TableHead>{t('common.participant')}</TableHead>
+                    <TableHead>{t('common.event')}</TableHead>
+                    <TableHead>{t('common.status')}</TableHead>
+                    <TableHead>{t('invitations.rsvp_deadline')}</TableHead>
+                    <TableHead>{t('invitations.delivered')}</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>

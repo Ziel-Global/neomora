@@ -5,10 +5,10 @@ import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { CardGridSkeleton } from '@/components/common/LoadingSkeleton';
 import { getDashboardStats, events, participants, registrations, rsvps } from '@/data/mockData';
-import { 
-  Users, 
-  CheckCircle2, 
-  Clock, 
+import {
+  Users,
+  CheckCircle2,
+  Clock,
   AlertTriangle,
   Plane,
   Hotel,
@@ -25,7 +25,7 @@ import { Link } from 'react-router-dom';
 
 
 const AdminDashboard: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [isLoading, setIsLoading] = useState(true);
   const [stats, setStats] = useState<ReturnType<typeof getDashboardStats> | null>(null);
 
@@ -39,18 +39,18 @@ const AdminDashboard: React.FC = () => {
   }, []);
 
   const alerts = [
-    { type: 'error', message: '4 participants missing passport documents', link: '/admin/registrations' },
-    { type: 'warning', message: '2 visa applications approaching SLA deadline', link: '/admin/visas' },
-    { type: 'warning', message: '3 registrations pending review for 5+ days', link: '/admin/registrations' },
-    { type: 'info', message: 'New campaign scheduled for tomorrow', link: '/admin/invitations' },
+    { type: 'error', message: t('common.alerts.missing_passports', { count: 4 }), link: '/admin/registrations' },
+    { type: 'warning', message: t('common.alerts.visa_deadline', { count: 2 }), link: '/admin/visas' },
+    { type: 'warning', message: t('common.alerts.pending_review', { count: 3 }), link: '/admin/registrations' },
+    { type: 'info', message: t('common.alerts.new_campaign'), link: '/admin/invitations' },
   ];
 
   const recentActivity = [
-    { action: 'Registration approved', participant: 'Sarah Mitchell', time: '5 minutes ago' },
-    { action: 'Badge printed', participant: 'Mohammed Al-Rashid', time: '12 minutes ago' },
-    { action: 'Travel itinerary ticketed', participant: 'Priya Sharma', time: '1 hour ago' },
-    { action: 'RSVP received', participant: 'James Thompson', time: '2 hours ago' },
-    { action: 'Document verified', participant: 'Yuki Tanaka', time: '3 hours ago' },
+    { action: t('common.activity.reg_approved'), participant: 'Sarah Mitchell', time: t('common.activity.min_ago', { count: 5 }) },
+    { action: t('common.activity.badge_printed'), participant: 'Mohammed Al-Rashid', time: t('common.activity.min_ago', { count: 12 }) },
+    { action: t('common.activity.travel_ticketed'), participant: 'Priya Sharma', time: t('common.activity.hour_ago', { count: 1 }) },
+    { action: t('common.activity.rsvp_received'), participant: 'James Thompson', time: t('common.activity.hours_ago', { count: 2 }) },
+    { action: t('common.activity.doc_verified'), participant: 'Yuki Tanaka', time: t('common.activity.hours_ago', { count: 3 }) },
   ];
 
   if (isLoading) {
@@ -69,7 +69,7 @@ const AdminDashboard: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title={t('common.dashboard')}
-        subtitle={`${events[0]?.name || 'Event'} - ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
+        subtitle={`${events[0]?.name || t('common.event')} - ${new Date().toLocaleDateString(i18n.language, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm">
@@ -77,7 +77,7 @@ const AdminDashboard: React.FC = () => {
               {t('common.change_event')}
             </Button>
             <Button size="sm">
-              Export Report
+              {t('common.export_report')}
             </Button>
           </div>
         }
@@ -90,7 +90,7 @@ const AdminDashboard: React.FC = () => {
           value={stats?.invited || 0}
           icon={Users}
           trend={{ value: 12, isPositive: true }}
-          description="vs last event"
+          description={t('common.vs_last_event')}
         />
         <StatsCard
           title={t('common.rsvp_confirmed')}
@@ -98,21 +98,21 @@ const AdminDashboard: React.FC = () => {
           icon={CheckCircle2}
           variant="success"
           trend={{ value: 8, isPositive: true }}
-          description={`${stats?.rsvpPending || 0} pending`}
+          description={t('common.pending_count', { count: stats?.rsvpPending || 0 })}
         />
         <StatsCard
           title={t('common.registrations')}
           value={stats?.regApproved || 0}
           icon={FileText}
           variant="primary"
-          description={`${stats?.regPending || 0} under review`}
+          description={t('common.under_review_count', { count: stats?.regPending || 0 })}
         />
         <StatsCard
           title={t('common.pending_docs')}
           value={(stats?.regPending || 0) + (stats?.visaPending || 0)}
           icon={Clock}
           variant="warning"
-          description="Require attention"
+          description={t('common.require_attention')}
         />
       </div>
 
@@ -123,26 +123,26 @@ const AdminDashboard: React.FC = () => {
           value={stats?.visaApproved || 0}
           icon={FileText}
           variant="success"
-          description={`${stats?.visaPending || 0} in process`}
+          description={t('common.in_process_count', { count: stats?.visaPending || 0 })}
         />
         <StatsCard
           title={t('common.travel_booked')}
           value={stats?.travelTicketed || 0}
           icon={Plane}
-          description={`${stats?.travelPending || 0} pending`}
+          description={t('common.pending_count', { count: stats?.travelPending || 0 })}
         />
         <StatsCard
           title={t('common.rooms_allocated')}
           value={stats?.accomAllocated || 0}
           icon={Hotel}
-          description="Across all hotels"
+          description={t('common.across_all_hotels')}
         />
         <StatsCard
           title={t('common.badges_ready')}
           value={(stats?.badgesPrinted || 0) + (stats?.badgesReady || 0)}
           icon={BadgeCheck}
           variant="success"
-          description={`${stats?.badgesPending || 0} pending`}
+          description={t('common.pending_count', { count: stats?.badgesPending || 0 })}
         />
       </div>
 
@@ -156,7 +156,7 @@ const AdminDashboard: React.FC = () => {
               {t('common.alerts_notifications')}
             </CardTitle>
             <Button variant="ghost" size="sm">
-              View All
+              {t('common.view_all')}
             </Button>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -166,11 +166,10 @@ const AdminDashboard: React.FC = () => {
                 to={alert.link}
                 className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
               >
-                <AlertTriangle className={`h-5 w-5 mt-0.5 flex-shrink-0 ${
-                  alert.type === 'error' ? 'text-status-error' :
+                <AlertTriangle className={`h-5 w-5 mt-0.5 flex-shrink-0 ${alert.type === 'error' ? 'text-status-error' :
                   alert.type === 'warning' ? 'text-status-warning' :
-                  'text-status-info'
-                }`} />
+                    'text-status-info'
+                  }`} />
                 <span className="text-sm">{alert.message}</span>
               </Link>
             ))}
@@ -185,7 +184,7 @@ const AdminDashboard: React.FC = () => {
               {t('common.recent_activity')}
             </CardTitle>
             <Button variant="ghost" size="sm">
-              View All
+              {t('common.view_all')}
             </Button>
           </CardHeader>
           <CardContent>

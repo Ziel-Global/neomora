@@ -276,23 +276,23 @@ const ParticipantsPage: React.FC = () => {
             <DropdownMenuItem asChild>
               <Link to={`/admin/participants/${row.id}`} className="flex items-center gap-2">
                 <Eye className="h-4 w-4" />
-                View Profile
+                {t('participants.view_profile')}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEdit(row)} className="flex items-center gap-2">
               <Edit className="h-4 w-4" />
-              Edit
+              {t('common.edit')}
             </DropdownMenuItem>
             <DropdownMenuItem className="flex items-center gap-2">
               <Mail className="h-4 w-4" />
-              Send Message
+              {t('participants.send_message')}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => handleDelete(row)}
               className="flex items-center gap-2 text-destructive"
             >
               <Trash2 className="h-4 w-4" />
-              Delete
+              {t('common.delete')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -316,7 +316,7 @@ const ParticipantsPage: React.FC = () => {
           <Label htmlFor="lastName">{t('participants.last_name')} *</Label>
           <Input
             id="lastName"
-            placeholder="Last name"
+            placeholder={t('participants.last_name')}
             value={formData.lastName}
             onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
           />
@@ -334,7 +334,7 @@ const ParticipantsPage: React.FC = () => {
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label htmlFor="phone">Phone</Label>
+          <Label htmlFor="phone">{t('common.phone')}</Label>
           <Input
             id="phone"
             placeholder="1234567890"
@@ -364,7 +364,7 @@ const ParticipantsPage: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               {ROLES.map(role => (
-                <SelectItem key={role} value={role}>{role}</SelectItem>
+                <SelectItem key={role} value={role}>{t(`common.${role.toLowerCase()}`)}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -381,17 +381,17 @@ const ParticipantsPage: React.FC = () => {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="jobTitle">Job Title</Label>
+          <Label htmlFor="jobTitle">{t('participants.job_title')}</Label>
           <Input
             id="jobTitle"
-            placeholder="Job title"
+            placeholder={t('participants.job_title')}
             value={formData.jobTitle}
             onChange={(e) => setFormData(prev => ({ ...prev, jobTitle: e.target.value }))}
           />
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="dietaryNotes">Dietary Requirements</Label>
+        <Label htmlFor="dietaryNotes">{t('participants.dietary')}</Label>
         <Input
           id="dietaryNotes"
           placeholder="e.g., Vegetarian, Halal, Gluten-free"
@@ -400,7 +400,7 @@ const ParticipantsPage: React.FC = () => {
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="accessibilityNeeds">Accessibility Needs</Label>
+        <Label htmlFor="accessibilityNeeds">{t('participants.accessibility')}</Label>
         <Input
           id="accessibilityNeeds"
           placeholder="e.g., Wheelchair accessible"
@@ -415,7 +415,7 @@ const ParticipantsPage: React.FC = () => {
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title={t('participants.title')}
-        subtitle={`${filteredData.length} participants`}
+        subtitle={t('common.participants_count', { count: filteredData.length })}
         breadcrumbs={[{ label: t('participants.title') }]}
         actions={
           <div className="flex gap-2">
@@ -436,10 +436,10 @@ const ParticipantsPage: React.FC = () => {
         <Card>
           <CardContent className="p-12 text-center">
             <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No participants yet</h3>
-            <p className="text-muted-foreground mb-4">Add your first participant to start managing invitations and registrations.</p>
+            <h3 className="text-lg font-semibold mb-2">{t('participants.no_participants')}</h3>
+            <p className="text-muted-foreground mb-4">{t('participants.no_participants_desc')}</p>
             <Button onClick={() => setIsAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />Add Participant
+              <Plus className="h-4 w-4 mr-2" />{t('participants.add_participant')}
             </Button>
           </CardContent>
         </Card>
@@ -451,7 +451,7 @@ const ParticipantsPage: React.FC = () => {
           <div className="flex flex-wrap gap-3 p-4 rounded-lg bg-muted/50 border border-border">
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Filters:</span>
+              <span className="text-sm font-medium">{t('common.filters')}:</span>
             </div>
 
             <Select value={roleFilter} onValueChange={setRoleFilter}>
@@ -459,9 +459,9 @@ const ParticipantsPage: React.FC = () => {
                 <SelectValue placeholder="Role" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Roles</SelectItem>
+                <SelectItem value="all">{t('common.all_roles')}</SelectItem>
                 {ROLES.map(role => (
-                  <SelectItem key={role} value={role}>{role}</SelectItem>
+                  <SelectItem key={role} value={role}>{t(`common.${role.toLowerCase()}`)}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -472,7 +472,7 @@ const ParticipantsPage: React.FC = () => {
                 size="sm"
                 onClick={() => setRoleFilter('all')}
               >
-                Clear Filters
+                {t('participants.clear_filters')}
               </Button>
             )}
           </div>
@@ -482,7 +482,7 @@ const ParticipantsPage: React.FC = () => {
             columns={columns}
             keyExtractor={(row) => row.id}
             searchable
-            searchPlaceholder="Search by name, email, organization..."
+            searchPlaceholder={t('participants.search_placeholder') || 'Search...'}
             searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
             selectable
             onSelectionChange={(ids) => console.log('Selected:', ids)}
@@ -494,13 +494,13 @@ const ParticipantsPage: React.FC = () => {
       <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Add Participant</DialogTitle>
-            <DialogDescription>Add a new participant to the system.</DialogDescription>
+            <DialogTitle>{t('participants.add_participant')}</DialogTitle>
+            <DialogDescription>{t('participants.add_desc')}</DialogDescription>
           </DialogHeader>
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setIsAddOpen(false); resetForm(); }}>Cancel</Button>
-            <Button onClick={handleCreate}>Add Participant</Button>
+            <Button variant="outline" onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
+            <Button onClick={handleCreate}>{t('participants.add_participant')}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -509,13 +509,13 @@ const ParticipantsPage: React.FC = () => {
       <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingParticipant(null); resetForm(); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Edit Participant</DialogTitle>
-            <DialogDescription>Update participant details.</DialogDescription>
+            <DialogTitle>{t('participants.edit_participant')}</DialogTitle>
+            <DialogDescription>{t('participants.edit_desc')}</DialogDescription>
           </DialogHeader>
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>Cancel</Button>
-            <Button onClick={handleUpdate}>Save Changes</Button>
+            <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>{t('common.cancel')}</Button>
+            <Button onClick={handleUpdate}>{t('common.save_changes')}</Button>
           </div>
         </DialogContent>
       </Dialog>

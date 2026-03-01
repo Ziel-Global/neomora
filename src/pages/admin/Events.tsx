@@ -199,26 +199,26 @@ const EventsPage: React.FC = () => {
   const formFieldsJsx = (
     <div className="grid gap-4 py-4">
       <div className="grid gap-2">
-        <Label htmlFor="name">Event Name *</Label>
+        <Label htmlFor="name">{t('events.name_label')}</Label>
         <Input
           id="name"
-          placeholder="Enter event name"
+          placeholder={t('events.name_label')}
           value={formData.name}
           onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="theme">Theme</Label>
+        <Label htmlFor="theme">{t('events.theme_label')}</Label>
         <Input
           id="theme"
-          placeholder="Event theme or tagline"
+          placeholder={t('events.theme_label')}
           value={formData.theme}
           onChange={(e) => setFormData(prev => ({ ...prev, theme: e.target.value }))}
         />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label htmlFor="startDate">Start Date *</Label>
+          <Label htmlFor="startDate">{t('events.start_label')}</Label>
           <Input
             id="startDate"
             type="date"
@@ -227,7 +227,7 @@ const EventsPage: React.FC = () => {
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="endDate">End Date *</Label>
+          <Label htmlFor="endDate">{t('events.end_label')}</Label>
           <Input
             id="endDate"
             type="date"
@@ -237,19 +237,19 @@ const EventsPage: React.FC = () => {
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="city">City *</Label>
+        <Label htmlFor="city">{t('events.city_label')}</Label>
         <Input
           id="city"
-          placeholder="Event city"
+          placeholder={t('events.city_label')}
           value={formData.city}
           onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="venues">Venues</Label>
+        <Label htmlFor="venues">{t('events.venues_label')}</Label>
         <Textarea
           id="venues"
-          placeholder="List venues (one per line)"
+          placeholder={t('events.venues_placeholder')}
           value={formData.venues}
           onChange={(e) => setFormData(prev => ({ ...prev, venues: e.target.value }))}
         />
@@ -257,7 +257,7 @@ const EventsPage: React.FC = () => {
 
       {/* Event Type */}
       <div className="grid gap-2">
-        <Label>Event Type</Label>
+        <Label>{t('events.type')}</Label>
         <Select
           value={formData.eventType}
           onValueChange={(value: 'individual' | 'team-based' | 'hybrid') => setFormData(prev => ({ ...prev, eventType: value }))}
@@ -266,9 +266,9 @@ const EventsPage: React.FC = () => {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="individual">Individual Only</SelectItem>
-            <SelectItem value="team-based">Team Only (Sports Event)</SelectItem>
-            <SelectItem value="hybrid">Hybrid (Individual & Team)</SelectItem>
+            <SelectItem value="individual">{t('events.type_individual')}</SelectItem>
+            <SelectItem value="team-based">{t('events.type_team')}</SelectItem>
+            <SelectItem value="hybrid">{t('events.type_hybrid')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -283,14 +283,14 @@ const EventsPage: React.FC = () => {
               onCheckedChange={(checked) => setFormData(prev => ({ ...prev, allowTeamRegistration: !!checked }))}
             />
             <Label htmlFor="allowTeamReg" className="font-normal">
-              Allow team managers to register delegations
+              {t('events.allow_team_reg')}
             </Label>
           </div>
 
           {/* Sport Categories */}
           <div className="grid gap-2">
-            <Label>Sport Categories</Label>
-            <p className="text-sm text-muted-foreground mb-2">Select sports included in this event</p>
+            <Label>{t('events.sport_cats')}</Label>
+            <p className="text-sm text-muted-foreground mb-2">{t('events.select_sports')}</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
               {SPORT_CATEGORIES.map(sport => (
                 <div key={sport.id} className="flex items-center space-x-2">
@@ -310,16 +310,16 @@ const EventsPage: React.FC = () => {
       )}
 
       <div className="grid gap-2">
-        <Label htmlFor="status">Status</Label>
+        <Label htmlFor="status">{t('events.status_label')}</Label>
         <Select value={formData.status} onValueChange={(value: EMSEvent['status']) => setFormData(prev => ({ ...prev, status: value }))}>
           <SelectTrigger>
-            <SelectValue placeholder="Select status" />
+            <SelectValue placeholder={t('events.status_label')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="Draft">Draft</SelectItem>
-            <SelectItem value="Published">Published</SelectItem>
-            <SelectItem value="Ongoing">Ongoing</SelectItem>
-            <SelectItem value="Closed">Closed</SelectItem>
+            <SelectItem value="Draft">{t('common.draft')}</SelectItem>
+            <SelectItem value="Published">{t('common.published')}</SelectItem>
+            <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
+            <SelectItem value="Closed">{t('common.closed')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -338,13 +338,13 @@ const EventsPage: React.FC = () => {
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
-                <DialogTitle>Create New Event</DialogTitle>
-                <DialogDescription>Fill in the details to create a new event.</DialogDescription>
+                <DialogTitle>{t('events.create_new')}</DialogTitle>
+                <DialogDescription>{t('events.create_desc')}</DialogDescription>
               </DialogHeader>
               {formFieldsJsx}
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => { setIsCreateOpen(false); resetForm(); }}>Cancel</Button>
-                <Button onClick={handleCreate}>Create Event</Button>
+                <Button variant="outline" onClick={() => { setIsCreateOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
+                <Button onClick={handleCreate}>{t('events.create_event')}</Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -364,7 +364,7 @@ const EventsPage: React.FC = () => {
         <div className="relative flex-1">
           <Search className="absolute start-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search events..."
+            placeholder={t('events.search_placeholder')}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="ps-10"
@@ -376,10 +376,10 @@ const EventsPage: React.FC = () => {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t('events.status_label')}</SelectItem>
-            <SelectItem value="Draft">Draft</SelectItem>
-            <SelectItem value="Published">Published</SelectItem>
-            <SelectItem value="Ongoing">Ongoing</SelectItem>
-            <SelectItem value="Closed">Closed</SelectItem>
+            <SelectItem value="Draft">{t('common.draft')}</SelectItem>
+            <SelectItem value="Published">{t('common.published')}</SelectItem>
+            <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
+            <SelectItem value="Closed">{t('common.closed')}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -389,8 +389,8 @@ const EventsPage: React.FC = () => {
         <Card>
           <CardContent className="p-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">No events yet</h3>
-            <p className="text-muted-foreground mb-4">Create your first event to get started with invitations and registrations.</p>
+            <h3 className="text-lg font-semibold mb-2">{t('events.no_events')}</h3>
+            <p className="text-muted-foreground mb-4">{t('events.no_events_desc')}</p>
             <Button onClick={() => setIsCreateOpen(true)}>
               <Plus className="h-4 w-4 me-2" />{t('events.create_event')}
             </Button>
@@ -409,7 +409,7 @@ const EventsPage: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex items-center gap-3">
                       <h3 className="text-lg font-semibold">{event.name}</h3>
-                      <StatusBadge status={event.status} variant={getStatusVariant(event.status)} />
+                      <StatusBadge status={t(`common.${event.status.toLowerCase()}`)} variant={getStatusVariant(event.status)} />
                     </div>
                     {event.theme && <p className="text-muted-foreground text-sm">{event.theme}</p>}
                     <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -423,7 +423,7 @@ const EventsPage: React.FC = () => {
                       </span>
                       <span className="flex items-center gap-1">
                         <Users className="h-4 w-4" />
-                        {eventStats.invited} invited · {eventStats.accepted} accepted · {eventStats.registered} registered
+                        {eventStats.invited} {t('events.invited')} · {eventStats.accepted} {t('events.accepted')} · {eventStats.registered} {t('events.registered')}
                       </span>
                     </div>
                     {event.venues.length > 0 && (
@@ -432,14 +432,14 @@ const EventsPage: React.FC = () => {
                           <Badge key={i} variant="outline" className="text-xs">{venue}</Badge>
                         ))}
                         {event.venues.length > 2 && (
-                          <Badge variant="outline" className="text-xs">+{event.venues.length - 2} more</Badge>
+                          <Badge variant="outline" className="text-xs">+{event.venues.length - 2} {t('common.more')}</Badge>
                         )}
                       </div>
                     )}
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" onClick={() => setSelectedEvent(event)}>
-                      <Eye className="h-4 w-4 mr-1" />View
+                      <Eye className="h-4 w-4 mr-1" />{t('common.view')}
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
@@ -447,10 +447,10 @@ const EventsPage: React.FC = () => {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={() => handleEdit(event)}>
-                          <Edit className="h-4 w-4 mr-2" />Edit
+                          <Edit className="h-4 w-4 mr-2" />{t('common.edit')}
                         </DropdownMenuItem>
                         <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(event)}>
-                          <Trash2 className="h-4 w-4 mr-2" />Delete
+                          <Trash2 className="h-4 w-4 mr-2" />{t('common.delete')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -466,13 +466,13 @@ const EventsPage: React.FC = () => {
       <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingEvent(null); resetForm(); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Event</DialogTitle>
-            <DialogDescription>Update the event details.</DialogDescription>
+            <DialogTitle>{t('events.edit_event')}</DialogTitle>
+            <DialogDescription>{t('events.edit_desc')}</DialogDescription>
           </DialogHeader>
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingEvent(null); resetForm(); }}>Cancel</Button>
-            <Button onClick={handleUpdate}>Save Changes</Button>
+            <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingEvent(null); resetForm(); }}>{t('common.cancel')}</Button>
+            <Button onClick={handleUpdate}>{t('common.save_changes')}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -487,43 +487,43 @@ const EventsPage: React.FC = () => {
                   <DialogTitle>{selectedEvent.name}</DialogTitle>
                   <StatusBadge status={selectedEvent.status} variant={getStatusVariant(selectedEvent.status)} />
                 </div>
-                <DialogDescription>Event details and analytics</DialogDescription>
+                <DialogDescription>{t('events.event_details')}</DialogDescription>
               </DialogHeader>
               <Tabs defaultValue="summary" className="mt-4">
                 <TabsList>
-                  <TabsTrigger value="summary">Summary</TabsTrigger>
-                  <TabsTrigger value="participants">Participants</TabsTrigger>
-                  <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                  <TabsTrigger value="summary">{t('events.summary')}</TabsTrigger>
+                  <TabsTrigger value="participants">{t('participants.title')}</TabsTrigger>
+                  <TabsTrigger value="analytics">{t('events.analytics')}</TabsTrigger>
                 </TabsList>
                 <TabsContent value="summary" className="space-y-4 mt-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <Label className="text-muted-foreground text-sm">Theme</Label>
-                      <p className="font-medium">{selectedEvent.theme || 'No theme set'}</p>
+                      <Label className="text-muted-foreground text-sm">{t('events.theme_label')}</Label>
+                      <p className="font-medium">{selectedEvent.theme || t('common.no_theme')}</p>
                     </div>
                     <div>
-                      <Label className="text-muted-foreground text-sm">City</Label>
+                      <Label className="text-muted-foreground text-sm">{t('events.city_label')}</Label>
                       <p className="font-medium">{selectedEvent.city}</p>
                     </div>
                     <div>
-                      <Label className="text-muted-foreground text-sm">Start Date</Label>
+                      <Label className="text-muted-foreground text-sm">{t('events.start_label')}</Label>
                       <p className="font-medium">{selectedEvent.startDate}</p>
                     </div>
                     <div>
-                      <Label className="text-muted-foreground text-sm">End Date</Label>
+                      <Label className="text-muted-foreground text-sm">{t('events.end_label')}</Label>
                       <p className="font-medium">{selectedEvent.endDate}</p>
                     </div>
                   </div>
                   <div>
-                    <Label className="text-muted-foreground text-sm">Venues</Label>
+                    <Label className="text-muted-foreground text-sm">{t('events.venues_label')}</Label>
                     <div className="flex flex-wrap gap-2 mt-1">
                       {selectedEvent.venues.length > 0 ? selectedEvent.venues.map((venue, i) => (
                         <Badge key={i} variant="secondary">{venue}</Badge>
-                      )) : <p className="text-muted-foreground text-sm">No venues added</p>}
+                      )) : <p className="text-muted-foreground text-sm">{t('common.no_venues')}</p>}
                     </div>
                   </div>
                   <div>
-                    <Label className="text-muted-foreground text-sm">Client Groups</Label>
+                    <Label className="text-muted-foreground text-sm">{t('events.client_groups')}</Label>
                     <div className="flex flex-wrap gap-2 mt-1">
                       {selectedEvent.clientGroups.map((group, i) => (
                         <Badge key={i} variant="outline">{group}</Badge>
@@ -540,19 +540,19 @@ const EventsPage: React.FC = () => {
                           <Card>
                             <CardContent className="p-4 text-center">
                               <p className="text-2xl font-bold">{stats.invited}</p>
-                              <p className="text-muted-foreground text-sm">Total Invited</p>
+                              <p className="text-muted-foreground text-sm">{t('events.invited')}</p>
                             </CardContent>
                           </Card>
                           <Card>
                             <CardContent className="p-4 text-center">
                               <p className="text-2xl font-bold text-green-600">{stats.accepted}</p>
-                              <p className="text-muted-foreground text-sm">Accepted</p>
+                              <p className="text-muted-foreground text-sm">{t('events.accepted')}</p>
                             </CardContent>
                           </Card>
                           <Card>
                             <CardContent className="p-4 text-center">
                               <p className="text-2xl font-bold text-red-600">{stats.declined}</p>
-                              <p className="text-muted-foreground text-sm">Declined</p>
+                              <p className="text-muted-foreground text-sm">{t('events.declined')}</p>
                             </CardContent>
                           </Card>
                         </div>
@@ -560,13 +560,13 @@ const EventsPage: React.FC = () => {
                           <Card>
                             <CardContent className="p-4 text-center">
                               <p className="text-2xl font-bold">{stats.registered}</p>
-                              <p className="text-muted-foreground text-sm">Registrations</p>
+                              <p className="text-muted-foreground text-sm">{t('events.registered')}</p>
                             </CardContent>
                           </Card>
                           <Card>
                             <CardContent className="p-4 text-center">
                               <p className="text-2xl font-bold text-blue-600">{stats.confirmed}</p>
-                              <p className="text-muted-foreground text-sm">Confirmed</p>
+                              <p className="text-muted-foreground text-sm">{t('events.confirmed')}</p>
                             </CardContent>
                           </Card>
                         </div>
@@ -585,25 +585,25 @@ const EventsPage: React.FC = () => {
                         <Card>
                           <CardContent className="p-4 text-center">
                             <p className="text-2xl font-bold">{stats.invited}</p>
-                            <p className="text-muted-foreground text-sm">Invited</p>
+                            <p className="text-muted-foreground text-sm">{t('events.invited')}</p>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="p-4 text-center">
                             <p className="text-2xl font-bold">{stats.accepted}</p>
-                            <p className="text-muted-foreground text-sm">Accepted</p>
+                            <p className="text-muted-foreground text-sm">{t('events.accepted')}</p>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="p-4 text-center">
                             <p className="text-2xl font-bold">{conversionRate}%</p>
-                            <p className="text-muted-foreground text-sm">Accept Rate</p>
+                            <p className="text-muted-foreground text-sm">{t('events.accept_rate')}</p>
                           </CardContent>
                         </Card>
                         <Card>
                           <CardContent className="p-4 text-center">
                             <p className="text-2xl font-bold">{registrationRate}%</p>
-                            <p className="text-muted-foreground text-sm">Registration Rate</p>
+                            <p className="text-muted-foreground text-sm">{t('events.reg_rate')}</p>
                           </CardContent>
                         </Card>
                       </div>
