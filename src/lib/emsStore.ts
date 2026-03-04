@@ -52,6 +52,7 @@ export interface EMSEvent {
   venues: string[];
   status: EventStatus;
   clientGroups: ParticipantRole[];
+  logo?: string; // base64 data URL or external URL
   // Team-based event fields
   eventType?: 'individual' | 'team-based' | 'hybrid';
   sportCategories?: {

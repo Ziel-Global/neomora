@@ -48,6 +48,7 @@ const roleLoginRoutes: Record<UserRole, string> = {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const navigate = useNavigate();
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem('ems_user');
     return stored ? JSON.parse(stored) : null;
@@ -56,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = useCallback(async (email: string, password: string, role: UserRole): Promise<boolean> => {
     // Simulate API call
     await new Promise(resolve => setTimeout(resolve, 500));
-    
+
     // Demo: Accept any password for mock users
     const mockUser = mockUsers[role];
     if (mockUser) {
@@ -76,15 +77,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const currentRole = user?.role;
     setUser(null);
     localStorage.removeItem('ems_user');
-    
+
     // Return the appropriate login route based on role
     if (currentRole) {
       const loginRoute = roleLoginRoutes[currentRole];
-      window.location.href = loginRoute;
+      navigate(loginRoute);
     } else {
-      window.location.href = '/';
+      navigate('/');
     }
-  }, [user]);
+  }, [user, navigate]);
 
   return (
     <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout }}>

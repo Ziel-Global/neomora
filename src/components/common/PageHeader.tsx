@@ -39,10 +39,10 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
             </Link>
             {breadcrumbs.map((item, index) => (
               <React.Fragment key={index}>
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4 rtl:rotate-180" />
                 {item.href ? (
-                  <Link 
-                    to={item.href} 
+                  <Link
+                    to={item.href}
                     className="hover:text-foreground transition-colors"
                   >
                     {item.label}
@@ -57,7 +57,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
         <h1 className="page-title">{title}</h1>
         {subtitleText && <p className="page-subtitle">{subtitleText}</p>}
       </div>
-      
+
       {actionsContent && (
         <div className="flex items-center gap-2 flex-shrink-0">
           {actionsContent}

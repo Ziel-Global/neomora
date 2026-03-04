@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard,
-  Calendar,
   Users,
   Mail,
   FileText,
@@ -18,7 +17,6 @@ import {
   Package,
   Users2,
   FolderKanban,
-  Settings,
   BarChart3,
   Shield,
   Bell,
@@ -26,7 +24,8 @@ import {
   Menu,
   X,
   ChevronDown,
-   Flag,
+  Flag,
+  ArrowLeft,
 } from 'lucide-react';
 import {
   Collapsible,
@@ -38,48 +37,54 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 interface NavItem {
   icon: React.ElementType;
   label: string;
-  href?: string;
-  children?: { label: string; href: string }[];
+  path: string; // relative path segment, e.g. "dashboard"
+  children?: { label: string; path: string }[];
 }
 
 const adminNavItems: NavItem[] = [
-  { icon: LayoutDashboard, label: 'common.dashboard', href: '/admin' },
-  { icon: Calendar, label: 'common.events', href: '/admin/events' },
-  { icon: Users, label: 'common.participants', href: '/admin/participants' },
-  { icon: Mail, label: 'common.invitations', href: '/admin/invitations' },
-  { icon: FileText, label: 'common.registrations', href: '/admin/registrations' },
-   { icon: Flag, label: 'common.delegations', href: '/admin/delegations' },
-  { icon: FileCheck2, label: 'common.visas', href: '/admin/visas' },
-  { icon: Plane, label: 'common.travel', href: '/admin/travel' },
-  { icon: Hotel, label: 'common.accommodation', href: '/admin/accommodation' },
-  { icon: Bus, label: 'common.transportation', href: '/admin/transportation' },
-  { icon: BadgeCheck, label: 'common.accreditation', href: '/admin/accreditation' },
-  { icon: Package, label: 'common.equipment', href: '/admin/equipment' },
-  { icon: Users2, label: 'common.crowd_management', href: '/admin/crowd' },
-  { icon: FolderKanban, label: 'common.projects', href: '/admin/projects' },
-  { icon: Shield, label: 'common.manage_staff', href: '/admin/subadmins' },
+  { icon: LayoutDashboard, label: 'common.dashboard', path: 'dashboard' },
+  { icon: Users, label: 'common.participants', path: 'participants' },
+  { icon: Mail, label: 'common.invitations', path: 'invitations' },
+  { icon: FileText, label: 'common.registrations', path: 'registrations' },
+  { icon: Flag, label: 'common.delegations', path: 'delegations' },
+  { icon: FileCheck2, label: 'common.visas', path: 'visas' },
+  { icon: Plane, label: 'common.travel', path: 'travel' },
+  { icon: Hotel, label: 'common.accommodation', path: 'accommodation' },
+  { icon: Bus, label: 'common.transportation', path: 'transportation' },
+  { icon: BadgeCheck, label: 'common.accreditation', path: 'accreditation' },
+  { icon: Package, label: 'common.equipment', path: 'equipment' },
+  { icon: Users2, label: 'common.crowd_management', path: 'crowd' },
+  { icon: FolderKanban, label: 'common.projects', path: 'projects' },
+  { icon: Shield, label: 'common.manage_staff', path: 'subadmins' },
 ];
 
 const systemNavItems: NavItem[] = [
-  { icon: BarChart3, label: 'common.reports', href: '/admin/reports' },
-  { icon: Shield, label: 'common.audit_log', href: '/admin/audit' },
-  { icon: Bell, label: 'common.notifications', href: '/admin/notifications' },
+  { icon: BarChart3, label: 'common.reports', path: 'reports' },
+  { icon: Shield, label: 'common.audit_log', path: 'audit' },
+  { icon: Bell, label: 'common.notifications', path: 'notifications' },
 ];
 
 export const AdminSidebar: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const location = useLocation();
-  // const navigate = useNavigate();
+  const navigate = useNavigate();
+  const { eventId } = useParams<{ eventId: string }>();
   const { user, logout } = useAuth();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const isRtl = i18n.language === 'ar';
 
   const handleLogout = () => {
     logout();
-    // AuthContext handles redirect to role-specific login
   };
 
+  // Build full href for a nav item
+  const buildHref = (path: string) =>
+    eventId ? `/admin/events/${eventId}/${path}` : `/admin`;
+
   const NavLink = ({ item }: { item: NavItem }) => {
-    const isActive = item.href ? location.pathname === item.href : false;
+    const href = buildHref(item.path);
+    // Match on segment to handle nested paths like participants/:id
+    const isActive = location.pathname.startsWith(href);
     const Icon = item.icon;
 
     if (item.children) {
@@ -90,24 +95,27 @@ export const AdminSidebar: React.FC = () => {
               <Icon className="h-5 w-5" />
               {t(item.label)}
             </span>
-            <ChevronDown className="h-4 w-4" />
+            <ChevronDown className={`h-4 w-4 ${isRtl ? 'rotate-0' : ''}`} />
           </CollapsibleTrigger>
-          <CollapsibleContent className="ps-11 space-y-1">
-            {item.children.map((child) => (
-              <Link
-                key={child.href}
-                to={child.href}
-                className={cn(
-                  'block py-2 px-3 rounded-lg text-sm transition-colors',
-                  location.pathname === child.href
-                    ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                    : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'
-                )}
-                onClick={() => setIsMobileOpen(false)}
-              >
-                {t(child.label)}
-              </Link>
-            ))}
+          <CollapsibleContent className={`${isRtl ? 'pe-11' : 'ps-11'} space-y-1`}>
+            {item.children.map(child => {
+              const childHref = buildHref(child.path);
+              return (
+                <Link
+                  key={childHref}
+                  to={childHref}
+                  className={cn(
+                    'block py-2 px-3 rounded-lg text-sm transition-colors text-start',
+                    location.pathname === childHref
+                      ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                      : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'
+                  )}
+                  onClick={() => setIsMobileOpen(false)}
+                >
+                  {t(child.label)}
+                </Link>
+              );
+            })}
           </CollapsibleContent>
         </Collapsible>
       );
@@ -115,11 +123,8 @@ export const AdminSidebar: React.FC = () => {
 
     return (
       <Link
-        to={item.href!}
-        className={cn(
-          'nav-link',
-          isActive ? 'nav-link-active' : 'nav-link-inactive'
-        )}
+        to={href}
+        className={cn('nav-link', isActive ? 'nav-link-active' : 'nav-link-inactive')}
         onClick={() => setIsMobileOpen(false)}
       >
         <Icon className="h-5 w-5" />
@@ -129,34 +134,40 @@ export const AdminSidebar: React.FC = () => {
   };
 
   const SidebarContent = () => (
-    <>
+    <div className="flex flex-col h-full" dir={isRtl ? 'rtl' : 'ltr'}>
       {/* Logo */}
-      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-6 ">
-
-        <img
-          src="/neomoraWhite.png"
-          alt="NeoMora"
-          className="h-6 w-auto"
-        />
-        <div className="ms-auto">
-            <LanguageSwitcher />
+      <div className="flex h-16 items-center gap-2 border-b border-sidebar-border px-6">
+        <img src="/neomoraWhite.png" alt="NeoMora" className="h-6 w-auto" />
+        <div className={isRtl ? 'mr-auto' : 'ml-auto'}>
+          <LanguageSwitcher />
         </div>
       </div>
 
+      {/* All Events back link */}
+      <div className="px-3 pt-3">
+        <button
+          onClick={() => { setIsMobileOpen(false); navigate('/admin'); }}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors text-start"
+        >
+          {isRtl ? <ArrowLeft className="h-4 w-4 shrink-0 rotate-180" /> : <ArrowLeft className="h-4 w-4 shrink-0" />}
+          <span>{t('events.all_events')}</span>
+        </button>
+      </div>
+
       {/* Navigation */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin py-4 px-3 space-y-6">
+      <div className="flex-1 overflow-y-auto scrollbar-thin py-3 px-3 space-y-6">
         <div className="space-y-1">
-          {adminNavItems.map((item) => (
-            <NavLink key={item.label} item={item} />
+          {adminNavItems.map(item => (
+            <NavLink key={item.path} item={item} />
           ))}
         </div>
 
         <div className="space-y-1">
-          <p className="px-3 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-2">
-            System
+          <p className="px-3 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-2 text-start">
+            {t('common.system')}
           </p>
-          {systemNavItems.map((item) => (
-            <NavLink key={item.label} item={item} />
+          {systemNavItems.map(item => (
+            <NavLink key={item.path} item={item} />
           ))}
         </div>
       </div>
@@ -167,9 +178,9 @@ export const AdminSidebar: React.FC = () => {
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-sidebar-accent text-sidebar-accent-foreground font-medium">
             {user?.name?.charAt(0) || 'A'}
           </div>
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 text-start">
             <p className="text-sm font-medium text-sidebar-foreground truncate">
-              {user?.name || 'Admin User'}
+              {user?.name || t('common.admin')}
             </p>
             <p className="text-xs text-sidebar-foreground/60 truncate">
               {user?.email || 'admin@eventems.com'}
@@ -182,18 +193,21 @@ export const AdminSidebar: React.FC = () => {
           className="w-full justify-start text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
           onClick={handleLogout}
         >
-          <LogOut className="h-4 w-4 me-2" />
+          <LogOut className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} />
           {t('common.sign_out')}
         </Button>
       </div>
-    </>
+    </div>
   );
 
   return (
     <>
       {/* Mobile menu button */}
       <button
-        className="fixed top-4 left-4 z-50 lg:hidden p-2 rounded-lg bg-primary text-primary-foreground shadow-lg"
+        className={cn(
+          "fixed top-4 z-50 lg:hidden p-2 rounded-lg bg-primary text-primary-foreground shadow-lg",
+          isRtl ? "right-4" : "left-4"
+        )}
         onClick={() => setIsMobileOpen(!isMobileOpen)}
         aria-label="Toggle menu"
       >
@@ -211,8 +225,9 @@ export const AdminSidebar: React.FC = () => {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed start-0 top-0 z-40 h-screen w-64 flex-col bg-sidebar transition-transform lg:translate-x-0',
-          isMobileOpen ? 'translate-x-0' : '-translate-x-full',
+          'fixed top-0 z-40 h-screen w-64 flex-col bg-sidebar transition-transform lg:translate-x-0',
+          isRtl ? 'right-0' : 'left-0',
+          isMobileOpen ? 'translate-x-0' : (isRtl ? 'translate-x-full' : '-translate-x-full'),
           'flex'
         )}
       >
@@ -221,3 +236,4 @@ export const AdminSidebar: React.FC = () => {
     </>
   );
 };
+

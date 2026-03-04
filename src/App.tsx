@@ -22,7 +22,8 @@ import AdminDashboard from "@/pages/admin/Dashboard";
 import ParticipantsPage from "@/pages/admin/Participants";
 import ParticipantProfile from "@/pages/admin/ParticipantProfile";
 import RegistrationsPage from "@/pages/admin/Registrations";
-import EventsPage from "@/pages/admin/Events";
+import EventSelector from "@/pages/admin/EventSelector";
+
 import InvitationsPage from "@/pages/admin/Invitations";
 import TravelPage from "@/pages/admin/Travel";
 import AccommodationPage from "@/pages/admin/Accommodation";
@@ -93,13 +94,13 @@ initializeStore();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <ParticipantSessionProvider>
-        <ManagerSessionProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
+        <ParticipantSessionProvider>
+          <ManagerSessionProvider>
+            <TooltipProvider>
+              <Toaster />
+              <Sonner />
               <Routes>
                 {/* Auth Routes */}
                 <Route path="/login/admin" element={<AdminLogin />} />
@@ -154,10 +155,13 @@ const App = () => (
                   <Route path="accreditation" element={<ManagerAccreditationPage />} />
                 </Route>
 
-                {/* Admin Routes */}
-                <Route path="/admin" element={<AdminLayout />}>
-                  <Route index element={<AdminDashboard />} />
-                  <Route path="events" element={<EventsPage />} />
+                {/* Admin — Event Selector (no sidebar) */}
+                <Route path="/admin" element={<EventSelector />} />
+
+                {/* Admin — Event-scoped pages (with sidebar) */}
+                <Route path="/admin/events/:eventId" element={<AdminLayout />}>
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<AdminDashboard />} />
                   <Route path="participants" element={<ParticipantsPage />} />
                   <Route path="participants/:id" element={<ParticipantProfile />} />
                   <Route path="invitations" element={<InvitationsPage />} />
@@ -177,6 +181,7 @@ const App = () => (
                   <Route path="subadmins" element={<SubAdminsPage />} />
                 </Route>
 
+
                 {/* SubAdmin Routes */}
                 <Route path="/subadmin" element={<SubAdminLayout />}>
                   <Route index element={<SubAdminDashboard />} />
@@ -194,11 +199,11 @@ const App = () => (
 
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
-          </TooltipProvider>
-        </ManagerSessionProvider>
-      </ParticipantSessionProvider>
-    </AuthProvider>
+            </TooltipProvider>
+          </ManagerSessionProvider>
+        </ParticipantSessionProvider>
+      </AuthProvider>
+    </BrowserRouter>
   </QueryClientProvider>
 );
 

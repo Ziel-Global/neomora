@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from '@/components/NavLink';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
@@ -54,11 +54,12 @@ export const ManagerSidebar: React.FC = () => {
   const { state } = useSidebar();
   const location = useLocation();
   const { manager, logout } = useManagerSession();
+  const navigate = useNavigate();
   const collapsed = state === 'collapsed';
 
   const handleLogout = () => {
     logout();
-    window.location.href = '/login/manager';
+    navigate('/login/manager');
   };
 
   return (

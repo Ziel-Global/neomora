@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
@@ -53,12 +54,12 @@ const REG_DOCS_KEY = 'ems_registration_documents';
 // Helper to retrieve actual file data from dedicated storage
 const getDocumentFileData = (fileDataOrRef: string | undefined): string | null => {
   if (!fileDataOrRef) return null;
-  
+
   // If it's already base64 data, return as-is (legacy support)
   if (fileDataOrRef.startsWith('data:')) {
     return fileDataOrRef;
   }
-  
+
   // Try registration documents storage first
   try {
     const regStored = localStorage.getItem(REG_DOCS_KEY);
@@ -71,7 +72,7 @@ const getDocumentFileData = (fileDataOrRef: string | undefined): string | null =
   } catch (e) {
     console.error('Failed to retrieve from reg docs:', e);
   }
-  
+
   // Fallback to visa documents storage
   try {
     const visaStored = localStorage.getItem(VISA_DOCS_KEY);
@@ -84,7 +85,7 @@ const getDocumentFileData = (fileDataOrRef: string | undefined): string | null =
   } catch (e) {
     console.error('Failed to retrieve from visa docs:', e);
   }
-  
+
   return null;
 };
 
@@ -95,6 +96,8 @@ interface RegistrationWithParticipant extends EMSRegistration {
 }
 
 const RegistrationsPage: React.FC = () => {
+  const { t, i18n } = useTranslation();
+  const isRtl = i18n.language === 'ar';
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [registrations, setRegistrations] = useState<EMSRegistration[]>([]);
   const [participants, setParticipants] = useState<EMSParticipant[]>([]);
@@ -151,27 +154,27 @@ const RegistrationsPage: React.FC = () => {
     if (reg.formData.needsTransport) {
       const travel = travelStore.generateForApprovedRegistration(reg.id);
       if (travel) {
-        toast.success(`Travel itinerary generated for ${reg.participant.firstName}`);
+        toast.success(t('common.activity.travel_ticketed') + `: ${reg.participant.firstName}`);
       }
     }
     loadData();
-    toast.success(`Registration ${reg.registrationId} approved`);
+    toast.success(t('common.activity.reg_approved') + `: ${reg.registrationId}`);
   };
 
   const handleStartReview = (reg: RegistrationWithParticipant) => {
     registrationStore.startReview(reg.id);
     loadData();
-    toast.info(`Registration ${reg.registrationId} marked as under review`);
+    toast.info(t('registrations.start_review') + `: ${reg.registrationId}`);
   };
 
   const handleReject = () => {
     if (!selectedRegistration || !reason.trim()) {
-      toast.error('Please provide a rejection reason');
+      toast.error(t('registrations.rejection_reason'));
       return;
     }
     registrationStore.reject(selectedRegistration.id, 'Admin', reason);
     loadData();
-    toast.success(`Registration ${selectedRegistration.registrationId} rejected`);
+    toast.success(t('common.rejected') + `: ${selectedRegistration.registrationId}`);
     setRejectDialogOpen(false);
     setSelectedRegistration(null);
     setReason('');
@@ -179,12 +182,12 @@ const RegistrationsPage: React.FC = () => {
 
   const handleRequestUpdate = () => {
     if (!selectedRegistration || !reason.trim()) {
-      toast.error('Please provide a reason for the update request');
+      toast.error(t('registrations.required_updates'));
       return;
     }
     registrationStore.requestUpdate(selectedRegistration.id, 'Admin', reason);
     loadData();
-    toast.success(`Update requested for ${selectedRegistration.registrationId}`);
+    toast.success(t('common.update_requested') + `: ${selectedRegistration.registrationId}`);
     setRequestUpdateDialogOpen(false);
     setSelectedRegistration(null);
     setReason('');
@@ -210,7 +213,7 @@ const RegistrationsPage: React.FC = () => {
   const columns: Column<RegistrationWithParticipant>[] = [
     {
       key: 'registrationId',
-      header: 'Reg. ID',
+      header: t('registrations.reg_id'),
       sortable: true,
       accessor: (row) => (
         <span className="font-mono text-sm">{row.registrationId}</span>
@@ -218,7 +221,7 @@ const RegistrationsPage: React.FC = () => {
     },
     {
       key: 'participant',
-      header: 'Participant',
+      header: t('common.participant'),
       sortable: true,
       accessor: (row) => (
         <div className="flex items-center gap-3">
@@ -227,7 +230,7 @@ const RegistrationsPage: React.FC = () => {
               {row.participant.firstName.charAt(0)}{row.participant.lastName.charAt(0)}
             </AvatarFallback>
           </Avatar>
-          <div>
+          <div className="text-start">
             <p className="font-medium text-sm">{row.participant.firstName} {row.participant.lastName}</p>
             <p className="text-xs text-muted-foreground">{row.participant.email}</p>
           </div>
@@ -236,20 +239,20 @@ const RegistrationsPage: React.FC = () => {
     },
     {
       key: 'nationality',
-      header: 'Nationality',
+      header: t('registrations.nationality'),
       sortable: true,
       accessor: (row) => row.participant.nationality,
     },
     {
       key: 'role',
-      header: 'Role',
+      header: t('participants.role'),
       accessor: (row) => (
-        <span className="text-sm">{row.participant.role}</span>
+        <span className="text-sm">{t(`common.${row.participant.role.toLowerCase()}`, { defaultValue: row.participant.role })}</span>
       ),
     },
     {
       key: 'documents',
-      header: 'Documents',
+      header: t('registrations.documents'),
       accessor: (row) => (
         <Button
           variant="ghost"
@@ -264,7 +267,7 @@ const RegistrationsPage: React.FC = () => {
             <FileText className="h-4 w-4 text-muted-foreground" />
             <span className="text-sm">{row.documentCount}</span>
             {row.pendingDocs > 0 && (
-              <span className="text-xs text-status-warning">({row.pendingDocs} pending)</span>
+              <span className="text-xs text-status-warning">{t('registrations.pending_count', { count: row.pendingDocs })}</span>
             )}
           </div>
         </Button>
@@ -272,17 +275,17 @@ const RegistrationsPage: React.FC = () => {
     },
     {
       key: 'submittedAt',
-      header: 'Submitted',
+      header: t('common.submitted'),
       sortable: true,
       accessor: (row) => (
-        <span className="text-sm text-muted-foreground">
-          {row.submittedAt ? new Date(row.submittedAt).toLocaleDateString() : '-'}
+        <span className="text-sm text-muted-foreground font-mono">
+          {row.submittedAt ? new Date(row.submittedAt).toLocaleDateString(i18n.language === 'ar' ? 'ar-EG' : 'en-US') : '-'}
         </span>
       ),
     },
     {
       key: 'status',
-      header: 'Status',
+      header: t('common.status'),
       accessor: (row) => <StatusBadge status={row.status} />,
     },
     {
@@ -296,45 +299,45 @@ const RegistrationsPage: React.FC = () => {
               <MoreHorizontal className="h-4 w-4" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent align={isRtl ? 'start' : 'end'}>
             <DropdownMenuItem asChild>
-              <Link to={`/admin/participants/${row.participantId}`} className="flex items-center gap-2">
+              <Link to={`/admin/participants/${row.participantId}`} className="flex items-center gap-2 text-start">
                 <Eye className="h-4 w-4" />
-                View Profile
+                {t('registrations.view_profile')}
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             {row.status === 'Submitted' && (
               <DropdownMenuItem
-                className="flex items-center gap-2 text-status-info"
+                className="flex items-center gap-2 text-status-info text-start"
                 onClick={() => handleStartReview(row)}
               >
                 <Clock className="h-4 w-4" />
-                Start Review
+                {t('registrations.start_review')}
               </DropdownMenuItem>
             )}
             {(row.status === 'Submitted' || row.status === 'Under Review') && (
               <>
                 <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-success"
+                  className="flex items-center gap-2 text-status-success text-start"
                   onClick={() => handleApprove(row)}
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  Approve
+                  {t('common.approve')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-error"
+                  className="flex items-center gap-2 text-status-error text-start"
                   onClick={() => openRejectDialog(row)}
                 >
                   <XCircle className="h-4 w-4" />
-                  Reject
+                  {t('common.reject')}
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-warning"
+                  className="flex items-center gap-2 text-status-warning text-start"
                   onClick={() => openRequestUpdateDialog(row)}
                 >
                   <AlertTriangle className="h-4 w-4" />
-                  Request Update
+                  {t('registrations.request_update')}
                 </DropdownMenuItem>
               </>
             )}
@@ -347,13 +350,13 @@ const RegistrationsPage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Registrations"
-        subtitle="Review and manage participant registrations"
-        breadcrumbs={[{ label: 'Registrations' }]}
+        title={t('registrations.title')}
+        subtitle={t('registrations.subtitle')}
+        breadcrumbs={[{ label: t('registrations.title') }]}
         actions={
           <Button variant="outline" size="sm">
-            <Download className="h-4 w-4 mr-2" />
-            Export
+            <Download className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} />
+            {t('registrations.export')}
           </Button>
         }
       />
@@ -363,8 +366,8 @@ const RegistrationsPage: React.FC = () => {
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setStatusFilter('Submitted')}>
           <CardContent className="pt-4">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Submitted</p>
+              <div className="text-start">
+                <p className="text-sm text-muted-foreground">{t('registrations.submitted')}</p>
                 <p className="text-2xl font-bold">{stats.submitted}</p>
               </div>
               <div className="h-10 w-10 rounded-lg bg-status-info-bg flex items-center justify-center">
@@ -376,8 +379,8 @@ const RegistrationsPage: React.FC = () => {
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setStatusFilter('Under Review')}>
           <CardContent className="pt-4">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Under Review</p>
+              <div className="text-start">
+                <p className="text-sm text-muted-foreground">{t('registrations.under_review')}</p>
                 <p className="text-2xl font-bold">{stats.underReview}</p>
               </div>
               <div className="h-10 w-10 rounded-lg bg-status-warning-bg flex items-center justify-center">
@@ -389,8 +392,8 @@ const RegistrationsPage: React.FC = () => {
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setStatusFilter('Approved')}>
           <CardContent className="pt-4">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Approved</p>
+              <div className="text-start">
+                <p className="text-sm text-muted-foreground">{t('registrations.approved')}</p>
                 <p className="text-2xl font-bold">{stats.approved}</p>
               </div>
               <div className="h-10 w-10 rounded-lg bg-status-success-bg flex items-center justify-center">
@@ -402,8 +405,8 @@ const RegistrationsPage: React.FC = () => {
         <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => setStatusFilter('Rejected')}>
           <CardContent className="pt-4">
             <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-muted-foreground">Rejected</p>
+              <div className="text-start">
+                <p className="text-sm text-muted-foreground">{t('registrations.rejected')}</p>
                 <p className="text-2xl font-bold">{stats.rejected}</p>
               </div>
               <div className="h-10 w-10 rounded-lg bg-status-error-bg flex items-center justify-center">
@@ -418,27 +421,27 @@ const RegistrationsPage: React.FC = () => {
       <div className="flex flex-wrap gap-3 p-4 rounded-lg bg-muted/50 border border-border">
         <div className="flex items-center gap-2">
           <Filter className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Filters:</span>
+          <span className="text-sm font-medium">{t('registrations.filters')}:</span>
         </div>
 
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-40 h-8">
-            <SelectValue placeholder="Status" />
+            <SelectValue placeholder={t('common.status')} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            <SelectItem value="Draft">Draft</SelectItem>
-            <SelectItem value="Submitted">Submitted</SelectItem>
-            <SelectItem value="Under Review">Under Review</SelectItem>
-            <SelectItem value="Approved">Approved</SelectItem>
-            <SelectItem value="Rejected">Rejected</SelectItem>
-            <SelectItem value="Update Requested">Update Requested</SelectItem>
+            <SelectItem value="all">{t('registrations.all_status')}</SelectItem>
+            <SelectItem value="Draft">{t('common.draft')}</SelectItem>
+            <SelectItem value="Submitted">{t('common.submitted')}</SelectItem>
+            <SelectItem value="Under Review">{t('common.under_review')}</SelectItem>
+            <SelectItem value="Approved">{t('common.approved')}</SelectItem>
+            <SelectItem value="Rejected">{t('common.rejected')}</SelectItem>
+            <SelectItem value="Update Requested">{t('common.update_requested')}</SelectItem>
           </SelectContent>
         </Select>
 
         {statusFilter !== 'all' && (
           <Button variant="ghost" size="sm" onClick={() => setStatusFilter('all')}>
-            Clear Filters
+            {t('registrations.clear_filters')}
           </Button>
         )}
       </div>
@@ -450,9 +453,9 @@ const RegistrationsPage: React.FC = () => {
             <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
               <Users className="h-8 w-8 text-muted-foreground" />
             </div>
-            <h3 className="text-lg font-semibold mb-2">No Registrations Yet</h3>
+            <h3 className="text-lg font-semibold mb-2">{t('registrations.no_registrations')}</h3>
             <p className="text-muted-foreground max-w-md">
-              Registrations will appear here when participants accept invitations and complete their registration forms.
+              {t('registrations.no_registrations_desc')}
             </p>
           </div>
         </Card>
@@ -462,7 +465,7 @@ const RegistrationsPage: React.FC = () => {
           columns={columns}
           keyExtractor={(row) => row.registrationId}
           searchable
-          searchPlaceholder="Search by name, email, registration ID..."
+          searchPlaceholder={t('registrations.search_placeholder')}
           searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email} ${row.registrationId}`}
           selectable
           onSelectionChange={(ids) => console.log('Selected:', ids)}
@@ -471,31 +474,32 @@ const RegistrationsPage: React.FC = () => {
 
       {/* Reject Dialog */}
       <Dialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
-        <DialogContent>
+        <DialogContent dir={isRtl ? 'rtl' : 'ltr'}>
           <DialogHeader>
-            <DialogTitle>Reject Registration</DialogTitle>
-            <DialogDescription>
-              Please provide a reason for rejecting this registration. This will be visible to the participant.
+            <DialogTitle className="text-start">{t('registrations.reject_registration')}</DialogTitle>
+            <DialogDescription className="text-start">
+              {t('registrations.reject_desc')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="reject-reason">Rejection Reason</Label>
+            <div className="space-y-2 text-start">
+              <Label htmlFor="reject-reason">{t('registrations.rejection_reason')}</Label>
               <Textarea
                 id="reject-reason"
-                placeholder="Enter the reason for rejection..."
+                placeholder={t('registrations.rejection_placeholder')}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={4}
+                className="text-start"
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setRejectDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleReject}>
-              Reject Registration
+              {t('registrations.reject_registration')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -503,31 +507,32 @@ const RegistrationsPage: React.FC = () => {
 
       {/* Request Update Dialog */}
       <Dialog open={requestUpdateDialogOpen} onOpenChange={setRequestUpdateDialogOpen}>
-        <DialogContent>
+        <DialogContent dir={isRtl ? 'rtl' : 'ltr'}>
           <DialogHeader>
-            <DialogTitle>Request Update</DialogTitle>
-            <DialogDescription>
-              Specify what information needs to be updated by the participant.
+            <DialogTitle className="text-start">{t('registrations.request_update')}</DialogTitle>
+            <DialogDescription className="text-start">
+              {t('registrations.describe_updates')}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="update-reason">Required Updates</Label>
+            <div className="space-y-2 text-start">
+              <Label htmlFor="update-reason">{t('registrations.required_updates')}</Label>
               <Textarea
                 id="update-reason"
-                placeholder="Describe what needs to be updated..."
+                placeholder={t('registrations.describe_updates')}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
                 rows={4}
+                className="text-start"
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setRequestUpdateDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleRequestUpdate}>
-              Send Request
+              {t('registrations.send_request')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -535,30 +540,30 @@ const RegistrationsPage: React.FC = () => {
 
       {/* View Documents Dialog */}
       <Dialog open={viewDocsDialogOpen} onOpenChange={setViewDocsDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" dir={isRtl ? 'rtl' : 'ltr'}>
           <DialogHeader>
-            <DialogTitle>Documents</DialogTitle>
-            <DialogDescription>
-              Documents submitted by {selectedRegistration?.participant.firstName} {selectedRegistration?.participant.lastName}
+            <DialogTitle className="text-start">{t('registrations.view_docs')}</DialogTitle>
+            <DialogDescription className="text-start">
+              {t('registrations.view_docs')} {selectedRegistration?.participant.firstName} {selectedRegistration?.participant.lastName}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
             {!selectedRegistration?.documents || selectedRegistration.documents.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <FileText className="h-12 w-12 mx-auto mb-3 opacity-20" />
-                <p>No documents submitted yet.</p>
+                <p>{t('registrations.no_docs')}</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {selectedRegistration.documents.map((doc, index) => (
                   <div key={index} className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors">
-                    <div className="flex items-center gap-3 overflow-hidden">
+                    <div className="flex items-center gap-3 overflow-hidden text-start">
                       <div className={`h-10 w-10 rounded-lg flex items-center justify-center bg-muted`}>
                         <FileText className="h-5 w-5 text-muted-foreground" />
                       </div>
                       <div className="min-w-0">
                         <p className="font-medium text-sm truncate">{doc.type}</p>
-                        <p className="text-xs text-muted-foreground truncate">{doc.fileName}</p>
+                        <p className="text-xs text-muted-foreground truncate font-mono">{doc.fileName}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -599,7 +604,7 @@ const RegistrationsPage: React.FC = () => {
           </div>
           <DialogFooter>
             <Button onClick={() => setViewDocsDialogOpen(false)}>
-              Close
+              {t('common.cancel')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Table,
   TableBody,
@@ -17,10 +18,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  ChevronsLeft, 
+import {
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
   ChevronsRight,
   ArrowUpDown,
   ArrowUp,
@@ -67,6 +68,7 @@ export function DataTable<T>({
   emptyMessage = 'No data available',
   className,
 }: DataTableProps<T>) {
+  const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -77,7 +79,7 @@ export function DataTable<T>({
   // Filter data based on search
   const filteredData = useMemo(() => {
     if (!searchable || !searchQuery || !searchKey) return data;
-    return data.filter(row => 
+    return data.filter(row =>
       searchKey(row).toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [data, searchQuery, searchable, searchKey]);
@@ -85,16 +87,16 @@ export function DataTable<T>({
   // Sort data
   const sortedData = useMemo(() => {
     if (!sortKey || !sortDirection) return filteredData;
-    
+
     const column = columns.find(c => c.key === sortKey);
     if (!column) return filteredData;
 
     return [...filteredData].sort((a, b) => {
       const aValue = column.accessor(a);
       const bValue = column.accessor(b);
-      
+
       if (typeof aValue === 'string' && typeof bValue === 'string') {
-        return sortDirection === 'asc' 
+        return sortDirection === 'asc'
           ? aValue.localeCompare(bValue)
           : bValue.localeCompare(aValue);
       }
@@ -112,7 +114,7 @@ export function DataTable<T>({
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
-      setSortDirection(prev => 
+      setSortDirection(prev =>
         prev === 'asc' ? 'desc' : prev === 'desc' ? null : 'asc'
       );
       if (sortDirection === 'desc') setSortKey(null);
@@ -144,7 +146,7 @@ export function DataTable<T>({
     onSelectionChange?.(Array.from(newSelected));
   };
 
-  const isAllSelected = paginatedData.length > 0 && 
+  const isAllSelected = paginatedData.length > 0 &&
     paginatedData.every(row => selectedIds.has(keyExtractor(row)));
   const isSomeSelected = paginatedData.some(row => selectedIds.has(keyExtractor(row)));
 
@@ -157,13 +159,13 @@ export function DataTable<T>({
             <div className="relative w-full sm:max-w-xs">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder={searchPlaceholder}
+                placeholder={searchPlaceholder === 'Search...' ? t('common.search') : searchPlaceholder}
                 value={searchQuery}
                 onChange={(e) => {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="pl-9 pr-9"
+                className="pl-9 pr-9 text-start"
               />
               {searchQuery && (
                 <button
@@ -175,10 +177,10 @@ export function DataTable<T>({
               )}
             </div>
           )}
-          
+
           {selectedIds.size > 0 && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>{selectedIds.size} selected</span>
+              <span>{t('common.selected_count', { count: selectedIds.size })}</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -187,7 +189,7 @@ export function DataTable<T>({
                   onSelectionChange?.([]);
                 }}
               >
-                Clear
+                {t('common.clear')}
               </Button>
             </div>
           )}
@@ -215,11 +217,12 @@ export function DataTable<T>({
                     key={column.key}
                     className={cn(
                       column.sortable && 'cursor-pointer select-none',
-                      column.className
+                      column.className,
+                      'text-start'
                     )}
                     onClick={() => column.sortable && handleSort(column.key)}
                   >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 justify-start">
                       {column.header}
                       {column.sortable && (
                         <span className="text-muted-foreground">
@@ -246,14 +249,14 @@ export function DataTable<T>({
                     colSpan={columns.length + (selectable ? 1 : 0)}
                     className="h-32 text-center text-muted-foreground"
                   >
-                    {emptyMessage}
+                    {emptyMessage === 'No data available' ? t('common.no_data') : emptyMessage}
                   </TableCell>
                 </TableRow>
               ) : (
                 paginatedData.map((row) => {
                   const id = keyExtractor(row);
                   const isSelected = selectedIds.has(id);
-                  
+
                   return (
                     <TableRow
                       key={id}
@@ -266,7 +269,7 @@ export function DataTable<T>({
                         <TableCell>
                           <Checkbox
                             checked={isSelected}
-                            onCheckedChange={(checked) => 
+                            onCheckedChange={(checked) =>
                               handleSelectRow(id, checked as boolean)
                             }
                             aria-label={`Select row ${id}`}
@@ -274,7 +277,7 @@ export function DataTable<T>({
                         </TableCell>
                       )}
                       {columns.map((column) => (
-                        <TableCell key={column.key} className={column.className}>
+                        <TableCell key={column.key} className={cn(column.className, 'text-start')}>
                           {column.accessor(row)}
                         </TableCell>
                       ))}
@@ -291,7 +294,7 @@ export function DataTable<T>({
       {sortedData.length > 0 && (
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>Rows per page:</span>
+            <span>{t('common.rows_per_page')}</span>
             <Select
               value={String(pageSize)}
               onValueChange={(value) => {
@@ -314,7 +317,7 @@ export function DataTable<T>({
 
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">
-              Page {currentPage} of {totalPages}
+              {t('common.page_of', { current: currentPage, total: totalPages })}
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -324,7 +327,7 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(1)}
                 disabled={currentPage === 1}
               >
-                <ChevronsLeft className="h-4 w-4" />
+                <ChevronsLeft className="h-4 w-4 rtl:rotate-180" />
               </Button>
               <Button
                 variant="outline"
@@ -333,7 +336,7 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(p => p - 1)}
                 disabled={currentPage === 1}
               >
-                <ChevronLeft className="h-4 w-4" />
+                <ChevronLeft className="h-4 w-4 rtl:rotate-180" />
               </Button>
               <Button
                 variant="outline"
@@ -342,7 +345,7 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(p => p + 1)}
                 disabled={currentPage === totalPages}
               >
-                <ChevronRight className="h-4 w-4" />
+                <ChevronRight className="h-4 w-4 rtl:rotate-180" />
               </Button>
               <Button
                 variant="outline"
@@ -351,12 +354,13 @@ export function DataTable<T>({
                 onClick={() => setCurrentPage(totalPages)}
                 disabled={currentPage === totalPages}
               >
-                <ChevronsRight className="h-4 w-4" />
+                <ChevronsRight className="h-4 w-4 rtl:rotate-180" />
               </Button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
 }

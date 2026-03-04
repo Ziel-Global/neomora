@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useParticipantSession } from '@/contexts/ParticipantSessionContext';
 import { Button } from '@/components/ui/button';
@@ -42,6 +42,7 @@ const participantNavItems: NavItem[] = [
 export const ParticipantSidebar: React.FC = () => {
     const location = useLocation();
     const { participant, logout } = useParticipantSession();
+    const navigate = useNavigate();
     const [isMobileOpen, setIsMobileOpen] = useState(false);
 
     // Helper to determine if a link is active
@@ -111,7 +112,7 @@ export const ParticipantSidebar: React.FC = () => {
                     onClick={() => {
                         logout();
                         // Redirect handled by auth context usually, or we can force it
-                        window.location.href = '/login/participant';
+                        navigate('/login/participant');
                     }}
                 >
                     <LogOut className="h-4 w-4 mr-2" />
