@@ -61,7 +61,7 @@
      localStorage.setItem(MANAGERS_KEY, JSON.stringify(managers));
  
      // Auto-login
-     login(formData.email);
+     login(formData.email, '');
      toast.success('Registration successful! Welcome to the Team Manager Portal.');
      navigate('/manager/dashboard');
      setIsLoading(false);

@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { eventStore, EMSEvent, generateId } from '@/lib/emsStore';
+import { getEvents, createEvent, deleteEvent, updateEvent } from '@/api/eventApi';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
 import { useAuth } from '@/contexts/AuthContext';
 import { LanguageSwitcher } from '@/components/LanguageSwitcher';
+import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +45,8 @@ import {
     Trash2,
     Upload,
     X,
+    Loader2,
+    AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -110,9 +114,26 @@ const EventSelector: React.FC = () => {
     const [isEditOpen, setEdit] = useState(false);
     const [editTarget, setEditTarget] = useState<EMSEvent | null>(null);
     const [form, setForm] = useState(emptyForm());
+    const [isCreating, setIsCreating] = useState(false);
+    const [isListLoading, setIsListLoading] = useState(true);
+    const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<EMSEvent | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const [isUpdating, setIsUpdating] = useState(false);
     const logoInputRef = useRef<HTMLInputElement>(null);
 
-    const load = () => setEvents(eventStore.getAll());
+    const load = async () => {
+        try {
+            setIsListLoading(true);
+            const data = await getEvents();
+            setEvents(data);
+        } catch (error) {
+            console.error('Failed to fetch events:', error);
+            toast.error('Failed to fetch events');
+        } finally {
+            setIsListLoading(false);
+        }
+    };
 
     useEffect(() => { load(); }, []);
 
@@ -136,34 +157,43 @@ const EventSelector: React.FC = () => {
         }));
 
     /* ─── CRUD ─── */
-    const handleCreate = () => {
+    const handleCreate = async () => {
         if (!form.name || !form.startDate || !form.endDate || !form.city) {
             toast.error(t('common.fill_required') || 'Please fill in all required fields');
             return;
         }
         const sportCategories = form.selectedSports
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
-            .filter(Boolean) as EMSEvent['sportCategories'];
+            .filter(Boolean)
+            .map(c => ({
+                name: c!.name,
+                subCategory: c!.subCategories?.[0] || 'Any',
+            }));
 
-        eventStore.create({
-            name: form.name,
-            theme: form.theme,
-            startDate: form.startDate,
-            endDate: form.endDate,
-            city: form.city,
-            venues: form.venues.split('\n').filter(v => v.trim()),
-            status: form.status,
-            logo: form.logo || undefined,
-            clientGroups: ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'],
-            eventType: form.eventType,
-            sportCategories,
-            allowTeamRegistration: form.allowTeamRegistration,
-        });
+        try {
+            setIsCreating(true);
+            await createEvent({
+                name: form.name,
+                theme: form.theme,
+                startDate: form.startDate,
+                endDate: form.endDate,
+                city: form.city,
+                eventType: form.eventType,
+                venues: form.venues.split('\n').filter(v => v.trim()),
+                sportCategories,
+                status: form.status,
+            });
 
-        toast.success(t('events.created_success', { name: form.name }));
-        setCreate(false);
-        setForm(emptyForm());
-        load();
+            toast.success(t('events.created_success', { name: form.name }));
+            setCreate(false);
+            setForm(emptyForm());
+            load();
+        } catch (error) {
+            console.error('Error creating event:', error);
+            toast.error('Failed to create event');
+        } finally {
+            setIsCreating(false);
+        }
     };
 
     const openEdit = (ev: EMSEvent, e: React.MouseEvent) => {
@@ -185,38 +215,65 @@ const EventSelector: React.FC = () => {
         setEdit(true);
     };
 
-    const handleUpdate = () => {
+    const handleUpdate = async () => {
         if (!editTarget) return;
         const sportCategories = form.selectedSports
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
-            .filter(Boolean) as EMSEvent['sportCategories'];
+            .filter(Boolean)
+            .map((c, index) => ({
+                id: index + 1, // Providing a numeric ID as shown in user's request
+                name: c!.name,
+                subCategory: c!.subCategories?.[0] || 'Any',
+            }));
 
-        eventStore.update(editTarget.id, {
-            name: form.name,
-            theme: form.theme,
-            startDate: form.startDate,
-            endDate: form.endDate,
-            city: form.city,
-            venues: form.venues.split('\n').filter(v => v.trim()),
-            status: form.status,
-            logo: form.logo || undefined,
-            eventType: form.eventType,
-            sportCategories,
-            allowTeamRegistration: form.allowTeamRegistration,
-        });
+        try {
+            setIsUpdating(true);
+            await updateEvent(editTarget.id, {
+                name: form.name,
+                theme: form.theme,
+                startDate: form.startDate,
+                endDate: form.endDate,
+                city: form.city,
+                eventType: form.eventType,
+                venues: form.venues.split('\n').filter(v => v.trim()),
+                sportCategories,
+                status: form.status,
+            });
 
-        toast.success(t('events.updated_success'));
-        setEdit(false);
-        setEditTarget(null);
-        setForm(emptyForm());
-        load();
+            toast.success(t('events.updated_success'));
+            setEdit(false);
+            setEditTarget(null);
+            setForm(emptyForm());
+            load();
+        } catch (error) {
+            console.error('Error updating event:', error);
+            toast.error('Failed to update event');
+        } finally {
+            setIsUpdating(false);
+        }
     };
 
     const handleDelete = (ev: EMSEvent, e: React.MouseEvent) => {
         e.stopPropagation();
-        eventStore.delete(ev.id);
-        toast.success(t('events.deleted_success', { name: ev.name }));
-        load();
+        setDeleteTarget(ev);
+        setIsDeleteDialogOpen(true);
+    };
+
+    const handleConfirmDelete = async () => {
+        if (!deleteTarget) return;
+        try {
+            setIsDeleting(true);
+            await deleteEvent(deleteTarget.id);
+            toast.success(t('events.deleted_success', { name: deleteTarget.name }));
+            setIsDeleteDialogOpen(false);
+            setDeleteTarget(null);
+            load();
+        } catch (error) {
+            console.error('Error deleting event:', error);
+            toast.error('Failed to delete event');
+        } finally {
+            setIsDeleting(false);
+        }
     };
 
     /* ─── Filtered list ─── */
@@ -340,33 +397,7 @@ const EventSelector: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-background flex flex-col" dir={isRtl ? 'rtl' : 'ltr'}>
-            {/* ─── Top bar ─── */}
-            <header className="sticky top-0 z-30 bg-sidebar border-b border-sidebar-border px-6 py-0 flex items-center gap-4 h-16 shadow-sm">
-                <img src="/neomoraWhite.png" alt="NeoMora" className="h-6 w-auto" />
-                <span className="text-sidebar-foreground/40 font-light text-lg mx-1">|</span>
-                <span className="text-sidebar-foreground font-semibold text-base tracking-tight">
-                    {t('events.admin_portal')}
-                </span>
-
-                <div className={`${isRtl ? 'mr-auto' : 'ml-auto'} flex items-center gap-3`}>
-                    <LanguageSwitcher />
-                    <div className="flex items-center gap-2 text-sm text-sidebar-foreground/80">
-                        <div className="h-8 w-8 rounded-full bg-sidebar-accent flex items-center justify-center font-medium text-sidebar-accent-foreground">
-                            {user?.name?.charAt(0) ?? 'A'}
-                        </div>
-                        <span className="hidden sm:block">{user?.name ?? t('common.admin')}</span>
-                    </div>
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
-                        onClick={logout}
-                    >
-                        <LogOut className={`h-4 w-4 ${isRtl ? 'ml-1.5' : 'mr-1.5'}`} />
-                        {t('common.sign_out')}
-                    </Button>
-                </div>
-            </header>
+            <AdminHomeHeader />
 
             {/* ─── Main content ─── */}
             <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10">
@@ -413,8 +444,17 @@ const EventSelector: React.FC = () => {
                     </Select>
                 </div>
 
+                {/* Loading state */}
+                {isListLoading && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {[1, 2, 3, 4].map(i => (
+                            <div key={i} className="h-[280px] rounded-2xl bg-muted animate-pulse" />
+                        ))}
+                    </div>
+                )}
+
                 {/* Empty state */}
-                {events.length === 0 && (
+                {!isListLoading && events.length === 0 && (
                     <div className="flex flex-col items-center justify-center py-24 text-center">
                         <div className="h-20 w-20 rounded-2xl bg-muted flex items-center justify-center mb-6">
                             <Calendar className="h-10 w-10 text-muted-foreground" />
@@ -549,10 +589,13 @@ const EventSelector: React.FC = () => {
                     </DialogHeader>
                     {FormFields}
                     <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} justify-end gap-2 pt-2`}>
-                        <Button variant="outline" onClick={() => { setCreate(false); setForm(emptyForm()); }}>
+                        <Button variant="outline" onClick={() => { setCreate(false); setForm(emptyForm()); }} disabled={isCreating}>
                             {t('common.cancel')}
                         </Button>
-                        <Button onClick={handleCreate}>{t('events.create_event')}</Button>
+                        <Button onClick={handleCreate} disabled={isCreating}>
+                            {isCreating && <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? 'ml-2' : 'mr-2'}`} />}
+                            {t('events.create_event')}
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>
@@ -566,10 +609,37 @@ const EventSelector: React.FC = () => {
                     </DialogHeader>
                     {FormFields}
                     <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} justify-end gap-2 pt-2`}>
-                        <Button variant="outline" onClick={() => { setEdit(false); setEditTarget(null); setForm(emptyForm()); }}>
+                        <Button variant="outline" onClick={() => { setEdit(false); setEditTarget(null); setForm(emptyForm()); }} disabled={isUpdating}>
                             {t('common.cancel')}
                         </Button>
-                        <Button onClick={handleUpdate}>{t('common.save_changes')}</Button>
+                        <Button onClick={handleUpdate} disabled={isUpdating}>
+                            {isUpdating && <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? 'ml-2' : 'mr-2'}`} />}
+                            {t('common.save_changes')}
+                        </Button>
+                    </div>
+                </DialogContent>
+            </Dialog>
+
+            {/* ─── Delete Confirmation Dialog ─── */}
+            <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+                <DialogContent dir={isRtl ? 'rtl' : 'ltr'}>
+                    <DialogHeader>
+                        <div className="mx-auto mb-4 h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center">
+                            <AlertTriangle className="h-6 w-6 text-destructive" />
+                        </div>
+                        <DialogTitle className="text-center">Are you sure?</DialogTitle>
+                        <DialogDescription className="text-center">
+                            This will permanently delete the event <strong>{deleteTarget?.name}</strong>. This action cannot be undone.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} justify-center gap-3 pt-4`}>
+                        <Button variant="outline" onClick={() => setIsDeleteDialogOpen(false)} disabled={isDeleting}>
+                            {t('common.cancel')}
+                        </Button>
+                        <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
+                            {isDeleting && <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? 'ml-2' : 'mr-2'}`} />}
+                            Delete Event
+                        </Button>
                     </div>
                 </DialogContent>
             </Dialog>

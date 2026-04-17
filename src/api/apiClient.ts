@@ -1,0 +1,39 @@
+import axios from 'axios';
+
+const apiClient = axios.create({
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Request interceptor: attach Bearer token if present
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('ems_token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Response interceptor: handle 401 globally
+apiClient.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      // Clear stored auth data on 401
+      localStorage.removeItem('ems_token');
+      localStorage.removeItem('ems_user');
+      localStorage.removeItem('ems_manager_session');
+      localStorage.removeItem('ems_participant_session');
+
+      // Redirect to home if not already on a login page
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+export default apiClient;

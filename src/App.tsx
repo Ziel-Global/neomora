@@ -94,7 +94,7 @@ initializeStore();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <BrowserRouter>
+    <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <ParticipantSessionProvider>
           <ManagerSessionProvider>
@@ -155,15 +155,19 @@ const App = () => (
                   <Route path="accreditation" element={<ManagerAccreditationPage />} />
                 </Route>
 
-                {/* Admin — Event Selector (no sidebar) */}
+                {/* Admin Standalone Modules */}
                 <Route path="/admin" element={<EventSelector />} />
+                <Route path="/admin/participants" element={<ParticipantsPage />} />
+                <Route path="/admin/participants/:id" element={<ParticipantProfile />} />
+                <Route path="/admin/subadmins" element={<SubAdminsPage />} />
+                <Route path="/admin/notifications" element={<NotificationsPage />} />
+                <Route path="/admin/audit" element={<AuditLogPage />} />
+                <Route path="/admin/reports" element={<ReportsPage />} />
 
                 {/* Admin — Event-scoped pages (with sidebar) */}
                 <Route path="/admin/events/:eventId" element={<AdminLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<AdminDashboard />} />
-                  <Route path="participants" element={<ParticipantsPage />} />
-                  <Route path="participants/:id" element={<ParticipantProfile />} />
                   <Route path="invitations" element={<InvitationsPage />} />
                   <Route path="registrations" element={<RegistrationsPage />} />
                   <Route path="delegations" element={<AdminDelegationsPage />} />
@@ -174,11 +178,7 @@ const App = () => (
                   <Route path="accreditation" element={<AccreditationPage />} />
                   <Route path="equipment" element={<EquipmentPage />} />
                   <Route path="crowd" element={<CrowdManagementPage />} />
-                  <Route path="reports" element={<ReportsPage />} />
-                  <Route path="audit" element={<AuditLogPage />} />
-                  <Route path="notifications" element={<NotificationsPage />} />
                   <Route path="projects" element={<ProjectsPage />} />
-                  <Route path="subadmins" element={<SubAdminsPage />} />
                 </Route>
 
 

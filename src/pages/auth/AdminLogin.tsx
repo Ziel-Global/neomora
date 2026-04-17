@@ -11,8 +11,8 @@ import { toast } from 'sonner';
 const AdminLogin: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useAuth();
-  const [email, setEmail] = useState('admin@eventems.com');
-  const [password, setPassword] = useState('demo123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -28,7 +28,7 @@ const AdminLogin: React.FC = () => {
         toast.error('Invalid credentials');
       }
     } catch (error) {
-      toast.error('Login failed');
+      toast.error('Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -72,7 +72,7 @@ const AdminLogin: React.FC = () => {
                   <Input
                     id="email"
                     type="email"
-                    placeholder="admin@eventems.com"
+                    placeholder="admin@neomora.local"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -117,8 +117,7 @@ const AdminLogin: React.FC = () => {
 
             <div className="pt-4 border-t border-gray-100">
               <p className="text-xs text-center text-muted-foreground">
-                Protected by GuestPath Secure Auth. <br />
-                Demo: admin@eventems.com / any
+                Protected by Neomora Secure Auth.
               </p>
             </div>
           </CardContent>

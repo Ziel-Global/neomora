@@ -71,6 +71,7 @@ export interface EMSParticipant {
   lastName: string;
   email: string;
   phone: string;
+  gender: string; // 'male' | 'female' | 'other'
   nationality: string;
   passportNumber?: string;
   passportExpiry?: string;
@@ -1506,6 +1507,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'AE112233445',
     organization: 'الاتحاد الرياضي الإماراتي',
     role: 'VVIP',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1518,6 +1520,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'QA223344556',
     organization: 'اللجنة الأولمبية القطرية',
     role: 'VIP',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1530,6 +1533,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'SA334455667',
     organization: 'وزارة الرياضة السعودية',
     role: 'Official',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1542,6 +1546,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'KW445566778',
     organization: 'الاتحاد الكويتي للرياضة',
     role: 'Athlete',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1554,6 +1559,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'BH556677889',
     organization: 'اللجنة الأولمبية البحرينية',
     role: 'Judge',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1566,6 +1572,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'OM667788990',
     organization: 'وزارة الشؤون الرياضية العمانية',
     role: 'Official',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1578,6 +1585,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'JO778899001',
     organization: 'اللجنة الأولمبية الأردنية',
     role: 'Athlete',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1590,6 +1598,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'EG889900112',
     organization: 'اتحاد الألعاب الرياضية المصري',
     role: 'Media',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1602,6 +1611,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'LB990011223',
     organization: 'اللجنة الأولمبية اللبنانية',
     role: 'VIP',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1614,6 +1624,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'IQ001122334',
     organization: 'الاتحاد العراقي للرياضة',
     role: 'Athlete',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1626,6 +1637,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'MA112233445',
     organization: 'اللجنة الأولمبية المغربية',
     role: 'Judge',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },
@@ -1638,6 +1650,7 @@ const arabicParticipantsData: Omit<EMSParticipant, 'id' | 'createdAt' | 'updated
     passportNumber: 'TN223344556',
     organization: 'الاتحاد التونسي للرياضة',
     role: 'Fan',
+    gender: 'male',
     dietaryNotes: 'حلال',
     accessibilityNeeds: '',
   },

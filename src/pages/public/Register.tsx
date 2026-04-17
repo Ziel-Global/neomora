@@ -158,7 +158,7 @@ const RegisterPage: React.FC = () => {
         passportNumber: sessionParticipant.passportNumber || '',
         organization: sessionParticipant.organization || '',
         jobTitle: sessionParticipant.jobTitle || '',
-        role: sessionParticipant.role || '',
+        role: (sessionParticipant.role as any) || '',
         emergencyContact: sessionParticipant.emergencyContact || '',
         dietaryRequirements: sessionParticipant.dietaryNotes || '',
       }));
@@ -396,7 +396,7 @@ const RegisterPage: React.FC = () => {
 
     try {
       // Get or create participant
-      let participant: EMSParticipant | undefined = sessionParticipant || undefined;
+      let participant: EMSParticipant | undefined = (sessionParticipant as any) || undefined;
 
       if (!participant) {
         // Check if participant exists by email
@@ -497,7 +497,7 @@ const RegisterPage: React.FC = () => {
       }
 
       // Log participant in
-      login(formData.email);
+      login(formData.email, ''); 
 
       toast.success('Registration submitted successfully!');
       navigate('/my-status');

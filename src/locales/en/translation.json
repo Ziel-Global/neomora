@@ -58,7 +58,12 @@
     "participants_count": "{{count}} participants",
     "actions": "Actions",
     "filter": "Filter",
+    "filters": "Filters",
     "export": "Export",
+    "gender": "Gender",
+    "male": "Male",
+    "female": "Female",
+    "other": "Other",
     "participant": "Participant",
     "event": "Event",
     "campaign": "Campaign",
@@ -192,7 +197,16 @@
     "dietary": "Dietary Requirements",
     "accessibility": "Accessibility Needs",
     "send_message": "Send Message",
-    "view_profile": "View Profile"
+    "view_profile": "View Profile",
+    "roles": {
+      "vvip": "VVIP",
+      "vip": "VIP",
+      "athlete": "Athlete",
+      "official": "Official",
+      "judge": "Judge",
+      "media": "Media",
+      "fan": "Fan"
+    }
   },
   "invitations": {
     "title": "Invitations",

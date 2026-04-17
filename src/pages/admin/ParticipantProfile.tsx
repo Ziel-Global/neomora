@@ -43,8 +43,10 @@ import {
   Upload,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { useTranslation } from 'react-i18next';
 
 const ParticipantProfile: React.FC = () => {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const [isLoading, setIsLoading] = useState(true);
   const [participant, setParticipant] = useState<EMSParticipant | null>(null);
@@ -206,7 +208,7 @@ const ParticipantProfile: React.FC = () => {
                   <p className="text-muted-foreground">{participant.organization}</p>
                 </div>
                 <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-accent/10 text-accent w-fit">
-                  {participant.role}
+                  {participant.role ? t(`participants.roles.${participant.role.toLowerCase()}`) : '-'}
                 </span>
               </div>
 
@@ -291,6 +293,10 @@ const ParticipantProfile: React.FC = () => {
                   <div>
                     <p className="text-xs text-muted-foreground">Nationality</p>
                     <p className="text-sm font-medium">{participant.nationality || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Gender</p>
+                    <p className="text-sm font-medium capitalize">{participant.gender || '-'}</p>
                   </div>
                   <div>
                     <p className="text-xs text-muted-foreground">Organization</p>

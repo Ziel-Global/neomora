@@ -41,9 +41,8 @@ interface NavItem {
   children?: { label: string; path: string }[];
 }
 
-const adminNavItems: NavItem[] = [
+const eventNavItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'common.dashboard', path: 'dashboard' },
-  { icon: Users, label: 'common.participants', path: 'participants' },
   { icon: Mail, label: 'common.invitations', path: 'invitations' },
   { icon: FileText, label: 'common.registrations', path: 'registrations' },
   { icon: Flag, label: 'common.delegations', path: 'delegations' },
@@ -55,13 +54,6 @@ const adminNavItems: NavItem[] = [
   { icon: Package, label: 'common.equipment', path: 'equipment' },
   { icon: Users2, label: 'common.crowd_management', path: 'crowd' },
   { icon: FolderKanban, label: 'common.projects', path: 'projects' },
-  { icon: Shield, label: 'common.manage_staff', path: 'subadmins' },
-];
-
-const systemNavItems: NavItem[] = [
-  { icon: BarChart3, label: 'common.reports', path: 'reports' },
-  { icon: Shield, label: 'common.audit_log', path: 'audit' },
-  { icon: Bell, label: 'common.notifications', path: 'notifications' },
 ];
 
 export const AdminSidebar: React.FC = () => {
@@ -78,8 +70,7 @@ export const AdminSidebar: React.FC = () => {
   };
 
   // Build full href for a nav item
-  const buildHref = (path: string) =>
-    eventId ? `/admin/events/${eventId}/${path}` : `/admin`;
+  const buildHref = (path: string) => `/admin/events/${eventId}/${path}`;
 
   const NavLink = ({ item }: { item: NavItem }) => {
     const href = buildHref(item.path);
@@ -157,16 +148,7 @@ export const AdminSidebar: React.FC = () => {
       {/* Navigation */}
       <div className="flex-1 overflow-y-auto scrollbar-thin py-3 px-3 space-y-6">
         <div className="space-y-1">
-          {adminNavItems.map(item => (
-            <NavLink key={item.path} item={item} />
-          ))}
-        </div>
-
-        <div className="space-y-1">
-          <p className="px-3 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 mb-2 text-start">
-            {t('common.system')}
-          </p>
-          {systemNavItems.map(item => (
+          {eventNavItems.map(item => (
             <NavLink key={item.path} item={item} />
           ))}
         </div>

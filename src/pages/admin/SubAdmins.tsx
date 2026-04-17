@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, UserPlus, Shield, Edit, Trash2, UserX } from 'lucide-react';
 import { toast } from 'sonner';
+import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
 
 interface Permission {
   id: string;
@@ -197,11 +198,14 @@ const SubAdminsPage: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Manage Sub-Admins"
-        description="Create and manage staff accounts with specific access privileges"
-        actions={
+    <div className="min-h-screen bg-background flex flex-col">
+      <AdminHomeHeader />
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6 animate-fade-in">
+        <PageHeader
+          title="Manage Sub-Admins"
+          description="Create and manage staff accounts with specific access privileges"
+          actions={
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>
               <Button onClick={() => { resetForm(); setIsCreateOpen(true); }}>
@@ -389,6 +393,7 @@ const SubAdminsPage: React.FC = () => {
           </Table>
         </CardContent>
       </Card>
+      </main>
 
       {/* Edit Dialog */}
       <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>

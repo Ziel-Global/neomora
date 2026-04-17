@@ -1,44 +1,26 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserRole } from '@/data/mockData';
+import { adminLogin as adminLoginApi } from '@/api/authApi';
+
+export type UserRole = 'admin' | 'subadmin' | 'guest';
 
 interface User {
   id: string;
   email: string;
   name: string;
   role: UserRole;
+  [key: string]: unknown;
 }
 
 interface AuthContextType {
   user: User | null;
+  token: string | null;
   isAuthenticated: boolean;
   login: (email: string, password: string, role: UserRole) => Promise<boolean>;
   logout: () => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Mock users for demo
-const mockUsers: Record<UserRole, User> = {
-  admin: {
-    id: 'admin-001',
-    email: 'admin@eventems.com',
-    name: 'John Admin',
-    role: 'admin',
-  },
-  subadmin: {
-    id: 'subadmin-001',
-    email: 'ops@eventems.com',
-    name: 'Sarah Operations',
-    role: 'subadmin',
-  },
-  guest: {
-    id: 'guest-001',
-    email: 'guest@email.com',
-    name: 'Guest User',
-    role: 'guest',
-  },
-};
 
 // Role to login route mapping
 const roleLoginRoutes: Record<UserRole, string> = {
@@ -49,36 +31,49 @@ const roleLoginRoutes: Record<UserRole, string> = {
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const navigate = useNavigate();
+
   const [user, setUser] = useState<User | null>(() => {
     const stored = localStorage.getItem('ems_user');
     return stored ? JSON.parse(stored) : null;
   });
 
-  const login = useCallback(async (email: string, password: string, role: UserRole): Promise<boolean> => {
-    // Simulate API call
-    await new Promise(resolve => setTimeout(resolve, 500));
+  const [token, setToken] = useState<string | null>(() => {
+    return localStorage.getItem('ems_token');
+  });
 
-    // Demo: Accept any password for mock users
-    const mockUser = mockUsers[role];
-    if (mockUser) {
-      // Create user with provided email if different from mock
-      const loggedInUser = {
-        ...mockUser,
-        email: email || mockUser.email,
+  const login = useCallback(async (email: string, password: string, role: UserRole): Promise<boolean> => {
+    try {
+      const response = await adminLoginApi(email, password);
+
+      const loggedInUser: User = {
+        id: response.user?.id || '',
+        email: response.user?.email || email,
+        name: response.user?.name || email,
+        role: role,
+        ...response.user,
       };
+
+      const authToken = response.token;
+
       setUser(loggedInUser);
+      setToken(authToken);
       localStorage.setItem('ems_user', JSON.stringify(loggedInUser));
+      localStorage.setItem('ems_token', authToken);
+
       return true;
+    } catch (error: any) {
+      console.error('Admin login failed:', error?.response?.data || error.message);
+      return false;
     }
-    return false;
   }, []);
 
   const logout = useCallback(() => {
     const currentRole = user?.role;
     setUser(null);
+    setToken(null);
     localStorage.removeItem('ems_user');
+    localStorage.removeItem('ems_token');
 
-    // Return the appropriate login route based on role
     if (currentRole) {
       const loginRoute = roleLoginRoutes[currentRole];
       navigate(loginRoute);
@@ -88,7 +83,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [user, navigate]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!user && !!token, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

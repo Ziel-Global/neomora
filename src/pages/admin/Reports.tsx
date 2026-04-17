@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
 import { PageHeader } from '@/components/common/PageHeader';
 import { events, participants, rsvps, registrations, visaCases, travelBookings } from '@/data/mockData';
 import { BarChart3, PieChart, Download, Filter, TrendingUp, Users, Globe } from 'lucide-react';
@@ -65,8 +66,11 @@ const ReportsPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
+    <div className="min-h-screen bg-background flex flex-col">
+      <AdminHomeHeader />
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6 animate-fade-in">
+        <PageHeader
         title="Reports & Analytics"
         description="Comprehensive event analytics and export tools"
         action={
@@ -334,6 +338,7 @@ const ReportsPage: React.FC = () => {
           </div>
         </TabsContent>
       </Tabs>
+      </main>
     </div>
   );
 };

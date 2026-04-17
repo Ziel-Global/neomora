@@ -6,6 +6,8 @@ import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { participantStore, invitationStore, registrationStore, EMSParticipant } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
+import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
+import * as participantApi from '@/api/participantApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -26,6 +28,7 @@ import {
   Edit,
   Trash2,
   Users,
+  Loader2,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -63,13 +66,18 @@ const ParticipantsPage: React.FC = () => {
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
+  const [participantToDelete, setParticipantToDelete] = useState<EMSParticipant | null>(null);
   const [editingParticipant, setEditingParticipant] = useState<EMSParticipant | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
     email: '',
     phone: '',
+    gender: 'male' as string,
     nationality: '',
     organization: '',
     jobTitle: '',
@@ -82,8 +90,19 @@ const ParticipantsPage: React.FC = () => {
     loadParticipants();
   }, []);
 
-  const loadParticipants = () => {
-    setParticipants(participantStore.getAll());
+  const loadParticipants = async () => {
+    setIsLoading(true);
+    try {
+      const data = await participantApi.getParticipants();
+      setParticipants(data);
+    } catch (error) {
+      console.error('Error fetching participants:', error);
+      toast.error('Failed to load participants');
+      // Fallback to local store for demo persistence if local server not running
+      setParticipants(participantStore.getAll());
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const resetForm = () => {
@@ -92,6 +111,7 @@ const ParticipantsPage: React.FC = () => {
       lastName: '',
       email: '',
       phone: '',
+      gender: 'male',
       nationality: '',
       organization: '',
       jobTitle: '',
@@ -101,16 +121,9 @@ const ParticipantsPage: React.FC = () => {
     });
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!formData.firstName || !formData.lastName || !formData.email) {
       toast.error('Please fill in required fields (First Name, Last Name, Email)');
-      return;
-    }
-
-    // Check for duplicate email
-    const existing = participantStore.getByEmail(formData.email);
-    if (existing) {
-      toast.error('A participant with this email already exists');
       return;
     }
 
@@ -119,11 +132,19 @@ const ParticipantsPage: React.FC = () => {
       return;
     }
 
-    participantStore.create(formData);
-    loadParticipants();
-    setIsAddOpen(false);
-    resetForm();
-    toast.success(`Participant "${formData.firstName} ${formData.lastName}" added successfully`);
+    setIsSubmitting(true);
+    try {
+      await participantApi.createParticipant(formData);
+      toast.success(`Participant "${formData.firstName} ${formData.lastName}" added successfully`);
+      setIsAddOpen(false);
+      resetForm();
+      loadParticipants();
+    } catch (error: any) {
+      console.error('Error creating participant:', error);
+      toast.error(error.response?.data?.message || 'Failed to create participant');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleEdit = (participant: EMSParticipant) => {
@@ -133,6 +154,7 @@ const ParticipantsPage: React.FC = () => {
       lastName: participant.lastName,
       email: participant.email,
       phone: participant.phone,
+      gender: participant.gender || 'male',
       nationality: participant.nationality,
       organization: participant.organization,
       jobTitle: participant.jobTitle || '',
@@ -143,7 +165,7 @@ const ParticipantsPage: React.FC = () => {
     setIsEditOpen(true);
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editingParticipant) return;
 
     if (!formData.firstName || !formData.lastName || !formData.email) {
@@ -156,18 +178,40 @@ const ParticipantsPage: React.FC = () => {
       return;
     }
 
-    participantStore.update(editingParticipant.id, formData);
-    loadParticipants();
-    setIsEditOpen(false);
-    setEditingParticipant(null);
-    resetForm();
-    toast.success('Participant updated successfully');
+    setIsSubmitting(true);
+    try {
+      await participantApi.updateParticipant(editingParticipant.id, formData);
+      toast.success('Participant updated successfully');
+      setIsEditOpen(false);
+      setEditingParticipant(null);
+      resetForm();
+      loadParticipants();
+    } catch (error: any) {
+      console.error('Error updating participant:', error);
+      toast.error(error.response?.data?.message || 'Failed to update participant');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDelete = (participant: EMSParticipant) => {
-    participantStore.delete(participant.id);
-    loadParticipants();
-    toast.success(`Participant "${participant.firstName} ${participant.lastName}" deleted`);
+  const handleDeleteClick = (participant: EMSParticipant) => {
+    setParticipantToDelete(participant);
+    setIsDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!participantToDelete) return;
+
+    try {
+      await participantApi.deleteParticipant(participantToDelete.id);
+      loadParticipants();
+      toast.success(`Participant "${participantToDelete.firstName} ${participantToDelete.lastName}" deleted`);
+      setIsDeleteConfirmOpen(false);
+      setParticipantToDelete(null);
+    } catch (error) {
+      console.error('Error deleting participant:', error);
+      toast.error('Failed to delete participant');
+    }
   };
 
   // Combine participant data with their invitation/registration status
@@ -221,7 +265,7 @@ const ParticipantsPage: React.FC = () => {
       sortable: true,
       accessor: (row) => (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground">
-          {row.role}
+          {row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '-'}
         </span>
       ),
     },
@@ -288,7 +332,7 @@ const ParticipantsPage: React.FC = () => {
               {t('participants.send_message')}
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => handleDelete(row)}
+              onClick={() => handleDeleteClick(row)}
               className="flex items-center gap-2 text-destructive"
             >
               <Trash2 className="h-4 w-4" />
@@ -337,11 +381,15 @@ const ParticipantsPage: React.FC = () => {
           <Label htmlFor="phone">{t('common.phone')}</Label>
           <Input
             id="phone"
-            placeholder="1234567890"
+            placeholder="+971 50 123 4567"
             value={formData.phone}
             onChange={(e) => {
-              const value = e.target.value.replace(/[^0-9]/g, '');
-              setFormData(prev => ({ ...prev, phone: value }));
+              const value = e.target.value.replace(/[^0-9+]/g, '');
+              // Ensure + only appears at the start and only once
+              const sanitized = value.startsWith('+') 
+                ? '+' + value.slice(1).replace(/\+/g, '')
+                : value.replace(/\+/g, '');
+              setFormData(prev => ({ ...prev, phone: sanitized }));
             }}
           />
         </div>
@@ -364,8 +412,21 @@ const ParticipantsPage: React.FC = () => {
             </SelectTrigger>
             <SelectContent>
               {ROLES.map(role => (
-                <SelectItem key={role} value={role}>{t(`common.${role.toLowerCase()}`)}</SelectItem>
+                <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="gender">{t('common.gender')} *</Label>
+          <Select value={formData.gender} onValueChange={(value) => setFormData(prev => ({ ...prev, gender: value }))}>
+            <SelectTrigger>
+              <SelectValue placeholder="Select gender" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="male">{t('common.male')}</SelectItem>
+              <SelectItem value="female">{t('common.female')}</SelectItem>
+              <SelectItem value="other">{t('common.other')}</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -412,83 +473,95 @@ const ParticipantsPage: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title={t('participants.title')}
-        subtitle={t('common.participants_count', { count: filteredData.length })}
-        breadcrumbs={[{ label: t('participants.title') }]}
-        actions={
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm">
-              <Download className="h-4 w-4 me-2" />
-              {t('common.export')}
-            </Button>
-            <Button size="sm" onClick={() => setIsAddOpen(true)}>
-              <Plus className="h-4 w-4 me-2" />
-              {t('participants.add_participant')}
-            </Button>
+    <div className="min-h-screen bg-background flex flex-col">
+      <AdminHomeHeader />
+
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6 animate-fade-in">
+        <PageHeader
+          title={t('participants.title')}
+          subtitle={t('common.participants_count', { count: filteredData.length })}
+          breadcrumbs={[{ label: t('participants.title') }]}
+          actions={
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm">
+                <Download className="h-4 w-4 me-2" />
+                {t('common.export')}
+              </Button>
+              <Button size="sm" onClick={() => setIsAddOpen(true)}>
+                <Plus className="h-4 w-4 me-2" />
+                {t('participants.add_participant')}
+              </Button>
+            </div>
+          }
+        />
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex flex-col items-center justify-center p-24 text-muted-foreground animate-pulse">
+            <Loader2 className="h-10 w-10 animate-spin mb-4" />
+            <p>Loading participants...</p>
           </div>
-        }
-      />
+        )}
 
-      {/* Empty State */}
-      {participants.length === 0 && (
-        <Card>
-          <CardContent className="p-12 text-center">
-            <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-2">{t('participants.no_participants')}</h3>
-            <p className="text-muted-foreground mb-4">{t('participants.no_participants_desc')}</p>
-            <Button onClick={() => setIsAddOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />{t('participants.add_participant')}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+        {/* Empty State */}
+        {!isLoading && participants.length === 0 && (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-semibold mb-2">{t('participants.no_participants')}</h3>
+              <p className="text-muted-foreground mb-4">{t('participants.no_participants_desc')}</p>
+              <Button onClick={() => setIsAddOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />{t('participants.add_participant')}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
-      {participants.length > 0 && (
-        <>
-          {/* Filters */}
-          <div className="flex flex-wrap gap-3 p-4 rounded-lg bg-muted/50 border border-border">
-            <div className="flex items-center gap-2">
-              <Filter className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm font-medium">{t('common.filters')}:</span>
+        {!isLoading && participants.length > 0 && (
+          <>
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3 p-4 rounded-lg bg-muted/50 border border-border">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">{t('common.filter')}:</span>
+              </div>
+
+              <Select value={roleFilter} onValueChange={setRoleFilter}>
+                <SelectTrigger className="w-32 h-8">
+                  <SelectValue placeholder="Role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">{t('common.all_roles')}</SelectItem>
+                  {ROLES.map(role => (
+                    <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {roleFilter !== 'all' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setRoleFilter('all')}
+                >
+                  {t('participants.clear_filters')}
+                </Button>
+              )}
             </div>
 
-            <Select value={roleFilter} onValueChange={setRoleFilter}>
-              <SelectTrigger className="w-32 h-8">
-                <SelectValue placeholder="Role" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{t('common.all_roles')}</SelectItem>
-                {ROLES.map(role => (
-                  <SelectItem key={role} value={role}>{t(`common.${role.toLowerCase()}`)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {roleFilter !== 'all' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setRoleFilter('all')}
-              >
-                {t('participants.clear_filters')}
-              </Button>
-            )}
-          </div>
-
-          <DataTable
-            data={filteredData}
-            columns={columns}
-            keyExtractor={(row) => row.id}
-            searchable
-            searchPlaceholder={t('participants.search_placeholder') || 'Search...'}
-            searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
-            selectable
-            onSelectionChange={(ids) => console.log('Selected:', ids)}
-          />
-        </>
-      )}
+            <DataTable
+              data={filteredData}
+              columns={columns}
+              keyExtractor={(row) => row.id}
+              searchable
+              searchPlaceholder={t('participants.search_placeholder') || 'Search...'}
+              searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
+              selectable
+              onSelectionChange={(ids) => console.log('Selected:', ids)}
+            />
+          </>
+        )}
+      </main>
 
       {/* Add Participant Dialog */}
       <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
@@ -499,8 +572,11 @@ const ParticipantsPage: React.FC = () => {
           </DialogHeader>
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button onClick={handleCreate}>{t('participants.add_participant')}</Button>
+            <Button variant="outline" disabled={isSubmitting} onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
+            <Button disabled={isSubmitting} onClick={handleCreate}>
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              {t('participants.add_participant')}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -514,8 +590,27 @@ const ParticipantsPage: React.FC = () => {
           </DialogHeader>
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button onClick={handleUpdate}>{t('common.save_changes')}</Button>
+            <Button variant="outline" disabled={isSubmitting} onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>{t('common.cancel')}</Button>
+            <Button disabled={isSubmitting} onClick={handleUpdate}>
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              {t('common.save_changes')}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('common.are_you_sure') || 'Are you sure?'}</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the participant <strong>{participantToDelete?.firstName} {participantToDelete?.lastName}</strong>. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-4">
+            <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>{t('common.cancel')}</Button>
+            <Button variant="destructive" onClick={handleConfirmDelete}>{t('common.delete')}</Button>
           </div>
         </DialogContent>
       </Dialog>
