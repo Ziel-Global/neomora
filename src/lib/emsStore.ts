@@ -99,6 +99,7 @@ export interface EMSInvitation {
   id: string;
   eventId: string;
   participantId: string;
+  participantEmail?: string;
   templateId: string;
   campaignId: string;
   token: string; // Unique RSVP link token
@@ -481,6 +482,34 @@ export const campaignStore = {
     return newCampaign;
   },
 
+  createWithId: (id: string, campaign: Omit<EMSCampaign, 'id' | 'createdAt' | 'updatedAt' | 'stats'>): EMSCampaign => {
+    const newCampaign: EMSCampaign = {
+      ...campaign,
+      id,
+      stats: {
+        audienceSize: 0,
+        sentCount: 0,
+        deliveredCount: 0,
+        openedCount: 0,
+        acceptedCount: 0,
+        declinedCount: 0,
+        maybeCount: 0,
+      },
+      createdAt: now(),
+      updatedAt: now(),
+    };
+
+    const campaigns = campaignStore.getAll();
+    const index = campaigns.findIndex(c => c.id === id);
+    if (index >= 0) {
+      campaigns[index] = newCampaign;
+    } else {
+      campaigns.push(newCampaign);
+    }
+    setItem(KEYS.CAMPAIGNS, campaigns);
+    return newCampaign;
+  },
+
   update: (id: string, updates: Partial<EMSCampaign>): EMSCampaign | null => {
     const campaigns = campaignStore.getAll();
     const index = campaigns.findIndex(c => c.id === id);
@@ -488,6 +517,30 @@ export const campaignStore = {
     campaigns[index] = { ...campaigns[index], ...updates, updatedAt: now() };
     setItem(KEYS.CAMPAIGNS, campaigns);
     return campaigns[index];
+  },
+
+  rekey: (oldId: string, newId: string): EMSCampaign | null => {
+    if (oldId === newId) {
+      return campaignStore.getById(oldId) || null;
+    }
+
+    const campaigns = campaignStore.getAll();
+    const index = campaigns.findIndex(c => c.id === oldId);
+    if (index === -1) return null;
+
+    const existing = campaigns[index];
+    const updatedCampaign = { ...existing, id: newId, updatedAt: now() };
+
+    const duplicateIndex = campaigns.findIndex(c => c.id === newId);
+    if (duplicateIndex >= 0) {
+      campaigns[duplicateIndex] = updatedCampaign;
+      campaigns.splice(index, 1);
+    } else {
+      campaigns[index] = updatedCampaign;
+    }
+
+    setItem(KEYS.CAMPAIGNS, campaigns);
+    return updatedCampaign;
   },
 
   updateStats: (id: string): void => {
@@ -561,6 +614,30 @@ export const invitationStore = {
     return invitations[index];
   },
 
+  rekeyCampaign: (oldCampaignId: string, newCampaignId: string): number => {
+    if (oldCampaignId === newCampaignId) return invitationStore.getByCampaign(newCampaignId).length;
+
+    const invitations = invitationStore.getAll();
+    let updatedCount = 0;
+
+    for (let index = 0; index < invitations.length; index++) {
+      if (invitations[index].campaignId === oldCampaignId) {
+        invitations[index] = {
+          ...invitations[index],
+          campaignId: newCampaignId,
+          updatedAt: now(),
+        };
+        updatedCount++;
+      }
+    }
+
+    if (updatedCount > 0) {
+      setItem(KEYS.INVITATIONS, invitations);
+    }
+
+    return updatedCount;
+  },
+
   // Status transition methods
   markDelivered: (id: string): EMSInvitation | null => {
     return invitationStore.update(id, { status: 'Delivered', deliveredAt: now() });
@@ -591,7 +668,8 @@ export const invitationStore = {
     eventId: string,
     templateId: string,
     participantIds: string[],
-    rsvpDeadline: string
+    rsvpDeadline: string,
+    participantEmailMap?: Record<string, string>
   ): EMSInvitation[] => {
     const created: EMSInvitation[] = [];
 
@@ -599,6 +677,7 @@ export const invitationStore = {
       const inv = invitationStore.create({
         eventId,
         participantId,
+        participantEmail: participantEmailMap?.[participantId],
         templateId,
         campaignId,
         status: 'Pending',

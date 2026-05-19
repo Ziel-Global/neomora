@@ -38,6 +38,7 @@ import ReportsPage from "@/pages/admin/Reports";
 import ProjectsPage from "@/pages/admin/Projects";
 import SubAdminsPage from "@/pages/admin/SubAdmins";
 import AdminDelegationsPage from "@/pages/admin/Delegations";
+import EventParticipantsPage from "@/pages/admin/EventParticipants";
 
 // Auth Pages
 import AdminLogin from "@/pages/auth/AdminLogin";
@@ -171,6 +172,7 @@ const App = () => (
                   <Route path="invitations" element={<InvitationsPage />} />
                   <Route path="registrations" element={<RegistrationsPage />} />
                   <Route path="delegations" element={<AdminDelegationsPage />} />
+                  <Route path="participants" element={<EventParticipantsPage />} />
                   <Route path="travel" element={<TravelPage />} />
                   <Route path="accommodation" element={<AccommodationPage />} />
                   <Route path="visas" element={<VisasPage />} />

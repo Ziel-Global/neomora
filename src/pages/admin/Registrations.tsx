@@ -46,6 +46,14 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import {
+  getRegistrations,
+  approveRegistration,
+  rejectRegistration,
+  startRegistrationReview,
+  requestRegistrationUpdate,
+} from '@/api/registrationApi';
+import { Loader2 } from 'lucide-react';
 
 // Document storage keys (visa portal and registration)
 const VISA_DOCS_KEY = 'ems_visa_documents';
@@ -109,9 +117,24 @@ const RegistrationsPage: React.FC = () => {
   const [reason, setReason] = useState('');
   const [viewDocsDialogOpen, setViewDocsDialogOpen] = useState(false);
 
-  // Load data from localStorage
-  const loadData = () => {
-    setRegistrations(registrationStore.getAll());
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Load data from backend API with local store fallback
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      const apiRegs = await getRegistrations();
+      if (Array.isArray(apiRegs) && apiRegs.length > 0) {
+        setRegistrations(apiRegs as any as EMSRegistration[]);
+      } else {
+        setRegistrations(registrationStore.getAll());
+      }
+    } catch (err) {
+      console.error('Failed to load registrations from API, using local store:', err);
+      setRegistrations(registrationStore.getAll());
+    } finally {
+      setIsLoading(false);
+    }
     setParticipants(participantStore.getAll());
   };
 
@@ -148,10 +171,13 @@ const RegistrationsPage: React.FC = () => {
   };
 
   // Action handlers
-  const handleApprove = (reg: RegistrationWithParticipant) => {
-    registrationStore.approve(reg.id, 'Admin');
-    // Auto-generate travel itinerary if participant needs transport
-    if (reg.formData.needsTransport) {
+  const handleApprove = async (reg: RegistrationWithParticipant) => {
+    try {
+      await approveRegistration(reg.id);
+    } catch (e) {
+      registrationStore.approve(reg.id, 'Admin');
+    }
+    if (reg.formData?.needsTransport) {
       const travel = travelStore.generateForApprovedRegistration(reg.id);
       if (travel) {
         toast.success(t('common.activity.travel_ticketed') + `: ${reg.participant.firstName}`);
@@ -161,18 +187,26 @@ const RegistrationsPage: React.FC = () => {
     toast.success(t('common.activity.reg_approved') + `: ${reg.registrationId}`);
   };
 
-  const handleStartReview = (reg: RegistrationWithParticipant) => {
-    registrationStore.startReview(reg.id);
+  const handleStartReview = async (reg: RegistrationWithParticipant) => {
+    try {
+      await startRegistrationReview(reg.id);
+    } catch (e) {
+      registrationStore.startReview(reg.id);
+    }
     loadData();
     toast.info(t('registrations.start_review') + `: ${reg.registrationId}`);
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (!selectedRegistration || !reason.trim()) {
       toast.error(t('registrations.rejection_reason'));
       return;
     }
-    registrationStore.reject(selectedRegistration.id, 'Admin', reason);
+    try {
+      await rejectRegistration(selectedRegistration.id, reason);
+    } catch (e) {
+      registrationStore.reject(selectedRegistration.id, 'Admin', reason);
+    }
     loadData();
     toast.success(t('common.rejected') + `: ${selectedRegistration.registrationId}`);
     setRejectDialogOpen(false);
@@ -180,12 +214,16 @@ const RegistrationsPage: React.FC = () => {
     setReason('');
   };
 
-  const handleRequestUpdate = () => {
+  const handleRequestUpdate = async () => {
     if (!selectedRegistration || !reason.trim()) {
       toast.error(t('registrations.required_updates'));
       return;
     }
-    registrationStore.requestUpdate(selectedRegistration.id, 'Admin', reason);
+    try {
+      await requestRegistrationUpdate(selectedRegistration.id, reason);
+    } catch (e) {
+      registrationStore.requestUpdate(selectedRegistration.id, 'Admin', reason);
+    }
     loadData();
     toast.success(t('common.update_requested') + `: ${selectedRegistration.registrationId}`);
     setRequestUpdateDialogOpen(false);

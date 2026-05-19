@@ -26,9 +26,9 @@ export const AdminHomeHeader: React.FC = () => {
 
             <nav className="flex items-center gap-1 mx-4">
                 <Link to="/admin">
-                    <Button 
-                        variant="ghost" 
-                        size="sm" 
+                    <Button
+                        variant="ghost"
+                        size="sm"
                         className={`gap-2 ${isActive('/admin') ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
                     >
                         <Calendar className="h-4 w-4" />
@@ -36,19 +36,19 @@ export const AdminHomeHeader: React.FC = () => {
                     </Button>
                 </Link>
                 <Link to="/admin/participants">
-                    <Button 
-                        variant="ghost" 
-                        size="sm" 
+                    <Button
+                        variant="ghost"
+                        size="sm"
                         className={`gap-2 ${isActive('/admin/participants') ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
                     >
                         <Users className="h-4 w-4" />
-                        {t('common.participants')}
+                        {t('common.members')}
                     </Button>
                 </Link>
                 <Link to="/admin/subadmins">
-                    <Button 
-                        variant="ghost" 
-                        size="sm" 
+                    <Button
+                        variant="ghost"
+                        size="sm"
                         className={`gap-2 ${isActive('/admin/subadmins') ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
                     >
                         <Shield className="h-4 w-4" />
@@ -56,9 +56,9 @@ export const AdminHomeHeader: React.FC = () => {
                     </Button>
                 </Link>
                 <Link to="/admin/reports">
-                    <Button 
-                        variant="ghost" 
-                        size="sm" 
+                    <Button
+                        variant="ghost"
+                        size="sm"
                         className={`gap-2 ${isActive('/admin/reports') ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
                     >
                         <BarChart3 className="h-4 w-4" />

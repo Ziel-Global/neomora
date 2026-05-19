@@ -5,6 +5,7 @@ export interface SportCategoryPayload {
   id?: string | number;
   name: string;
   subCategory: string;
+  group?: string;
 }
 
 export interface CreateEventPayload {
@@ -21,7 +22,7 @@ export interface CreateEventPayload {
 
 export const getEvents = async (): Promise<EMSEvent[]> => {
   const { data } = await apiClient.get('/events');
-  return data;
+  return Array.isArray(data) ? data : (data?.data || data?.events || []);
 };
 
 export const createEvent = async (payload: CreateEventPayload): Promise<EMSEvent> => {

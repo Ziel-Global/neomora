@@ -18,6 +18,8 @@
     "change_event": "تغيير الفعالية",
     "events": "الفعاليات",
     "participants": "المشاركون",
+    "members": "الأعضاء",
+    "members_count": "{{count}} عضو",
     "invitations": "الدعوات",
     "registrations": "التسجيلات",
     "under_review": "قيد المراجعة",
@@ -60,6 +62,7 @@
     "filter": "تصفية",
     "export": "تصدير",
     "participant": "المشارك",
+    "member": "عضو",
     "event": "الفعالية",
     "campaign": "الحملة",
     "audience": "الجمهور",
@@ -193,6 +196,13 @@
     "accessibility": "احتياجات إمكانية الوصول",
     "send_message": "إرسال رسالة",
     "view_profile": "عرض الملف الشخصي"
+  },
+  "members": {
+    "title": "الأعضاء",
+    "add_member": "إضافة عضو",
+    "edit_member": "تعديل عضو",
+    "no_members": "لا يوجد أعضاء بعد",
+    "no_members_desc": "أضف عضو الأول للبدء في إدارة السجلات العالمية."
   },
   "invitations": {
     "title": "الدعوات",

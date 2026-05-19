@@ -36,6 +36,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
+import * as campaignApi from '@/api/campaignApi';
+import { getEvents } from '@/api/eventApi';
+import { getParticipants } from '@/api/participantApi';
+import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
 const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
@@ -56,6 +60,11 @@ const InvitationsPage: React.FC = () => {
   const [wizardStep, setWizardStep] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
+  const [apiCampaigns, setApiCampaigns] = useState<campaignApi.Campaign[]>([]);
+  const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
+  const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
 
   // Wizard form state
   const [selectedEventId, setSelectedEventId] = useState('');
@@ -77,24 +86,66 @@ const InvitationsPage: React.FC = () => {
   const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  // Initialize store
+  // Initialize store and fetch API data
   useEffect(() => {
     initializeStore();
-  }, []);
+    loadCampaigns();
+  }, [refreshKey]);
+
+  const loadCampaigns = async () => {
+    setIsLoading(true);
+    try {
+      const [campaignData, eventData, participantData] = await Promise.all([
+        campaignApi.getCampaigns(),
+        getEvents(),
+        getParticipants()
+      ]);
+      setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
+      setApiEvents(Array.isArray(eventData) ? eventData : []);
+      setApiParticipants(Array.isArray(participantData) ? participantData : []);
+    } catch (error) {
+      console.error('Failed to load invitations data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Fetch data
-  const events = useMemo(() => eventStore.getAll(), [refreshKey]);
-  const participants = useMemo(() => participantStore.getAll(), [refreshKey]);
+  const events = useMemo(() => {
+    if (Array.isArray(apiEvents) && apiEvents.length > 0) return apiEvents;
+    return eventStore.getAll();
+  }, [apiEvents, refreshKey]);
+
+  const participants = useMemo(() => {
+    if (Array.isArray(apiParticipants) && apiParticipants.length > 0) return apiParticipants;
+    return participantStore.getAll();
+  }, [apiParticipants, refreshKey]);
+
   const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
-  const campaigns = useMemo(() => campaignStore.getAll(), [refreshKey]);
-  const invitations = useMemo(() => invitationStore.getAll(), [refreshKey]);
+
+  const campaigns = useMemo(() => {
+    const localCampaigns = campaignStore.getAll();
+    const remoteCampaigns = Array.isArray(apiCampaigns) ? apiCampaigns as any as EMSCampaign[] : [];
+    const merged = [...localCampaigns];
+    for (const campaign of remoteCampaigns) {
+      if (!merged.some(local => local.id === campaign.id)) {
+        merged.push(campaign);
+      }
+    }
+    return merged;
+  }, [apiCampaigns, refreshKey]);
+
+  const invitations = useMemo(() => {
+    const localInvitations = invitationStore.getAll();
+    return localInvitations;
+  }, [refreshKey]);
 
   // Calculate stats
   const stats = useMemo(() => ({
-    totalSent: invitations.filter(i => i.sentAt).length,
-    delivered: invitations.filter(i => i.deliveredAt).length,
-    accepted: invitations.filter(i => i.status === 'Accepted').length,
-    campaigns: campaigns.length,
+    totalSent: (invitations || []).filter(i => i.sentAt).length,
+    delivered: (invitations || []).filter(i => i.deliveredAt).length,
+    accepted: (invitations || []).filter(i => i.status === 'Accepted').length,
+    campaigns: (campaigns || []).length,
   }), [invitations, campaigns]);
 
   const getStatusVariant = (status: string): 'success' | 'info' | 'warning' | 'default' | 'destructive' => {
@@ -181,7 +232,50 @@ const InvitationsPage: React.FC = () => {
     setCustomMessage('');
   };
 
-  const handleCreateCampaign = () => {
+  const createLocalCampaignInvitations = (payload: {
+    campaignId: string;
+    campaignName: string;
+    selectedEventId: string;
+    selectedTemplateId: string;
+    selectedTemplate?: EMSInvitationTemplate;
+    audience: EMSParticipant[];
+    rsvpDeadline: string;
+    selectedRoles: ParticipantRole[];
+  }) => {
+    const participantEmailMap = Object.fromEntries(
+      payload.audience.map(participant => [participant.id, participant.email])
+    ) as Record<string, string>;
+
+    const localCampaign = campaignStore.createWithId(payload.campaignId, {
+      name: payload.campaignName,
+      eventId: payload.selectedEventId,
+      templateId: payload.selectedTemplateId,
+      targetRoles: payload.selectedRoles,
+      targetNationalities: [],
+      rsvpDeadline: payload.rsvpDeadline,
+      scheduledAt: null,
+      sentAt: null,
+      status: 'Draft',
+      audienceIds: payload.audience.map(participant => participant.id),
+      templateName: payload.selectedTemplate?.name,
+      subject: payload.selectedTemplate?.subject,
+      content: payload.selectedTemplate?.body,
+    } as any);
+
+    const createdInvitations = invitationStore.bulkCreateForCampaign(
+      localCampaign.id,
+      payload.selectedEventId,
+      payload.selectedTemplateId,
+      payload.audience.map(participant => participant.id),
+      payload.rsvpDeadline,
+      participantEmailMap
+    );
+
+    campaignStore.updateStats(localCampaign.id);
+    return { localCampaign, createdInvitations };
+  };
+
+  const handleCreateCampaign = async () => {
     if (!selectedEventId || !campaignName || !selectedTemplateId || !rsvpDeadline) {
       toast({ title: 'Missing fields', description: 'Please fill in all required fields', variant: 'destructive' });
       return;
@@ -193,51 +287,128 @@ const InvitationsPage: React.FC = () => {
       return;
     }
 
-    // Create campaign
-    const campaign = campaignStore.create({
-      name: campaignName,
-      eventId: selectedEventId,
-      templateId: selectedTemplateId,
-      targetRoles: selectedRoles,
-      targetNationalities: [],
-      rsvpDeadline,
-      scheduledAt: null,
-      sentAt: null,
-      status: 'Draft',
-    });
+    setIsActionLoading(true);
+    try {
+      const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
+      const tempCampaignId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const { createdInvitations } = createLocalCampaignInvitations({
+        campaignId: tempCampaignId,
+        campaignName,
+        selectedEventId,
+        selectedTemplateId,
+        selectedTemplate,
+        audience,
+        rsvpDeadline,
+        selectedRoles,
+      });
 
-    // Create invitations for each participant
-    const participantIds = audience.map(p => p.id);
-    invitationStore.bulkCreateForCampaign(
-      campaign.id,
-      selectedEventId,
-      selectedTemplateId,
-      participantIds,
-      rsvpDeadline
+      // Keep backend in sync when available, but never block local creation.
+      const backendCampaign = await campaignApi.createCampaign({
+        name: campaignName,
+        subject: selectedTemplate?.subject || campaignName,
+        content: selectedTemplate?.body || customMessage,
+        eventId: selectedEventId,
+        rsvpDeadline: rsvpDeadline,
+        audienceIds: audience.map(p => p.id),
+        roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
+      }).catch((error) => {
+        console.warn('Backend campaign create failed, ignored for local flow:', error);
+        return null;
+      });
+
+      const backendCampaignId = backendCampaign?.id;
+      if (backendCampaignId) {
+        const rekeyedCampaign = campaignStore.rekey(tempCampaignId, backendCampaignId);
+        if (rekeyedCampaign) {
+          invitationStore.rekeyCampaign(tempCampaignId, backendCampaignId);
+        }
+      }
+
+      toast({ title: 'Campaign created', description: `Created ${createdInvitations.length} invitations for participants.` });
+      setIsCreateOpen(false);
+      resetWizard();
+      setRefreshKey(k => k + 1);
+    } catch (error) {
+      console.error('Failed to create campaign locally:', error);
+      toast({ title: 'Error', description: 'Failed to create campaign', variant: 'destructive' });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const ensureLocalInvitationsForCampaign = (campaignId: string) => {
+    const existing = invitationStore.getByCampaign(campaignId);
+    if (existing.length > 0) return existing;
+
+    const campaign = campaignStore.getById(campaignId) as any;
+    if (!campaign) return [];
+
+    const audienceIds: string[] = Array.isArray(campaign.audienceIds) ? campaign.audienceIds : Array.isArray(campaign.targetParticipantIds) ? campaign.targetParticipantIds : [];
+    if (audienceIds.length === 0) return [];
+
+    return invitationStore.bulkCreateForCampaign(
+      campaignId,
+      campaign.eventId,
+      campaign.templateId || selectedTemplateId || '',
+      audienceIds,
+      campaign.rsvpDeadline || rsvpDeadline || '',
+      Object.fromEntries(
+        (campaign.audienceIds || audienceIds).map((participantId: string) => {
+          const participant = participants.find(p => p.id === participantId);
+          return [participantId, participant?.email || ''];
+        })
+      ) as Record<string, string>
     );
-
-    // Update campaign stats
-    campaignStore.updateStats(campaign.id);
-
-    toast({ title: 'Campaign created', description: `Created ${audience.length} invitations` });
-    setIsCreateOpen(false);
-    resetWizard();
-    setRefreshKey(k => k + 1);
   };
 
-  const handleSendCampaign = (campaignId: string) => {
-    const sentCount = invitationStore.sendCampaign(campaignId);
-    toast({ title: 'Campaign sent', description: `Sent ${sentCount} invitations` });
-    setRefreshKey(k => k + 1);
+  const handleSendCampaign = async (campaignId: string) => {
+    setIsActionLoading(true);
+    try {
+      const created = ensureLocalInvitationsForCampaign(campaignId);
+      const sent = invitationStore.sendCampaign(campaignId);
+
+      campaignStore.update(campaignId, { status: 'Sent', sentAt: new Date().toISOString() } as any);
+      campaignStore.updateStats(campaignId);
+      toast({ title: 'Campaign sent', description: `Delivered ${sent || created.length} invitations to selected participants.` });
+      setRefreshKey(k => k + 1);
+      setViewCampaignOpen(false);
+    } catch (error: any) {
+      console.error('Failed to send campaign locally:', error);
+      toast({ title: 'Error', description: 'Failed to send campaign', variant: 'destructive' });
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
-  const handleDeleteCampaign = (campaignId: string) => {
-    // Delete all invitations for this campaign
-    const campInvitations = invitationStore.getByCampaign(campaignId);
-    campInvitations.forEach(inv => invitationStore.delete(inv.id));
-    campaignStore.delete(campaignId);
-    toast({ title: 'Campaign deleted' });
-    setRefreshKey(k => k + 1);
+  const handleDeleteCampaign = async (campaignId: string) => {
+    if (!confirm('Are you sure you want to delete this campaign?')) return;
+
+    setIsActionLoading(true);
+    try {
+      await campaignApi.deleteCampaign(campaignId);
+      toast({ title: 'Campaign deleted' });
+      setRefreshKey(k => k + 1);
+    } catch (error) {
+      console.error('Failed to delete campaign:', error);
+      toast({ title: 'Error', description: 'Failed to delete campaign', variant: 'destructive' });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const handleViewCampaign = async (campaign: EMSCampaign) => {
+    setIsActionLoading(true);
+    try {
+      const details = await campaignApi.getCampaignById(campaign.id);
+      setSelectedCampaign(details as any as EMSCampaign);
+      setViewCampaignOpen(true);
+    } catch (error) {
+      console.error('Failed to fetch campaign details:', error);
+      setSelectedCampaign(campaign);
+      setViewCampaignOpen(true);
+    } finally {
+      setIsActionLoading(false);
+    }
   };
 
   const copyInviteLink = (token: string) => {
@@ -261,7 +432,11 @@ const InvitationsPage: React.FC = () => {
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_1_select_event')}</h3>
-            {events.length === 0 ? (
+            {isLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : events.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
                   <p className="text-muted-foreground mb-2">{t('invitations.no_events_created')}</p>
@@ -306,8 +481,11 @@ const InvitationsPage: React.FC = () => {
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_2_select_audience')}</h3>
-            node
-            {participants.length === 0 ? (
+            {isLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : participants.length === 0 ? (
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
                   <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
@@ -604,25 +782,25 @@ const InvitationsPage: React.FC = () => {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 my-4">
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold">{selectedCampaign.stats.sentCount}</p>
+                <p className="text-2xl font-bold">{selectedCampaign.stats?.sentCount || 0}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.delivered')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-success">{selectedCampaign.stats.acceptedCount}</p>
+                <p className="text-2xl font-bold text-success">{selectedCampaign.stats?.acceptedCount || 0}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.accepted')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-warning">{selectedCampaign.stats.maybeCount}</p>
+                <p className="text-2xl font-bold text-warning">{selectedCampaign.stats?.maybeCount || 0}</p>
                 <p className="text-xs text-muted-foreground">{t('common.maybe')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-destructive">{selectedCampaign.stats.declinedCount}</p>
+                <p className="text-2xl font-bold text-destructive">{selectedCampaign.stats?.declinedCount || 0}</p>
                 <p className="text-xs text-muted-foreground">{t('events.declined')}</p>
               </CardContent>
             </Card>
@@ -803,22 +981,29 @@ const InvitationsPage: React.FC = () => {
                         <div>
                           <p className="font-medium">{campaign.name}</p>
                           <p className="text-sm text-muted-foreground">
-                            {campaign.createdAt ? format(new Date(campaign.createdAt), 'MMM d, yyyy') : ''}
+                            {campaign.createdAt ? (() => {
+                              try {
+                                const date = new Date(campaign.createdAt);
+                                return isNaN(date.getTime()) ? '' : format(date, 'MMM d, yyyy');
+                              } catch (e) {
+                                return '';
+                              }
+                            })() : ''}
                           </p>
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">{getEventName(campaign.eventId)}</TableCell>
-                      <TableCell>{campaign.stats.audienceSize}</TableCell>
+                      <TableCell>{campaign.stats?.audienceSize || 0}</TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                            {campaign.stats.acceptedCount}
+                            {campaign.stats?.acceptedCount || 0}
                           </Badge>
                           <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
-                            {campaign.stats.maybeCount}
+                            {campaign.stats?.maybeCount || 0}
                           </Badge>
                           <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
-                            {campaign.stats.declinedCount}
+                            {campaign.stats?.declinedCount || 0}
                           </Badge>
                         </div>
                       </TableCell>
@@ -831,10 +1016,7 @@ const InvitationsPage: React.FC = () => {
                             <Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => {
-                              setSelectedCampaign(campaign);
-                              setViewCampaignOpen(true);
-                            }}>
+                            <DropdownMenuItem onClick={() => handleViewCampaign(campaign)}>
                               <Eye className="h-4 w-4 mr-2" />{t('invitations.view_details')}
                             </DropdownMenuItem>
                             {campaign.status === 'Draft' && (

@@ -243,7 +243,7 @@ const ParticipantsPage: React.FC = () => {
   const columns: Column<ParticipantWithStatus>[] = [
     {
       key: 'name',
-      header: t('common.participant'),
+      header: t('common.member'),
       sortable: true,
       accessor: (row) => (
         <div className="flex items-center gap-3">
@@ -386,7 +386,7 @@ const ParticipantsPage: React.FC = () => {
             onChange={(e) => {
               const value = e.target.value.replace(/[^0-9+]/g, '');
               // Ensure + only appears at the start and only once
-              const sanitized = value.startsWith('+') 
+              const sanitized = value.startsWith('+')
                 ? '+' + value.slice(1).replace(/\+/g, '')
                 : value.replace(/\+/g, '');
               setFormData(prev => ({ ...prev, phone: sanitized }));
@@ -478,9 +478,9 @@ const ParticipantsPage: React.FC = () => {
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6 animate-fade-in">
         <PageHeader
-          title={t('participants.title')}
-          subtitle={t('common.participants_count', { count: filteredData.length })}
-          breadcrumbs={[{ label: t('participants.title') }]}
+          title={t('members.title')}
+          subtitle={t('common.members_count', { count: filteredData.length })}
+          breadcrumbs={[{ label: t('members.title') }]}
           actions={
             <div className="flex gap-2">
               <Button variant="outline" size="sm">
@@ -489,7 +489,7 @@ const ParticipantsPage: React.FC = () => {
               </Button>
               <Button size="sm" onClick={() => setIsAddOpen(true)}>
                 <Plus className="h-4 w-4 me-2" />
-                {t('participants.add_participant')}
+                {t('members.add_member')}
               </Button>
             </div>
           }
@@ -499,7 +499,7 @@ const ParticipantsPage: React.FC = () => {
         {isLoading && (
           <div className="flex flex-col items-center justify-center p-24 text-muted-foreground animate-pulse">
             <Loader2 className="h-10 w-10 animate-spin mb-4" />
-            <p>Loading participants...</p>
+            <p>Loading members...</p>
           </div>
         )}
 
@@ -508,10 +508,10 @@ const ParticipantsPage: React.FC = () => {
           <Card>
             <CardContent className="p-12 text-center">
               <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold mb-2">{t('participants.no_participants')}</h3>
-              <p className="text-muted-foreground mb-4">{t('participants.no_participants_desc')}</p>
+              <h3 className="text-lg font-semibold mb-2">{t('members.no_members')}</h3>
+              <p className="text-muted-foreground mb-4">{t('members.no_members_desc')}</p>
               <Button onClick={() => setIsAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />{t('participants.add_participant')}
+                <Plus className="h-4 w-4 mr-2" />{t('members.add_member')}
               </Button>
             </CardContent>
           </Card>
@@ -563,11 +563,11 @@ const ParticipantsPage: React.FC = () => {
         )}
       </main>
 
-      {/* Add Participant Dialog */}
+      {/* Add Member Dialog */}
       <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('participants.add_participant')}</DialogTitle>
+            <DialogTitle>{t('members.add_member')}</DialogTitle>
             <DialogDescription>{t('participants.add_desc')}</DialogDescription>
           </DialogHeader>
           {formFieldsJsx}
@@ -575,7 +575,7 @@ const ParticipantsPage: React.FC = () => {
             <Button variant="outline" disabled={isSubmitting} onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
             <Button disabled={isSubmitting} onClick={handleCreate}>
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {t('participants.add_participant')}
+              {t('common.save')}
             </Button>
           </div>
         </DialogContent>
@@ -585,7 +585,7 @@ const ParticipantsPage: React.FC = () => {
       <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingParticipant(null); resetForm(); } }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{t('participants.edit_participant')}</DialogTitle>
+            <DialogTitle>{t('members.edit_member')}</DialogTitle>
             <DialogDescription>{t('participants.edit_desc')}</DialogDescription>
           </DialogHeader>
           {formFieldsJsx}

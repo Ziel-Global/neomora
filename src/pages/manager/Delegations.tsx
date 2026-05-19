@@ -14,6 +14,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Flag, Users, Send, CheckCircle, Clock, AlertCircle, Plus, Plane } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
+import { getDelegationsDetails, createDelegation, submitDelegation } from '@/api/delegationApi';
+import { getEvents } from '@/api/eventApi';
+import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam } from '@/api/teamApi';
+import { createRegistration, getMyRegistrations } from '@/api/registrationApi';
+import { EMSEvent } from '@/lib/emsStore';
 
 const AIRPORTS = [
   { code: 'RUH', name: 'Riyadh (King Khalid)' },
@@ -47,7 +52,9 @@ const DelegationsPage: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
-  
+  const [delegationCountry, setDelegationCountry] = useState<string>('');
+  const [events, setEvents] = useState<EMSEvent[]>([]);
+
   // Bulk travel preferences state
   const [isBulkTravelOpen, setIsBulkTravelOpen] = useState(false);
   const [selectedDelegation, setSelectedDelegation] = useState<Delegation | null>(null);
@@ -65,24 +72,98 @@ const DelegationsPage: React.FC = () => {
   });
   const [isSubmittingBulk, setIsSubmittingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
-
-  const events = eventStore.getAll().filter(e => e.status === 'Published' || e.status === 'Ongoing');
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (manager) {
+      if (manager.country && !delegationCountry) {
+        setDelegationCountry(manager.country);
+      }
       refreshData();
     }
   }, [manager]);
 
-  const refreshData = () => {
+  const refreshData = async () => {
     if (manager) {
-      setTeams(teamStore.getByManager(manager.id));
-      setDelegations(delegationStore.getByManager(manager.id));
+      setIsLoading(true);
+      try {
+        const [delegationData, eventData, teamData, registrations] = await Promise.all([
+          getDelegationsDetails(),
+          getEvents(),
+          getMyTeams(),
+          getMyRegistrations().catch(() => [])
+        ]);
+        const normalizedDelegations = delegationData.map((d: any) => {
+          let teamIds = d.teamIds || d.team_ids || (d.teams || []).map((t: any) => t.id || t._id) || [];
+
+          // Map backwards from teams if backend didn't link them properly
+          if (teamIds.length === 0) {
+            const delegationTeams = teamData.filter((t: any) => t.delegationId === d.id || t.delegation_id === d.id || t.delegation?.id === d.id);
+            teamIds = delegationTeams.map((t: any) => t.id);
+          }
+
+          return {
+            ...d,
+            id: d.id || d._id,
+            teamIds,
+            totalMembers: d.totalMembers || d.total_members || 0
+          };
+        });
+
+        setDelegations(normalizedDelegations);
+        setEvents(eventData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
+
+        const registrationCounts = new Map<string, number>();
+        for (const r of registrations as any[]) {
+          const teamId = r.teamId || r.team_id || r.team?.id;
+          if (!teamId) continue;
+          registrationCounts.set(teamId, (registrationCounts.get(teamId) || 0) + 1);
+        }
+
+        const memberCountsByTeam = new Map<string, number>();
+        await Promise.all(
+          teamData.map(async (t: any) => {
+            try {
+              const members = await listTeamMembers(t.id);
+              memberCountsByTeam.set(t.id, members.length);
+            } catch {
+              memberCountsByTeam.set(t.id, 0);
+            }
+          })
+        );
+
+        // Normalize memberCount for server teams and merge with local teams
+        const mergedTeams = teamData.map((t: any) => {
+          const countFromServer = t.memberCount || t.member_count || 0;
+          const countFromRegs = registrationCounts.get(t.id) || 0;
+          const countFromMembers = memberCountsByTeam.get(t.id) || 0;
+          return {
+            ...t,
+            memberCount: Math.max(countFromServer, countFromRegs, countFromMembers)
+          };
+        });
+
+        const localTeams = teamStore.getByManager(manager.id);
+        for (const lt of localTeams) {
+          if (!mergedTeams.find(st => st.id === lt.id)) {
+            const localCount = teamMemberStore.getByTeam(lt.id).length;
+            mergedTeams.push({ ...lt, memberCount: localCount });
+          }
+        }
+        setTeams(mergedTeams);
+      } catch (error: any) {
+        console.error('Failed to load initial delegations data:', error);
+        const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+        toast.error(`Failed to load delegations: ${msg}`);
+      } finally {
+        setIsLoading(false);
+      }
     }
   };
 
-  const getEventName = (eventId: string) => {
-    return eventStore.getById(eventId)?.name || 'Unknown Event';
+  const getEventName = (delegation: any) => {
+    const eid = delegation.eventId || delegation.event_id || delegation.event?.id;
+    return events.find(e => e.id === eid)?.name || 'Unknown Event';
   };
 
   const getStatusIcon = (status: string) => {
@@ -111,64 +192,155 @@ const DelegationsPage: React.FC = () => {
     );
   };
 
-  const handleCreateDelegation = () => {
+  const mapCategory = (catId: string) => {
+    const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
+    const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
+    const id = catId.toLowerCase();
+    if (teamGames.includes(id)) return 'team-based-games';
+    if (individualGames.includes(id)) return 'individual-games';
+    return 'hybrid-games';
+  };
+
+  const handleCreateDelegation = async () => {
     if (!manager) return;
     if (!selectedEventId) {
       toast.error('Please select an event');
       return;
     }
-    if (selectedTeamIds.length === 0) {
-      toast.error('Please select at least one team');
+    if (!delegationCountry.trim()) {
+      toast.error('Please enter a country for the delegation');
       return;
     }
+    /* Removed mandatory team selection to resolve deadlock: 
+       backend requires delegationId to create a team, 
+       so we must allow creating a delegation first. */
 
-    delegationStore.create({
-      managerId: manager.id,
-      country: manager.country,
-      eventId: selectedEventId,
-      teamIds: selectedTeamIds,
-    });
+    try {
+      // 1. Create the delegation on the server
+      const serverTeamIds = selectedTeamIds.filter(id => !id.startsWith('team-'));
+      const newDelegation = await createDelegation({
+        country: delegationCountry,
+        eventId: selectedEventId,
+        teamIds: serverTeamIds,
+      });
 
-    toast.success('Delegation created successfully!');
-    setSelectedEventId('');
-    setSelectedTeamIds([]);
-    setIsCreateOpen(false);
-    refreshData();
+      // Update existing teams with the new delegation ID
+      for (const teamId of serverTeamIds) {
+        try {
+          await updateTeam(teamId, { delegationId: newDelegation.id });
+        } catch (e) {
+          console.warn(`[Sync] Failed to link existing team ${teamId} to delegation`, e);
+        }
+      }
+
+      // 2. Sync local teams
+      const localTeamIds = selectedTeamIds.filter(id => id.startsWith('team-'));
+      for (const localId of localTeamIds) {
+        const localTeam = teamStore.getById(localId);
+        if (!localTeam) continue;
+
+        // Find exact sport category names from event data
+        const event = events.find(e => e.id === selectedEventId);
+        const eventSportCat = event?.sportCategories?.find(
+          (c: any) => c.subCategory?.toLowerCase() === localTeam.sportCategory.toLowerCase()
+        );
+
+        // Create team on server
+        const serverTeam = await createTeam({
+          delegationId: newDelegation.id,
+          eventId: selectedEventId,
+          name: localTeam.name,
+          sportCategory: localTeam.sportCategory,
+          sportCategoryGroup: eventSportCat?.name || mapCategory(localTeam.sportCategory),
+          subCategory: localTeam.subCategory || localTeam.sportCategory
+        });
+
+        // Sync members
+        const localMembers = teamMemberStore.getByTeam(localId);
+        for (const m of localMembers) {
+          const formData = new FormData();
+          formData.append('teamId', serverTeam.id);
+          formData.append('eventId', selectedEventId);
+          formData.append('delegationId', newDelegation.id); // Link to delegation
+          formData.append('country', delegationCountry); // Store delegation country
+          formData.append('firstName', m.firstName);
+          formData.append('lastName', m.lastName);
+          formData.append('email', m.email);
+          formData.append('phone', m.phone);
+          formData.append('nationality', m.nationality || manager.country || '');
+          formData.append('passportNumber', m.passportNumber);
+          formData.append('organization', `${delegationCountry || manager.country || ''} Delegation`);
+          formData.append('jobTitle', m.role);
+          formData.append('participantRole', m.role === 'Athlete' ? 'Athlete' : 'Official');
+          formData.append('gender', m.gender.toLowerCase());
+
+          if (m.dateOfBirth) formData.append('dateOfBirth', m.dateOfBirth);
+          if (m.passportExpiry) formData.append('passportExpiry', m.passportExpiry);
+
+          try {
+            await createRegistration(formData);
+          } catch (memberError: any) {
+            // If member is already registered, skip silently
+            const errMsg = memberError?.response?.data?.message || memberError?.message || '';
+            console.warn(`[Sync] Skipping member ${m.email}: ${errMsg}`);
+          }
+        }
+
+        // Cleanup
+        teamStore.delete(localId);
+      }
+
+      toast.success('Delegation created and teams synced!');
+      setSelectedEventId('');
+      setSelectedTeamIds([]);
+      setIsCreateOpen(false);
+      refreshData();
+    } catch (error: any) {
+      console.error('Failed to create delegation/sync:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Failed to create delegation';
+      toast.error(msg);
+    }
   };
 
-  const handleSubmitDelegation = (delegationId: string) => {
-    const delegation = delegations.find(d => d.id === delegationId);
-    if (!delegation) return;
-
-    let totalMembers = 0;
-    for (const teamId of delegation.teamIds) {
-      totalMembers += teamMemberStore.getByTeam(teamId).length;
+  const handleSubmitDelegation = async (delegationId: string) => {
+    try {
+      await submitDelegation(delegationId);
+      toast.success('Delegation submitted for review!');
+      refreshData();
+    } catch (error: any) {
+      console.error('Failed to submit delegation:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Failed to submit delegation';
+      toast.error(msg);
     }
-
-    if (totalMembers === 0) {
-      toast.error('Cannot submit: Your delegation has no members. Please add team members first.');
-      return;
-    }
-
-    delegationStore.submit(delegationId);
-    toast.success('Delegation submitted for review!');
-    refreshData();
   };
 
   const getMemberCount = (delegation: Delegation) => {
+    // Use backend-provided totalMembers first, then try summing team members
+    const backendTotal = (delegation as any).totalMembers;
+    if (backendTotal > 0) return backendTotal;
+
     let total = 0;
-    for (const teamId of delegation.teamIds) {
-      total += teamMemberStore.getByTeam(teamId).length;
+    for (const teamId of (delegation.teamIds || [])) {
+      const team = teams.find(t => t.id === teamId);
+      if (team) {
+        total += team.memberCount || 0;
+      }
     }
     return total;
   };
 
-  const getDelegationMembersList = (delegation: Delegation): TeamMember[] => {
-    const members: TeamMember[] = [];
-    for (const teamId of delegation.teamIds) {
-      members.push(...teamMemberStore.getByTeam(teamId));
+  const getDelegationMembersList = async (delegation: Delegation): Promise<TeamMember[]> => {
+    const allMembers: TeamMember[] = [];
+    try {
+      for (const teamId of (delegation.teamIds || [])) {
+        const teamMembers = await listTeamMembers(teamId);
+        allMembers.push(...teamMembers);
+      }
+    } catch (error) {
+      console.error('Failed to fetch delegation members:', error);
+      toast.error('Failed to fetch team members');
     }
-    return members;
+    return allMembers;
   };
 
   const openBulkTravel = (delegation: Delegation) => {
@@ -192,38 +364,42 @@ const DelegationsPage: React.FC = () => {
   const handleBulkSetTravelPrefs = async () => {
     if (!selectedDelegation || !manager) return;
 
-    const members = getDelegationMembersList(selectedDelegation);
-    if (members.length === 0) {
-      toast.error('No members found in this delegation');
-      return;
-    }
-
-    const event = eventStore.getById(selectedDelegation.eventId);
-    if (!event) {
-      toast.error('Event not found');
-      return;
-    }
-
-    if (bulkTravelPrefs.needsTransport && (!bulkTravelPrefs.originCity || !bulkTravelPrefs.departureAirport)) {
-      toast.error('Please fill in origin city and departure airport');
-      return;
-    }
-
-    if (bulkTravelPrefs.needsTransport && (!bulkTravelPrefs.preferredArrivalDate || !bulkTravelPrefs.preferredDepartureDate)) {
-      toast.error('Please fill in preferred travel dates');
-      return;
-    }
-
     setIsSubmittingBulk(true);
     setBulkProgress(0);
 
     try {
+      const members = await getDelegationMembersList(selectedDelegation);
+      if (members.length === 0) {
+        toast.error('No members found in this delegation');
+        setIsSubmittingBulk(false);
+        return;
+      }
+
+      const event = events.find(e => e.id === selectedDelegation.eventId);
+      if (!event) {
+        toast.error('Event not found');
+        setIsSubmittingBulk(false);
+        return;
+      }
+
+      if (bulkTravelPrefs.needsTransport && (!bulkTravelPrefs.originCity || !bulkTravelPrefs.departureAirport)) {
+        toast.error('Please fill in origin city and departure airport');
+        setIsSubmittingBulk(false);
+        return;
+      }
+
+      if (bulkTravelPrefs.needsTransport && (!bulkTravelPrefs.preferredArrivalDate || !bulkTravelPrefs.preferredDepartureDate)) {
+        toast.error('Please fill in preferred travel dates');
+        setIsSubmittingBulk(false);
+        return;
+      }
+
       let processed = 0;
       const total = members.length;
 
       for (const member of members) {
-        // Update team member with travel preferences only (no registration)
-        teamMemberStore.update(member.id, {
+        // Update team member with travel preferences via API
+        await updateTeamMember(member.teamId, member.id, {
           travelPreferences: bulkTravelPrefs,
         });
 
@@ -264,7 +440,13 @@ const DelegationsPage: React.FC = () => {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Select Event *</Label>
-                <Select value={selectedEventId} onValueChange={setSelectedEventId}>
+                <Select
+                  value={selectedEventId}
+                  onValueChange={(val) => {
+                    setSelectedEventId(val);
+                    setSelectedTeamIds([]); // Clear teams when event changes
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Choose an event" />
                   </SelectTrigger>
@@ -277,6 +459,15 @@ const DelegationsPage: React.FC = () => {
               </div>
 
               <div className="space-y-2">
+                <Label>Delegation Country *</Label>
+                <Input
+                  placeholder="Enter country name (e.g., Saudi Arabia, UK)"
+                  value={delegationCountry}
+                  onChange={(e) => setDelegationCountry(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
                 <Label>Select Teams *</Label>
                 <p className="text-sm text-muted-foreground mb-2">
                   Choose which teams to include in this delegation
@@ -285,21 +476,28 @@ const DelegationsPage: React.FC = () => {
                   <p className="text-sm text-muted-foreground">No teams created yet</p>
                 ) : (
                   <div className="space-y-2 max-h-60 overflow-y-auto border rounded-lg p-3">
-                    {teams.map(team => (
-                      <div key={team.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded">
-                        <Checkbox
-                          id={team.id}
-                          checked={selectedTeamIds.includes(team.id)}
-                          onCheckedChange={() => handleToggleTeam(team.id)}
-                        />
-                        <label htmlFor={team.id} className="flex-1 cursor-pointer">
-                          <p className="font-medium">{team.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {team.sportCategory} • {team.memberCount} members
-                          </p>
-                        </label>
-                      </div>
-                    ))}
+                    {(teams || [])
+                      .filter(t => !selectedEventId || t.eventId === selectedEventId || (t as any).event?.id === selectedEventId)
+                      .map(team => (
+                        <div key={team.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded">
+                          <Checkbox
+                            id={team.id}
+                            checked={selectedTeamIds.includes(team.id)}
+                            onCheckedChange={() => handleToggleTeam(team.id)}
+                          />
+                          <label htmlFor={team.id} className="flex-1 cursor-pointer text-sm">
+                            <p className="font-medium">{team.name}</p>
+                            <p className="text-muted-foreground">
+                              {typeof team.sportCategory === 'object' ? (team.sportCategory as any)?.name : team.sportCategory} • {team.subCategory || ''}
+                            </p>
+                          </label>
+                        </div>
+                      ))}
+                    {teams.filter(t => !selectedEventId || t.eventId === selectedEventId || (t as any).event?.id === selectedEventId).length === 0 && (
+                      <p className="text-sm text-center py-4 text-muted-foreground">
+                        {selectedEventId ? 'No teams found for this event' : 'Please select an event first'}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -312,7 +510,14 @@ const DelegationsPage: React.FC = () => {
         </Dialog>
       </div>
 
-      {delegations.length === 0 ? (
+      {isLoading ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Clock className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30 animate-spin" />
+            <p className="text-muted-foreground">Loading delegations...</p>
+          </CardContent>
+        </Card>
+      ) : delegations.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Flag className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
@@ -338,14 +543,14 @@ const DelegationsPage: React.FC = () => {
                   </div>
                   <Badge className={getStatusColor(delegation.status)}>{delegation.status}</Badge>
                 </div>
-                <CardDescription>{getEventName(delegation.eventId)}</CardDescription>
+                <CardDescription>{getEventName(delegation)}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
                   <div className="flex items-center gap-4 text-sm">
                     <div className="flex items-center gap-1">
                       <Users className="h-4 w-4 text-muted-foreground" />
-                      <span>{delegation.teamIds.length} teams</span>
+                      <span>{(delegation.teamIds || []).length} teams</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Users className="h-4 w-4 text-muted-foreground" />
@@ -356,7 +561,7 @@ const DelegationsPage: React.FC = () => {
                   <div className="border-t pt-3">
                     <p className="text-sm font-medium mb-2">Teams included:</p>
                     <div className="flex flex-wrap gap-2">
-                      {delegation.teamIds.map(teamId => {
+                      {(delegation.teamIds || []).map(teamId => {
                         const team = teams.find(t => t.id === teamId);
                         return team ? (
                           <Badge key={teamId} variant="secondary" className="text-xs">
@@ -430,7 +635,7 @@ const DelegationsPage: React.FC = () => {
                     <div>
                       <p className="font-medium">{manager?.country} Delegation</p>
                       <p className="text-sm text-muted-foreground">
-                        {getEventName(selectedDelegation.eventId)}
+                        {getEventName(selectedDelegation)}
                       </p>
                     </div>
                     <Badge variant="secondary">

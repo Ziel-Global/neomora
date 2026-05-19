@@ -46,6 +46,7 @@ const eventNavItems: NavItem[] = [
   { icon: Mail, label: 'common.invitations', path: 'invitations' },
   { icon: FileText, label: 'common.registrations', path: 'registrations' },
   { icon: Flag, label: 'common.delegations', path: 'delegations' },
+  { icon: Users, label: 'common.participants', path: 'participants' },
   { icon: FileCheck2, label: 'common.visas', path: 'visas' },
   { icon: Plane, label: 'common.travel', path: 'travel' },
   { icon: Hotel, label: 'common.accommodation', path: 'accommodation' },

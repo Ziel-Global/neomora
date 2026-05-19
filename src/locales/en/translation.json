@@ -18,6 +18,8 @@
     "change_event": "Change Event",
     "events": "Events",
     "participants": "Participants",
+    "members": "Members",
+    "members_count": "{{count}} members",
     "invitations": "Invitations",
     "registrations": "Registrations",
     "under_review": "Under Review",
@@ -65,6 +67,7 @@
     "female": "Female",
     "other": "Other",
     "participant": "Participant",
+    "member": "Member",
     "event": "Event",
     "campaign": "Campaign",
     "audience": "Audience",
@@ -207,6 +210,13 @@
       "media": "Media",
       "fan": "Fan"
     }
+  },
+  "members": {
+    "title": "Members",
+    "add_member": "Add Member",
+    "edit_member": "Edit Member",
+    "no_members": "No members yet",
+    "no_members_desc": "Add your first member to start managing global records."
   },
   "invitations": {
     "title": "Invitations",

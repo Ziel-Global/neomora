@@ -221,7 +221,8 @@ const EventSelector: React.FC = () => {
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
             .filter(Boolean)
             .map((c, index) => ({
-                id: index + 1, // Providing a numeric ID as shown in user's request
+                id: index + 1,
+                // Providing a numeric ID as shown in user's request
                 name: c!.name,
                 subCategory: c!.subCategories?.[0] || 'Any',
             }));

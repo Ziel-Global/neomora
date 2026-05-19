@@ -5,13 +5,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { teamStore, teamMemberStore, Team, TeamMember } from '@/lib/teamStore';
-import { invitationStore, eventStore, EMSInvitation, EMSEvent, registrationStore, participantStore } from '@/lib/emsStore';
+import { Team, TeamMember } from '@/lib/teamStore';
+import { EMSEvent, EMSInvitation } from '@/lib/emsStore';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
-import { Eye, Search, FileText, Users, UserPlus, ArrowRight, Calendar } from 'lucide-react';
+import { getMyTeams, listTeamMembers } from '@/api/teamApi';
+import { getEvents } from '@/api/eventApi';
+import { getMyRegistrations } from '@/api/registrationApi';
+import { Loader2, Eye, Search, FileText, Users, UserPlus, ArrowRight, Calendar, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface PendingRegistration {
   invitation: EMSInvitation;
@@ -32,65 +36,58 @@ const RegistrationsPage: React.FC = () => {
   // New state for pending registrations
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
 
+  const [isLoading, setIsLoading] = useState(false);
+  const [events, setEvents] = useState<EMSEvent[]>([]);
+
   useEffect(() => {
     if (manager) {
-      const managerTeams = teamStore.getByManager(manager.id);
-      const allMembers = teamMemberStore.getByManager(manager.id);
-      setTeams(managerTeams);
-      setMembers(allMembers);
-
-      loadPendingRegistrations(manager.id);
+      refreshData();
     }
   }, [manager]);
 
-  const loadPendingRegistrations = (managerId: string) => {
-    const allInvitations = invitationStore.getAll();
-    const allRegistrations = registrationStore.getAll();
-    const allParticipants = participantStore.getAll();
-    const teamMembers = teamMemberStore.getByManager(managerId);
-    const memberEmails = teamMembers.map(m => m.email.toLowerCase());
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      const [teamsData, eventsData] = await Promise.all([
+        getMyTeams(),
+        getEvents()
+      ]);
+      setTeams(teamsData);
+      setEvents(eventsData);
 
-    const pendingList: PendingRegistration[] = [];
-
-    const myDetails = manager;
-    if (!myDetails) return;
-
-    allInvitations.filter(i => i.status === 'Accepted').forEach(inv => {
-      const participant = allParticipants.find(p => p.id === inv.participantId);
-      if (!participant) return;
-
-      // Check if already registered
-      const isRegistered = allRegistrations.some(r =>
-        r.participantId === inv.participantId && r.eventId === inv.eventId
-      );
-      if (isRegistered) return;
-
-      // Check if ours
-      const isFromCountry = participant.nationality === myDetails.country;
-      const isTeamMember = memberEmails.includes(participant.email.toLowerCase());
-
-      if (isFromCountry || isTeamMember) {
-        const event = eventStore.getById(inv.eventId);
-        if (event) {
-          pendingList.push({
-            invitation: inv,
-            event,
-            participantName: `${participant.firstName} ${participant.lastName} `,
-            participantEmail: participant.email
-          });
-        }
+      // Try to get registrations from global endpoint first
+      let regsData = await getMyRegistrations();
+      
+      // If none found or global failed, aggregate from teams
+      if (regsData.length === 0 && teamsData.length > 0) {
+        console.log('No global registrations found, aggregating from teams...');
+        const teamMembersPromises = teamsData.map(team => listTeamMembers(team.id));
+        const membersPerTeam = await Promise.all(teamMembersPromises);
+        
+        // Flatten and add teamId context if missing
+        regsData = membersPerTeam.flatMap((teamMembers, index) => 
+          teamMembers.map(m => ({ ...m, teamId: teamsData[index].id }))
+        );
       }
-    });
-    setPendingRegistrations(pendingList);
+
+      setMembers(regsData as any);
+    } catch (error: any) {
+      console.error('Failed to load registrations data:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Unknown error';
+      toast.error(`Failed to load registrations: ${msg}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const filteredMembers = members.filter(m => {
+  const filteredMembers = (members || []).filter(m => {
+    const participant = (m as any).participant || m;
     const matchesTeam = selectedTeamFilter === 'all' || m.teamId === selectedTeamFilter;
     const matchesSearch =
-      m.firstName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.lastName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      m.passportNumber.toLowerCase().includes(searchQuery.toLowerCase());
+      (participant.firstName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (participant.lastName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (participant.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (participant.passportNumber || (m as any).passportNumber || '').toLowerCase().includes(searchQuery.toLowerCase());
     return matchesTeam && matchesSearch;
   });
 
@@ -116,57 +113,6 @@ const RegistrationsPage: React.FC = () => {
         </p>
       </div>
 
-      {/* Pending Registrations Section */}
-      {pendingRegistrations.length > 0 && (
-        <Card className="border-blue-100 bg-blue-50/20">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-blue-700">
-              <UserPlus className="h-5 w-5" />
-              Pending Registrations ({pendingRegistrations.length})
-            </CardTitle>
-            <CardDescription className="text-blue-600/80">
-              These members have accepted invitations but are not yet fully registered.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {pendingRegistrations.map(pending => (
-                <Card key={pending.invitation.id} className="bg-white border-blue-100">
-                  <CardContent className="pt-6">
-                    <div className="flex justify-between items-start mb-4">
-                      <div>
-                        <p className="font-semibold">{pending.participantName}</p>
-                        <p className="text-sm text-muted-foreground">{pending.participantEmail}</p>
-                      </div>
-                      <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                        Accepted
-                      </Badge>
-                    </div>
-
-                    <div className="space-y-2 mb-4">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Calendar className="h-4 w-4" />
-                        <span>{pending.event.name}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {pending.event.city} • {new Date(pending.event.startDate).toLocaleDateString()}
-                      </p>
-                    </div>
-
-                    <Button
-                      className="w-full"
-                      onClick={() => navigate(`/ manager / register - member ? email = ${encodeURIComponent(pending.participantEmail)}& eventId=${pending.event.id} `)}
-                    >
-                      Complete Registration
-                      <ArrowRight className="h-4 w-4 ml-2" />
-                    </Button>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Filters */}
       <Card>
@@ -205,7 +151,11 @@ const RegistrationsPage: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {filteredMembers.length === 0 ? (
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : filteredMembers.length === 0 ? (
             <div className="text-center py-12">
               <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
               <p className="text-muted-foreground">No members registered yet</p>
@@ -224,39 +174,43 @@ const RegistrationsPage: React.FC = () => {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredMembers.map(member => (
-                    <TableRow key={member.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{member.firstName} {member.lastName}</p>
-                          <p className="text-sm text-muted-foreground">{member.email}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>{getTeamName(member.teamId)}</TableCell>
-                      <TableCell>{member.role}</TableCell>
-                      <TableCell className="font-mono text-sm">{member.passportNumber}</TableCell>
-                      <TableCell>
-                        <Badge className={getStatusColor(member.status)}>{member.status}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelectedMember(member)}
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => navigate(`/ manager / documents ? memberId = ${member.id} `)}
-                          title="Manage Documents"
-                        >
-                          <FileText className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredMembers.map(registration => {
+                    const m = registration as any;
+                    const p = m.participant || m;
+                    return (
+                      <TableRow key={registration.id}>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{p.firstName} {p.lastName}</p>
+                            <p className="text-sm text-muted-foreground">{p.email}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{getTeamName(registration.teamId)}</TableCell>
+                        <TableCell>{p.role || m.role}</TableCell>
+                        <TableCell className="font-mono text-sm">{p.passportNumber || m.passportNumber}</TableCell>
+                        <TableCell>
+                          <Badge className={getStatusColor(registration.status || 'Draft')}>{registration.status || 'Draft'}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setSelectedMember(registration)}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => navigate(`/manager/documents?memberId=${registration.id}`)}
+                            title="Manage Documents"
+                          >
+                            <FileText className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -272,72 +226,78 @@ const RegistrationsPage: React.FC = () => {
           </DialogHeader>
           {selectedMember && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Full Name</p>
-                  <p className="font-medium">{selectedMember.firstName} {selectedMember.lastName}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Team</p>
-                  <p className="font-medium">{getTeamName(selectedMember.teamId)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Role</p>
-                  <p className="font-medium">{selectedMember.role}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Sport</p>
-                  <p className="font-medium">{selectedMember.sportCategory}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Email</p>
-                  <p className="font-medium">{selectedMember.email}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Phone</p>
-                  <p className="font-medium">{selectedMember.phone || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Nationality</p>
-                  <p className="font-medium">{selectedMember.nationality}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Passport</p>
-                  <p className="font-medium font-mono">{selectedMember.passportNumber}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Passport Expiry</p>
-                  <p className="font-medium">{selectedMember.passportExpiry || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Date of Birth</p>
-                  <p className="font-medium">{selectedMember.dateOfBirth || 'N/A'}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Gender</p>
-                  <p className="font-medium">{selectedMember.gender}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge className={getStatusColor(selectedMember.status)}>{selectedMember.status}</Badge>
-                </div>
-              </div>
-              {selectedMember.dietaryRequirements && (
-                <div>
+              {(() => {
+                const m = selectedMember as any;
+                const p = m.participant || m;
+                return (
+                  <div className="grid grid-cols-2 gap-4 text-start">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Full Name</p>
+                      <p className="font-medium">{p.firstName} {p.lastName}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Team</p>
+                      <p className="font-medium">{getTeamName(m.teamId)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Role</p>
+                      <p className="font-medium">{p.role || m.role}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Sport</p>
+                      <p className="font-medium">{p.sportCategory || m.sportCategory}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Email</p>
+                      <p className="font-medium">{p.email}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Phone</p>
+                      <p className="font-medium">{p.phone || m.phone || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Nationality</p>
+                      <p className="font-medium">{p.nationality || m.nationality}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Passport</p>
+                      <p className="font-medium font-mono">{p.passportNumber || m.passportNumber}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Passport Expiry</p>
+                      <p className="font-medium">{p.passportExpiry || m.passportExpiry || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Date of Birth</p>
+                      <p className="font-medium">{p.dateOfBirth || m.dateOfBirth || 'N/A'}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Gender</p>
+                      <p className="font-medium">{p.gender || m.gender}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Status</p>
+                      <Badge className={getStatusColor(m.status || 'Draft')}>{m.status || 'Draft'}</Badge>
+                    </div>
+                  </div>
+                );
+              })()}
+              {(selectedMember as any).dietaryRequirements && (
+                <div className="text-start">
                   <p className="text-sm text-muted-foreground">Dietary Requirements</p>
-                  <p className="font-medium">{selectedMember.dietaryRequirements}</p>
+                  <p className="font-medium">{(selectedMember as any).dietaryRequirements}</p>
                 </div>
               )}
-              {selectedMember.medicalConditions && (
-                <div>
+              {(selectedMember as any).medicalConditions && (
+                <div className="text-start">
                   <p className="text-sm text-muted-foreground">Medical Conditions</p>
-                  <p className="font-medium">{selectedMember.medicalConditions}</p>
+                  <p className="font-medium">{(selectedMember as any).medicalConditions}</p>
                 </div>
               )}
-              {selectedMember.emergencyContact && (
-                <div>
+              {(selectedMember as any).emergencyContact && (
+                <div className="text-start">
                   <p className="text-sm text-muted-foreground">Emergency Contact</p>
-                  <p className="font-medium">{selectedMember.emergencyContact} - {selectedMember.emergencyPhone}</p>
+                  <p className="font-medium">{(selectedMember as any).emergencyContact} - {(selectedMember as any).emergencyPhone}</p>
                 </div>
               )}
             </div>

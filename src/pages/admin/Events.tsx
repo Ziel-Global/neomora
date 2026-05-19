@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { eventStore, invitationStore, registrationStore, EMSEvent } from '@/lib/emsStore';
+import { invitationStore, registrationStore, EMSEvent } from '@/lib/emsStore';
+import { getEvents, createEvent, updateEvent, deleteEvent } from '@/api/eventApi';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
 import { Calendar, MapPin, Users, Plus, Search, Eye, Edit, MoreHorizontal, Trash2, Flag, Medal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,8 +50,14 @@ const EventsPage: React.FC = () => {
     loadEvents();
   }, []);
 
-  const loadEvents = () => {
-    setEvents(eventStore.getAll());
+  const loadEvents = async () => {
+    try {
+      const data = await getEvents();
+      setEvents(data);
+    } catch (error) {
+      console.error('Failed to load events', error);
+      toast.error('Failed to load events');
+    }
   };
 
   const resetForm = () => {
@@ -68,39 +75,72 @@ const EventsPage: React.FC = () => {
     });
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!formData.name || !formData.startDate || !formData.endDate || !formData.city) {
       toast.error('Please fill in all required fields');
       return;
     }
 
-    const sportCategories = formData.selectedSports.map(sportId => {
-      const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
-      return cat ? { id: cat.id, name: cat.name, subCategories: cat.subCategories } : null;
-    }).filter(Boolean) as EMSEvent['sportCategories'];
+    const mapCategoryGroup = (catId: string) => {
+      const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
+      const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
+      if (teamGames.includes(catId)) return 'team-based-games';
+      if (individualGames.includes(catId)) return 'individual-games';
+      return 'hybrid-games';
+    };
 
-    const newEvent = eventStore.create({
-      name: formData.name,
-      theme: formData.theme,
-      startDate: formData.startDate,
-      endDate: formData.endDate,
-      city: formData.city,
-      venues: formData.venues.split('\n').filter(v => v.trim()),
-      status: formData.status,
-      clientGroups: ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'],
-      eventType: formData.eventType,
-      sportCategories: sportCategories,
-      allowTeamRegistration: formData.allowTeamRegistration,
+    const sportCategoriesApi: any[] = [];
+    formData.selectedSports.forEach(sportId => {
+      const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
+      if (cat) {
+        const groupName = mapCategoryGroup(sportId);
+        if (cat.subCategories && cat.subCategories.length > 0) {
+          cat.subCategories.forEach(sub => {
+            sportCategoriesApi.push({ name: cat.name, subCategory: sub, group: groupName });
+          });
+        } else {
+          sportCategoriesApi.push({ name: cat.name, subCategory: 'Any', group: groupName });
+        }
+      }
     });
 
-    loadEvents();
-    setIsCreateOpen(false);
-    resetForm();
-    toast.success(`Event "${newEvent.name}" created successfully`);
+    try {
+      await createEvent({
+        name: formData.name,
+        theme: formData.theme,
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        city: formData.city,
+        venues: formData.venues.split('\n').filter(v => v.trim()),
+        status: formData.status,
+        eventType: formData.eventType,
+        sportCategories: sportCategoriesApi,
+      });
+
+      loadEvents();
+      setIsCreateOpen(false);
+      resetForm();
+      toast.success(`Event "${formData.name}" created successfully`);
+    } catch (error: any) {
+      console.error('Failed to create event', error);
+      const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
+      toast.error('Failed to create event: ' + detail);
+    }
   };
 
   const handleEdit = (event: EMSEvent) => {
     setEditingEvent(event);
+    // DEBUG: log raw sport categories from API
+    console.log('[DEBUG handleEdit] Raw event.sportCategories:', JSON.stringify(event.sportCategories));
+    const mappedSports = Array.from(new Set(
+      (event.sportCategories || []).map((c: any) => {
+        // Backend returns sport name in c.subCategory
+        const found = SPORT_CATEGORIES.find(sc => sc.name.toLowerCase() === (c.subCategory || '').toLowerCase());
+        console.log('[DEBUG handleEdit] Mapping:', c, '→ found:', found?.id);
+        return found?.id;
+      }).filter(Boolean)
+    )) as string[];
+    console.log('[DEBUG handleEdit] Final selectedSports:', mappedSports);
     setFormData({
       name: event.name,
       theme: event.theme,
@@ -110,44 +150,72 @@ const EventsPage: React.FC = () => {
       venues: event.venues.join('\n'),
       status: event.status,
       eventType: event.eventType || 'individual',
-      selectedSports: event.sportCategories?.map(c => c.id) || [],
+      selectedSports: mappedSports,
       allowTeamRegistration: event.allowTeamRegistration || false,
     });
     setIsEditOpen(true);
   };
 
-  const handleUpdate = () => {
+  const handleUpdate = async () => {
     if (!editingEvent) return;
 
-    const sportCategories = formData.selectedSports.map(sportId => {
-      const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
-      return cat ? { id: cat.id, name: cat.name, subCategories: cat.subCategories } : null;
-    }).filter(Boolean) as EMSEvent['sportCategories'];
+    const mapCategoryGroup = (catId: string) => {
+      const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
+      const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
+      if (teamGames.includes(catId)) return 'team-based-games';
+      if (individualGames.includes(catId)) return 'individual-games';
+      return 'hybrid-games';
+    };
 
-    eventStore.update(editingEvent.id, {
-      name: formData.name,
-      theme: formData.theme,
-      startDate: formData.startDate,
-      endDate: formData.endDate,
-      city: formData.city,
-      venues: formData.venues.split('\n').filter(v => v.trim()),
-      status: formData.status,
-      eventType: formData.eventType,
-      sportCategories: sportCategories,
-      allowTeamRegistration: formData.allowTeamRegistration,
+    const sportCategoriesApi: any[] = [];
+    formData.selectedSports.forEach(sportId => {
+      const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
+      if (cat) {
+        const groupName = mapCategoryGroup(sportId);
+        if (cat.subCategories && cat.subCategories.length > 0) {
+          cat.subCategories.forEach(sub => {
+            sportCategoriesApi.push({ name: cat.name, subCategory: sub, group: groupName });
+          });
+        } else {
+          sportCategoriesApi.push({ name: cat.name, subCategory: 'Any', group: groupName });
+        }
+      }
     });
 
-    loadEvents();
-    setIsEditOpen(false);
-    setEditingEvent(null);
-    resetForm();
-    toast.success('Event updated successfully');
+    try {
+      await updateEvent(editingEvent.id, {
+        name: formData.name,
+        theme: formData.theme,
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        city: formData.city,
+        venues: formData.venues.split('\n').filter(v => v.trim()),
+        status: formData.status,
+        eventType: formData.eventType,
+        sportCategories: sportCategoriesApi,
+      });
+
+      loadEvents();
+      setIsEditOpen(false);
+      setEditingEvent(null);
+      resetForm();
+      toast.success('Event updated successfully');
+    } catch (error: any) {
+      console.error('Failed to update event', error);
+      const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
+      toast.error('Failed to update event: ' + detail);
+    }
   };
 
-  const handleDelete = (event: EMSEvent) => {
-    eventStore.delete(event.id);
-    loadEvents();
-    toast.success(`Event "${event.name}" deleted`);
+  const handleDelete = async (event: EMSEvent) => {
+    try {
+      await deleteEvent(event.id);
+      loadEvents();
+      toast.success(`Event "${event.name}" deleted`);
+    } catch (error: any) {
+      console.error('Failed to delete event', error);
+      toast.error(error?.response?.data?.message || 'Failed to delete event');
+    }
   };
 
   const filteredEvents = events.filter(event => {

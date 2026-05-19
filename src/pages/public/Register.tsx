@@ -24,6 +24,7 @@ import {
 import { ParticipantRole } from '@/data/mockData';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plane, MapPin, Calendar } from 'lucide-react';
+import { createRegistration } from '@/api/registrationApi';
 
 const steps = [
   { id: 1, title: 'Personal Info', icon: User },
@@ -395,120 +396,85 @@ const RegisterPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // Get or create participant
-      let participant: EMSParticipant | undefined = (sessionParticipant as any) || undefined;
-
-      if (!participant) {
-        // Check if participant exists by email
-        participant = participantStore.getByEmail(formData.email);
-
-        if (!participant) {
-          // Create new participant
-          participant = participantStore.create({
-            firstName: formData.firstName,
-            lastName: formData.lastName,
-            email: formData.email,
-            phone: formData.phone,
-            nationality: formData.nationality,
-            passportNumber: formData.passportNumber,
-            organization: formData.organization,
-            jobTitle: formData.jobTitle,
-            role: (formData.role || 'Attendee') as ParticipantRole,
-            dietaryNotes: formData.dietaryRequirements,
-            accessibilityNeeds: '',
-            emergencyContact: formData.emergencyContact,
-          });
-        }
-      } else {
-        // Update existing participant
-        participantStore.update(participant.id, {
-          phone: formData.phone,
-          nationality: formData.nationality,
-          passportNumber: formData.passportNumber,
-          organization: formData.organization,
-          jobTitle: formData.jobTitle,
-          dietaryNotes: formData.dietaryRequirements,
-          emergencyContact: formData.emergencyContact,
-        });
-      }
-
-      // Get first event for registration (in real app, would be selected)
+      // Get first event for registration
       const events = eventStore.getAll();
       const eventId = events.length > 0 ? events[0].id : 'default-event';
 
-      // Create registration with SUBMITTED status - DON'T store base64 file data to avoid quota errors
-      const registration = registrationStore.create({
-        eventId,
-        participantId: participant.id,
-        invitationId: invitationId || undefined,
-        status: 'Submitted',
-        formData: {
-          needsVisa: formData.needsVisa,
-          needsAccommodation: formData.needsAccommodation,
-          needsTransport: formData.needsTransport,
-          arrivalDate: formData.arrivalDate,
-          departureDate: formData.departureDate,
-          dietaryRequirements: formData.dietaryRequirements,
-          agreeTerms: formData.agreeTerms,
-        },
-        documents: uploadedDocs.map(doc => ({
-          type: doc.type,
-          fileName: doc.fileName,
-          fileData: doc.docId, // Store reference ID to retrieve from dedicated storage
-          uploadedAt: new Date().toISOString(),
-          status: 'Pending' as const,
-        })),
-        submittedAt: new Date().toISOString(),
-        reviewedAt: null,
+      // Create FormData for multipart/form-data submission
+      const registrationFormData = new FormData();
+      
+      // Add basic fields
+      registrationFormData.append('eventId', eventId);
+      registrationFormData.append('firstName', formData.firstName);
+      registrationFormData.append('lastName', formData.lastName);
+      registrationFormData.append('email', formData.email);
+      registrationFormData.append('phone', formData.phone);
+      registrationFormData.append('nationality', formData.nationality);
+      registrationFormData.append('passportNumber', formData.passportNumber);
+      registrationFormData.append('organization', formData.organization);
+      registrationFormData.append('jobTitle', formData.jobTitle);
+      registrationFormData.append('participantRole', formData.role);
+      
+      // Add travel and service preferences
+      registrationFormData.append('arrivalDate', formData.arrivalDate);
+      registrationFormData.append('departureDate', formData.departureDate);
+      registrationFormData.append('needsVisa', String(formData.needsVisa));
+      registrationFormData.append('needsAccommodation', String(formData.needsAccommodation));
+      registrationFormData.append('needsTransport', String(formData.needsTransport));
+      
+      // Add travel preferences if applicable
+      if (formData.needsTransport) {
+        registrationFormData.append('originCity', formData.originCity);
+        registrationFormData.append('departureAirport', formData.departureAirport);
+        registrationFormData.append('seatPreference', formData.seatPreference);
+        registrationFormData.append('mealPreference', formData.mealPreference);
+        registrationFormData.append('specialRequirements', formData.specialRequirements);
+        registrationFormData.append('travelEmergencyContactName', formData.travelEmergencyContact);
+        registrationFormData.append('travelEmergencyContactPhone', formData.travelEmergencyPhone);
+      }
+      
+      // Add other fields
+      registrationFormData.append('dietaryRequirements', formData.dietaryRequirements);
+      registrationFormData.append('emergencyContact', formData.emergencyContact);
+      registrationFormData.append('agreeTerms', String(formData.agreeTerms));
+      
+      // Add uploaded files
+      uploadedDocs.forEach((doc) => {
+        if (doc.type === 'Passport') {
+          registrationFormData.append('passportCopy', doc.fileData as any);
+        } else if (doc.type === 'Photo') {
+          registrationFormData.append('profilePhoto', doc.fileData as any);
+        }
       });
 
-      // Create visa application if needed (automatic based on nationality)
-      const visaApp = visaStore.checkRequirement(participant.id);
-
-      // If passport scan was uploaded, link metadata to visa application
-      const passportDoc = uploadedDocs.find(d => d.type === 'Passport');
-      if (passportDoc && visaApp) {
-        visaStore.addDocument(visaApp.id, {
-          type: 'Passport Scan',
-          fileName: passportDoc.fileName,
-          fileData: passportDoc.docId, // Store the docId reference so it can be retrieved
-          uploadedAt: new Date().toISOString(),
-          status: 'Pending'
-        });
-      }
-
-      // If user needs transport and filled travel preferences, create travel request
-      if (formData.needsTransport && formData.originCity && formData.departureAirport) {
-        travelStore.createRequest(
-          participant.id,
-          registration.id,
-          {
-            originCity: formData.originCity,
-            departureAirport: formData.departureAirport,
-            preferredDepartureDate: formData.arrivalDate,
-            preferredReturnDate: formData.departureDate,
-            seatPreference: formData.seatPreference,
-            mealPreference: formData.mealPreference,
-            specialRequirements: formData.specialRequirements,
-            emergencyContact: formData.travelEmergencyContact || formData.emergencyContact,
-            emergencyPhone: formData.travelEmergencyPhone || formData.phone,
-          }
-        );
-      }
+      // Call API to create registration
+      const response = await createRegistration(registrationFormData);
+      
+      // Also store locally for offline support
+      const participant = participantStore.create({
+        firstName: formData.firstName,
+        lastName: formData.lastName,
+        email: formData.email,
+        phone: formData.phone,
+        nationality: formData.nationality,
+        passportNumber: formData.passportNumber,
+        organization: formData.organization,
+        jobTitle: formData.jobTitle,
+        role: (formData.role || 'Attendee') as ParticipantRole,
+        dietaryNotes: formData.dietaryRequirements,
+        accessibilityNeeds: '',
+        emergencyContact: formData.emergencyContact,
+      });
 
       // Log participant in
-      login(formData.email, ''); 
+      login(formData.email, '');
 
       toast.success('Registration submitted successfully!');
       navigate('/my-status');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (errorMessage.includes('quota') || errorMessage.includes('QuotaExceededError')) {
-        toast.error('Storage limit reached. Please try clearing your browser data or use a different browser.');
-      } else {
-        toast.error('Failed to submit registration. Please try again.');
-      }
-      console.error(error);
+      console.error('Registration error:', error);
+      toast.error('Failed to submit registration. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

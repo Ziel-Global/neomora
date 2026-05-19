@@ -31,7 +31,10 @@ const Dashboard: React.FC = () => {
 
     useEffect(() => {
         if (participant) {
-            const invs = invitationStore.getAll().filter(i => i.participantId === participant.id);
+            const invs = invitationStore.getAll().filter(i =>
+                i.participantId === participant.id ||
+                (participant.email && i.participantEmail?.toLowerCase() === participant.email.toLowerCase())
+            );
             const regs = registrationStore.getAll().filter(r => r.participantId === participant.id);
             const travel = travelStore.getByParticipant(participant.id);
             const accom = accommodationStore.getByParticipant(participant.id);

@@ -5,6 +5,8 @@ import { useParticipantSession } from '@/contexts/ParticipantSessionContext';
 import { registrationStore, EMSRegistration, eventStore } from '@/lib/emsStore';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { FileText, Plane } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 
 const Registrations: React.FC = () => {
     const { participant } = useParticipantSession();
@@ -21,6 +23,8 @@ const Registrations: React.FC = () => {
         return eventStore.getById(eventId)?.name || 'Unknown Event';
     };
 
+    const navigate = useNavigate();
+
     if (!participant) return null;
 
     return (
@@ -35,6 +39,9 @@ const Registrations: React.FC = () => {
                     <CardContent className="pt-10 pb-10 text-center text-muted-foreground">
                         <FileText className="h-12 w-12 mx-auto mb-4 opacity-20" />
                         <p>You have not registered for any events yet.</p>
+                        <div className="mt-4">
+                            <Button onClick={() => navigate('/register')}>Register for Event</Button>
+                        </div>
                     </CardContent>
                 </Card>
             ) : (
