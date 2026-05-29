@@ -35,7 +35,6 @@ const TeamsPage: React.FC = () => {
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [events, setEvents] = useState<EMSEvent[]>([]);
   const [delegations, setDelegations] = useState<any[]>([]);
-  const [delegationId, setDelegationId] = useState<string>('');
 
   // Remove static events
 
@@ -48,26 +47,18 @@ const TeamsPage: React.FC = () => {
   const initialLoad = async () => {
     setIsLoading(true);
     try {
-      const [teamsData, eventsData, delegationsData] = await Promise.all([
-        getMyTeams(),
+      const [eventsData, delegationsData] = await Promise.all([
         getEvents(),
         getDelegationsDetails()
       ]);
-      console.log('[DEBUG initialLoad] Team data structure:', teamsData);
-      setTeams(teamsData);
       setEvents(eventsData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
       setDelegations(delegationsData);
-      if (delegationsData.length > 0) {
-        setDelegationId(delegationsData[0].id);
-      }
+      await refreshTeams(teamStore.getByManager(manager?.id || ''));
     } catch (error: any) {
       console.error('Failed to load initial teams data:', error);
       const msg = error?.response?.data?.message || error?.message || 'Unknown error';
       toast.error(`Failed to load teams or events: ${msg}`);
     } finally {
-      // Merge with local teams for display
-      const localTeams = teamStore.getByManager(manager?.id || '');
-      refreshTeams(localTeams);
       setIsLoading(false);
     }
   };
@@ -89,12 +80,12 @@ const TeamsPage: React.FC = () => {
 
       const memberCountsByTeam = new Map<string, number>();
       await Promise.all(
-        serverTeams.map(async (t: any) => {
+        serverTeams.map(async (team: any) => {
           try {
-            const members = await listTeamMembers(t.id);
-            memberCountsByTeam.set(t.id, members.length);
+            const members = await listTeamMembers(team.id);
+            memberCountsByTeam.set(team.id, members.length);
           } catch {
-            memberCountsByTeam.set(t.id, 0);
+            memberCountsByTeam.set(team.id, 0);
           }
         })
       );
@@ -112,7 +103,6 @@ const TeamsPage: React.FC = () => {
 
       for (const lt of localTeams) {
         if (!merged.find(st => st.id === lt.id)) {
-          // Calculate local member count dynamically
           const localCount = teamMemberStore.getByTeam(lt.id).length;
           merged.push({ ...lt, memberCount: localCount });
         }
@@ -164,20 +154,22 @@ const TeamsPage: React.FC = () => {
 
       if (targetDelegation) {
         payload.delegationId = targetDelegation.id;
-        await createTeam(payload);
-        toast.success('Team created successfully!');
       } else {
-        // Save locally if no delegation exists yet
-        teamStore.create({
-          managerId: manager.id,
-          name: formData.name,
-          country: manager.country || 'Unknown',
-          sportCategory: formData.sportCategory,
-          subCategory: formData.sportCategory,
+        const existingCountry = teams.find(t => t.country && t.country !== 'Unknown')?.country;
+        const countryToUse = existingCountry || manager.country || 'Unknown';
+
+        const createdDelegation = await createDelegation({
+          country: countryToUse,
           eventId: formData.eventId,
+          managerId: manager.id,
+          teamIds: [],
         });
-        toast.success('Team created! It will be synced when you create a delegation.');
+
+        payload.delegationId = createdDelegation.id;
       }
+
+      await createTeam(payload);
+      toast.success('Team created successfully!');
 
       setFormData({ name: '', sportCategory: '', subCategory: '', eventId: '' });
       setSelectedSport('');

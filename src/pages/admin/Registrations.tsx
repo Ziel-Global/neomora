@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { registrationStore, participantStore, EMSRegistration, EMSParticipant, RegistrationStatus, travelStore } from '@/lib/emsStore';
+import { EMSRegistration, EMSParticipant, travelStore } from '@/lib/emsStore';
 import { Button } from '@/components/ui/button';
 import {
   Select,
@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   Users,
   Upload,
+  ChevronDown,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -33,6 +34,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { Card, CardContent } from '@/components/ui/card';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -47,7 +53,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import {
-  getRegistrations,
+  getRegistrationsByTeam,
   approveRegistration,
   rejectRegistration,
   startRegistrationReview,
@@ -101,14 +107,28 @@ interface RegistrationWithParticipant extends EMSRegistration {
   participant: EMSParticipant;
   documentCount: number;
   pendingDocs: number;
+  teamName?: string;
+  teamId?: string;
+}
+
+interface TeamRegistrationsGroup {
+  id?: string;
+  _id?: string;
+  teamId?: string;
+  teamName?: string;
+  name?: string;
+  team?: any;
+  members?: any[];
+  participants?: any[];
+  registrations?: any[];
+  [key: string]: any;
 }
 
 const RegistrationsPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === 'ar';
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [registrations, setRegistrations] = useState<EMSRegistration[]>([]);
-  const [participants, setParticipants] = useState<EMSParticipant[]>([]);
+  const [registrations, setRegistrations] = useState<RegistrationWithParticipant[]>([]);
 
   // Dialog states
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -119,48 +139,136 @@ const RegistrationsPage: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load data from backend API with local store fallback
+  const normalizeName = (fullName: string | undefined) => {
+    if (!fullName) return { firstName: 'Unknown', lastName: '' };
+    const parts = fullName.trim().split(' ').filter(Boolean);
+    if (parts.length === 0) return { firstName: 'Unknown', lastName: '' };
+    if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+    return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  };
+
+  const buildRegistrationRows = (groups: TeamRegistrationsGroup[]): RegistrationWithParticipant[] => {
+    const rows: RegistrationWithParticipant[] = [];
+
+    for (const group of groups) {
+      const teamId = group.teamId || group.id || group._id || group.team?.id || group.team?._id;
+      const teamName = group.teamName || group.name || group.team?.name || 'Unknown Team';
+      const members = group.members || group.participants || group.registrations || [];
+
+      for (const member of members) {
+        const reg = member?.registration || member;
+        const participantSource = member?.participant || reg?.participant || member?.user || reg?.user || member;
+        const nameFallback = normalizeName(participantSource?.name || reg?.name);
+
+        const participant: EMSParticipant = {
+          id: participantSource?.id || participantSource?._id || reg?.participantId || reg?.participant_id || '',
+          firstName: participantSource?.firstName || nameFallback.firstName,
+          lastName: participantSource?.lastName || nameFallback.lastName,
+          email: participantSource?.email || reg?.email || '-',
+          phone: participantSource?.phone || reg?.phone || '-',
+          nationality: participantSource?.nationality || participantSource?.country || reg?.country || 'Unknown',
+          passportNumber: participantSource?.passportNumber || '-',
+          organization: participantSource?.organization || '-',
+          jobTitle: participantSource?.jobTitle,
+          role: participantSource?.role || reg?.role || 'Athlete',
+          dietaryNotes: participantSource?.dietaryNotes || '',
+          accessibilityNeeds: participantSource?.accessibilityNeeds || '',
+          registrationDate: participantSource?.createdAt || reg?.createdAt || new Date().toISOString(),
+          avatar: participantSource?.avatar,
+        };
+
+        const documents = reg?.documents || [];
+        const pendingDocs = documents.filter((d: any) => d.status === 'Pending').length || 0;
+
+        rows.push({
+          ...(reg || {}),
+          id: reg?.id || reg?._id || reg?.registrationId || reg?.registration_id || member?.id || member?._id,
+          registrationId: reg?.registrationId || reg?.registration_id || reg?.id || reg?._id || member?.id || member?._id,
+          participantId: participant.id,
+          status: reg?.status || reg?.registrationStatus || reg?.registration_status || 'Submitted',
+          submittedAt: reg?.submittedAt || reg?.createdAt || reg?.created_at || null,
+          documents,
+          formData: reg?.formData || reg?.form_data || {},
+          participant,
+          documentCount: documents.length || 0,
+          pendingDocs,
+          teamId,
+          teamName,
+        });
+      }
+    }
+
+    return rows;
+  };
+
+  // Load data from backend API
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const apiRegs = await getRegistrations();
-      if (Array.isArray(apiRegs) && apiRegs.length > 0) {
-        setRegistrations(apiRegs as any as EMSRegistration[]);
-      } else {
-        setRegistrations(registrationStore.getAll());
-      }
+      const apiGroups = await getRegistrationsByTeam();
+      const rawGroups = Array.isArray(apiGroups) ? apiGroups : [];
+      const hasGroupShape = rawGroups.some(group =>
+        group && (group.members || group.participants || group.registrations)
+      );
+      const normalizedGroups = hasGroupShape
+        ? rawGroups
+        : [{ teamName: 'Unknown Team', members: rawGroups }];
+
+      setRegistrations(buildRegistrationRows(normalizedGroups));
     } catch (err) {
-      console.error('Failed to load registrations from API, using local store:', err);
-      setRegistrations(registrationStore.getAll());
+      console.error('Failed to load registrations by team:', err);
+      toast.error(t('registrations.no_registrations'));
+      setRegistrations([]);
     } finally {
       setIsLoading(false);
     }
-    setParticipants(participantStore.getAll());
   };
 
   useEffect(() => {
     loadData();
   }, []);
 
-  // Combine registration data with participant info
-  const registrationsWithParticipants: RegistrationWithParticipant[] = registrations
-    .map(reg => {
-      const participant = participants.find(p => p.id === reg.participantId);
-      if (!participant) return null;
-      return {
-        ...reg,
-        participant,
-        documentCount: reg.documents?.length || 0,
-        pendingDocs: reg.documents?.filter(d => d.status === 'Pending').length || 0,
-      };
-    })
-    .filter((reg): reg is RegistrationWithParticipant => reg !== null);
-
   // Apply filters
-  const filteredData = registrationsWithParticipants.filter(reg => {
+  const filteredData = registrations.filter(reg => {
     if (statusFilter !== 'all' && reg.status !== statusFilter) return false;
     return true;
   });
+
+  const { groupedTeams, individualRegistrations } = useMemo(() => {
+    const map = new Map<string, { teamId: string; teamName: string; members: RegistrationWithParticipant[] }>();
+    const individuals: RegistrationWithParticipant[] = [];
+
+    const normalizeKey = (v: any) => {
+      if (!v && v !== 0) return null;
+      const s = String(v).trim();
+      return s === '' ? null : s.toLowerCase();
+    };
+
+    for (const reg of filteredData) {
+      const rawTeamId = reg.teamId || reg.team?.id || reg.team?._id || reg.team?._key || null;
+      const rawTeamName = reg.teamName || reg.team?.name || reg.team?.teamName || null;
+
+      const keyId = normalizeKey(rawTeamId) || normalizeKey(rawTeamName) || null;
+      const teamName = rawTeamName || (rawTeamId ? String(rawTeamId) : null);
+
+      if (!keyId) {
+        individuals.push(reg);
+        continue;
+      }
+
+      const existing = map.get(keyId);
+      if (!existing) {
+        map.set(keyId, { teamId: keyId, teamName: teamName || 'Unknown Team', members: [reg] });
+      } else {
+        existing.members.push(reg);
+      }
+    }
+
+    return {
+      groupedTeams: Array.from(map.values()).sort((a, b) => (a.teamName || '').localeCompare(b.teamName || '')),
+      individualRegistrations: individuals,
+    };
+  }, [filteredData]);
 
   // Stats
   const stats = {
@@ -175,7 +283,8 @@ const RegistrationsPage: React.FC = () => {
     try {
       await approveRegistration(reg.id);
     } catch (e) {
-      registrationStore.approve(reg.id, 'Admin');
+      toast.error(t('common.failed'));
+      return;
     }
     if (reg.formData?.needsTransport) {
       const travel = travelStore.generateForApprovedRegistration(reg.id);
@@ -191,7 +300,8 @@ const RegistrationsPage: React.FC = () => {
     try {
       await startRegistrationReview(reg.id);
     } catch (e) {
-      registrationStore.startReview(reg.id);
+      toast.error(t('common.failed'));
+      return;
     }
     loadData();
     toast.info(t('registrations.start_review') + `: ${reg.registrationId}`);
@@ -205,7 +315,8 @@ const RegistrationsPage: React.FC = () => {
     try {
       await rejectRegistration(selectedRegistration.id, reason);
     } catch (e) {
-      registrationStore.reject(selectedRegistration.id, 'Admin', reason);
+      toast.error(t('common.failed'));
+      return;
     }
     loadData();
     toast.success(t('common.rejected') + `: ${selectedRegistration.registrationId}`);
@@ -222,7 +333,8 @@ const RegistrationsPage: React.FC = () => {
     try {
       await requestRegistrationUpdate(selectedRegistration.id, reason);
     } catch (e) {
-      registrationStore.requestUpdate(selectedRegistration.id, 'Admin', reason);
+      toast.error(t('common.failed'));
+      return;
     }
     loadData();
     toast.success(t('common.update_requested') + `: ${selectedRegistration.registrationId}`);
@@ -273,6 +385,13 @@ const RegistrationsPage: React.FC = () => {
             <p className="text-xs text-muted-foreground">{row.participant.email}</p>
           </div>
         </div>
+      ),
+    },
+    {
+      key: 'team',
+      header: t('common.team') || 'Team',
+      accessor: (row) => (
+        <span className="text-sm">{row.teamName || 'Unknown Team'}</span>
       ),
     },
     {
@@ -385,6 +504,8 @@ const RegistrationsPage: React.FC = () => {
     },
   ];
 
+  const memberColumns = columns.filter((col) => col.key !== 'team');
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -485,7 +606,7 @@ const RegistrationsPage: React.FC = () => {
       </div>
 
       {/* Empty State or Data Table */}
-      {registrationsWithParticipants.length === 0 ? (
+      {groupedTeams.length === 0 && individualRegistrations.length === 0 ? (
         <Card className="p-12">
           <div className="flex flex-col items-center justify-center text-center">
             <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
@@ -498,16 +619,81 @@ const RegistrationsPage: React.FC = () => {
           </div>
         </Card>
       ) : (
-        <DataTable
-          data={filteredData}
-          columns={columns}
-          keyExtractor={(row) => row.registrationId}
-          searchable
-          searchPlaceholder={t('registrations.search_placeholder')}
-          searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email} ${row.registrationId}`}
-          selectable
-          onSelectionChange={(ids) => console.log('Selected:', ids)}
-        />
+        <div className="space-y-6">
+          {/* Teams container - stacked full width */}
+          <Card className="p-[24px]">
+            <CardContent>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-2xl font-bold">{t('registrations.teams') || 'Team Registrations'}</h3>
+                  <p className="text-xs text-muted-foreground">{groupedTeams.length} teams</p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {groupedTeams.map((team) => (
+                  <Collapsible key={team.teamId} defaultOpen={false}>
+                    <Card>
+                      <CollapsibleTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex w-full items-center justify-between p-4 text-start"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm font-semibold truncate">{team.teamName}</p>
+                            <p className="text-xs text-muted-foreground">{team.members.length} members</p>
+                          </div>
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        </button>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="px-4 pb-4">
+                        <DataTable
+                          data={team.members}
+                          columns={memberColumns}
+                          keyExtractor={(row) => row.id || row.registrationId || `${row.participantId}-${row.teamId}`}
+                          searchable={false}
+                          selectable
+                          onSelectionChange={(ids) => console.log('Selected:', ids)}
+                        />
+                      </CollapsibleContent>
+                    </Card>
+                  </Collapsible>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Individual registrations container - below teams */}
+          <Card className="p-[24px]">
+            <CardContent>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-2xl font-bold">{t('registrations.individuals') || 'Individual Registrations'}</h3>
+                  <p className="text-xs text-muted-foreground">{individualRegistrations.length} participants</p>
+                </div>
+              </div>
+
+              {individualRegistrations.length === 0 ? (
+                <div className="p-6">
+                  <p className="text-sm text-muted-foreground">No individual registrations</p>
+                </div>
+              ) : (
+                <div>
+                  <DataTable
+                    data={individualRegistrations}
+                    columns={memberColumns}
+                    keyExtractor={(row) => row.id || row.registrationId || row.participantId}
+                    searchable
+                    searchPlaceholder={t('registrations.search_placeholder')}
+                    searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email} ${row.registrationId}`}
+                    selectable
+                    onSelectionChange={(ids) => console.log('Selected:', ids)}
+                  />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Reject Dialog */}

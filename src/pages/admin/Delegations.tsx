@@ -48,12 +48,13 @@ import { getEvents } from '@/api/eventApi';
 
 interface DelegationWithDetails {
   id: string;
+  delegationId?: string;
   country: string;
   eventId: string;
   eventName: string;
   managerName: string;
   teamName?: string;
-  status: string;
+  // status: string;
   totalMembers: number;
   submittedAt?: string;
   teamIds: string[];
@@ -83,9 +84,14 @@ const DelegationsPage: React.FC = () => {
         getAllTeams().catch(() => []),
       ]);
 
+      // Admin can see Submitted/Under Review/Approved/Rejected; exclude Draft
+      const submittedDelegations = delegationData.filter((d: any) =>
+        d.status && d.status.toLowerCase() !== 'draft'
+      );
+
       // API already groups delegations by (manager + country + event)
       // Just enrich with additional data here
-      const enrichedDelegations = delegationData.map((d: any) => {
+      const enrichedDelegations = submittedDelegations.map((d: any) => {
         const eid = d.eventId || d.event_id || d.event?.id || d.event?._id;
         const event = eventData.find((e: any) => e.id === eid || e._id === eid);
 
@@ -113,6 +119,8 @@ const DelegationsPage: React.FC = () => {
           );
         }
 
+        const hasSubmittedMembers = d.status && d.status.toLowerCase() !== 'draft';
+
         return {
           ...d,
           id: d.id || d._id,
@@ -121,9 +129,9 @@ const DelegationsPage: React.FC = () => {
           eventName: event?.name || d.event?.name || d.eventName || 'Unknown Event',
           eventId: eid,
           managerName: d.managerName || d.manager?.name || 'Unknown Team Manager',
-          totalMembers: d.totalMembers || d.total_members || d.members?.length || 0,
+          totalMembers: hasSubmittedMembers ? (d.totalMembers || d.total_members || d.members?.length || 0) : 0,
           teams: teams.length > 0 ? teams : [],
-          members: d.members || [],
+          members: hasSubmittedMembers ? (d.members || []) : [],
         };
       });
 
@@ -157,9 +165,13 @@ const DelegationsPage: React.FC = () => {
 
   const handleApprove = async (delegation: DelegationWithDetails) => {
     try {
-      await updateDelegationStatus(delegation.id, 'Approved');
+      await updateDelegationStatus(delegation.delegationId || delegation.id, 'Approved', undefined, delegation);
+      setDelegations(prev => prev.map(row => {
+        const rowId = row.delegationId || row.id;
+        const targetId = delegation.delegationId || delegation.id;
+        return rowId === targetId ? { ...row, status: 'Approved' } : row;
+      }));
       toast.success(`Delegation from ${delegation.country} approved!`);
-      loadData();
     } catch (error: any) {
       const msg = error?.response?.data?.message || error?.message || 'Failed to approve';
       toast.error(msg);
@@ -172,12 +184,16 @@ const DelegationsPage: React.FC = () => {
       return;
     }
     try {
-      await updateDelegationStatus(selectedDelegation.id, 'Rejected', reason);
+      await updateDelegationStatus(selectedDelegation.delegationId || selectedDelegation.id, 'Rejected', reason, selectedDelegation);
+      setDelegations(prev => prev.map(row => {
+        const rowId = row.delegationId || row.id;
+        const targetId = selectedDelegation.delegationId || selectedDelegation.id;
+        return rowId === targetId ? { ...row, status: 'Rejected' } : row;
+      }));
       toast.success(`Delegation from ${selectedDelegation.country} rejected`);
       setRejectDialogOpen(false);
       setSelectedDelegation(null);
       setReason('');
-      loadData();
     } catch (error: any) {
       const msg = error?.response?.data?.message || error?.message || 'Failed to reject';
       toast.error(msg);
@@ -192,34 +208,37 @@ const DelegationsPage: React.FC = () => {
 
   const openViewMembersDialog = async (delegation: DelegationWithDetails) => {
     setSelectedDelegation(delegation);
-    setMembersLoading(true);
     setViewMembersDialogOpen(true);
-    try {
-      // If we already have members from delegations extraction, use them
-      if (delegation.members && delegation.members.length > 0 && delegation.teams.length === 0) {
-        setMembersLoading(false);
-        return;
-      }
 
-      const allMembers: any[] = [];
-      const teamIdList = delegation.teamIds || [];
+    // If delegation has no members but has teams/teamIds, fetch members from teams
+    if ((!delegation.members || delegation.members.length === 0) && (delegation.teamIds || delegation.teams)?.length > 0) {
+      setMembersLoading(true);
+      try {
+        const teamIds = delegation.teamIds?.length > 0
+          ? delegation.teamIds
+          : (delegation.teams || []).map((t: any) => t.id || t._id).filter(Boolean);
 
-      for (const teamId of teamIdList) {
-        try {
-          const members = await listTeamMembers(teamId);
-          allMembers.push(...members);
-        } catch (e) {
-          console.error(`Failed to load members for team ${teamId}`, e);
+        const allMembers: any[] = [];
+        for (const teamId of teamIds) {
+          try {
+            const members = await listTeamMembers(teamId);
+            allMembers.push(...members.map((m: any) => ({ ...m, teamId, team_id: teamId })));
+          } catch (e) {
+            console.warn(`Failed to fetch members for team ${teamId}:`, e);
+          }
         }
-      }
 
-      // If we got members from teams, update. Otherwise keep what we have.
-      if (allMembers.length > 0) {
-        setSelectedDelegation(prev => prev ? { ...prev, members: allMembers } : null);
+        setSelectedDelegation(prev => prev ? {
+          ...prev,
+          members: allMembers,
+          totalMembers: allMembers.length,
+        } : prev);
+      } catch (error) {
+        console.error('Failed to fetch delegation members:', error);
+      } finally {
+        setMembersLoading(false);
       }
-    } catch (e) {
-      console.error('Failed to load members:', e);
-    } finally {
+    } else {
       setMembersLoading(false);
     }
   };
@@ -328,7 +347,7 @@ const DelegationsPage: React.FC = () => {
       className: 'w-48',
       accessor: (row) => (
         <div className="flex items-center gap-2">
-          {(row.status === 'Submitted' || row.status === 'Under Review' || row.status === 'Draft') ? (
+          {(row.status === 'Submitted' || row.status === 'Under Review') ? (
             <>
               <Button
                 size="sm"

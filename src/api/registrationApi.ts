@@ -76,6 +76,12 @@ export const getRegistrations = async (): Promise<Registration[]> => {
     return Array.isArray(data) ? data : (data?.data || data?.registrations || []);
 };
 
+// GET /admin/registrations/by-team — Get registrations grouped by team (admin)
+export const getRegistrationsByTeam = async (): Promise<any[]> => {
+    const { data } = await apiClient.get('/admin/registrations/by-team');
+    return Array.isArray(data) ? data : (data?.data || data?.teams || []);
+};
+
 // POST /registrations/:id/start-review — Set status to Under Review
 export const startRegistrationReview = async (id: string): Promise<void> => {
     await apiClient.post(`/registrations/${id}/start-review`);

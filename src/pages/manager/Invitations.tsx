@@ -3,8 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { eventStore, invitationStore, participantStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
+import { eventStore, invitationStore, participantStore, registrationStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
 import { teamMemberStore, teamStore, delegationStore } from '@/lib/teamStore';
+import { getDelegationsDetails } from '@/api/delegationApi';
+import { getMyTeams } from '@/api/teamApi';
+import { getMyRegistrations } from '@/api/registrationApi';
+import { getEvents } from '@/api/eventApi';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Mail, Check, X, Users, Calendar, MapPin, CheckCircle, Clock, AlertCircle, Send } from 'lucide-react';
@@ -18,10 +22,20 @@ interface DelegationInvitation {
   participantEmail: string;
 }
 
+interface DelegationNotice {
+  id: string;
+  delegationName: string;
+  eventName: string;
+  teamCount: number;
+  status: 'Draft' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected';
+  rejectionReason?: string;
+}
+
 const ManagerInvitationsPage: React.FC = () => {
   const { manager } = useManagerSession();
   const navigate = useNavigate();
   const [invitations, setInvitations] = useState<DelegationInvitation[]>([]);
+  const [delegationNotices, setDelegationNotices] = useState<DelegationNotice[]>([]);
   const [selectedInvitation, setSelectedInvitation] = useState<DelegationInvitation | null>(null);
   const [isAcceptDialogOpen, setIsAcceptDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -32,7 +46,23 @@ const ManagerInvitationsPage: React.FC = () => {
     }
   }, [manager]);
 
-  const loadInvitations = () => {
+  useEffect(() => {
+    if (!manager) return;
+
+    const handleRefresh = () => {
+      loadInvitations();
+    };
+
+    window.addEventListener('storage', handleRefresh);
+    window.addEventListener('delegation-status-updated', handleRefresh as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleRefresh);
+      window.removeEventListener('delegation-status-updated', handleRefresh as EventListener);
+    };
+  }, [manager]);
+
+  const loadInvitations = async () => {
     if (!manager) return;
 
     // Get all invitations for participants from the manager's country/delegation
@@ -50,11 +80,18 @@ const ManagerInvitationsPage: React.FC = () => {
       const event = eventStore.getById(inv.eventId);
 
       if (participant && event) {
-        // Check if participant is from manager's country or is a team member
-        const isFromCountry = participant.nationality === manager.country;
+        // Check if participant is from manager's country, matching organization, or is a team member
+        const isFromCountry = participant.nationality && manager.country && 
+          participant.nationality.toLowerCase() === manager.country.toLowerCase();
+        
+        const isFromOrganization = participant.organization && manager.country && (
+          participant.organization.toLowerCase() === manager.country.toLowerCase() ||
+          participant.organization.toLowerCase() === `${manager.country.toLowerCase()} delegation`
+        );
+        
         const isTeamMember = memberEmails.includes(participant.email.toLowerCase());
 
-        if (isFromCountry || isTeamMember) {
+        if (isFromCountry || isFromOrganization || isTeamMember) {
           delegationInvitations.push({
             invitation: inv,
             event,
@@ -66,6 +103,273 @@ const ManagerInvitationsPage: React.FC = () => {
     }
 
     setInvitations(delegationInvitations);
+
+    const [serverDelegations, serverTeams, serverRegistrations, serverEvents] = await Promise.all([
+      getDelegationsDetails().catch(() => []),
+      getMyTeams().catch(() => []),
+      getMyRegistrations().catch(() => []),
+      getEvents().catch(() => []),
+    ]);
+
+    // Synchronize remote events to the local eventStore
+    if (Array.isArray(serverEvents)) {
+      const currentEvents = eventStore.getAll();
+      let updated = false;
+      for (const ev of serverEvents) {
+        const evId = ev.id || ev._id;
+        if (!evId) continue;
+        const index = currentEvents.findIndex(e => e.id === evId);
+        const eventData = {
+          id: evId,
+          name: ev.name,
+          theme: ev.theme || '',
+          startDate: ev.startDate || ev.start_date || '',
+          endDate: ev.endDate || ev.end_date || '',
+          city: ev.city || '',
+          venues: ev.venues || [],
+          status: ev.status || 'Published',
+          clientGroups: ev.clientGroups || ev.client_groups || [],
+          eventType: ev.eventType || ev.event_type || 'individual',
+          sportCategories: ev.sportCategories || ev.sport_categories || [],
+          allowTeamRegistration: ev.allowTeamRegistration || ev.allow_team_registration || false,
+          createdAt: ev.createdAt || ev.created_at || new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } as EMSEvent;
+        if (index === -1) {
+          currentEvents.push(eventData);
+          updated = true;
+        } else {
+          currentEvents[index] = { ...currentEvents[index], ...eventData };
+          updated = true;
+        }
+      }
+      if (updated) {
+        localStorage.setItem('ems_events', JSON.stringify(currentEvents));
+      }
+    }
+
+    // Synchronize remote registrations to the local registrationStore
+    if (Array.isArray(serverRegistrations)) {
+      for (const reg of serverRegistrations) {
+        const regId = reg.id || reg._id;
+        if (!regId) continue;
+
+        registrationStore.upsert({
+          id: regId,
+          registrationId: reg.registrationId || reg.registration_id || '',
+          eventId: reg.eventId || reg.event_id || '',
+          participantId: reg.participantId || reg.participant_id || '',
+          status: reg.status || 'Submitted',
+          formData: reg.formData || { needsVisa: false, needsAccommodation: false, needsTransport: false, agreeTerms: true },
+          documents: reg.documents || [],
+          submittedAt: reg.submittedAt || reg.submitted_at || null,
+          reviewedAt: reg.reviewedAt || reg.reviewed_at || null,
+          reviewedBy: reg.reviewedBy || reg.reviewed_by || '',
+          rejectionReason: reg.rejectionReason || reg.rejection_reason || '',
+          delegationId: reg.delegationId || reg.delegation_id || '',
+          teamId: reg.teamId || reg.team_id || '',
+          country: reg.country || '',
+          participant: reg.participant || null,
+          team: reg.team || null,
+          delegation: reg.delegation || null,
+        } as any);
+      }
+    }
+
+    // Synchronize remote delegations to the local delegationStore
+    if (Array.isArray(serverDelegations)) {
+      for (const del of serverDelegations) {
+        const delId = del.id || del._id;
+        if (!delId) continue;
+        const existing = delegationStore.getById(delId);
+        if (existing) {
+          delegationStore.update(delId, {
+            status: del.status || 'Submitted',
+            rejectionReason: del.rejectionReason || del.rejection_reason,
+            reviewedAt: del.reviewedAt || del.reviewed_at,
+            eventId: del.eventId || del.event_id || del.event?.id || del.event?._id || existing.eventId || '',
+          });
+        } else {
+          delegationStore.upsert({
+            id: delId,
+            managerId: del.managerId || del.manager_id || manager.id,
+            country: del.country || manager.country,
+            eventId: del.eventId || del.event_id || del.event?.id || del.event?._id || '',
+            teamIds: (del.teamIds || del.team_ids || []).map((t: any) => typeof t === 'object' ? (t.id || t._id) : t),
+            totalMembers: del.totalMembers || del.total_members || 0,
+            status: del.status || 'Submitted',
+            rejectionReason: del.rejectionReason || del.rejection_reason,
+            reviewedAt: del.reviewedAt || del.reviewed_at,
+            createdAt: del.createdAt || del.created_at || new Date().toISOString(),
+            updatedAt: del.updatedAt || del.updated_at || new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    const localDelegations = delegationStore.getAll();
+    const localTeams = teamStore.getByManager(manager.id);
+    const managerTeams = [...serverTeams, ...localTeams];
+    const managerTeamIds = new Set(managerTeams.map(team => team.id));
+
+    // Deduplicate delegations by ID to avoid duplicates in view
+    const delegationMapById = new Map<string, any>();
+    for (const del of [...serverDelegations, ...localDelegations]) {
+      const delId = del.id || del._id;
+      if (delId) {
+        const existing = delegationMapById.get(delId);
+        const delEventId = del.eventId || del.event_id || del.event?.id || del.event?._id;
+        const existingEventId = existing ? (existing.eventId || existing.event_id || existing.event?.id || existing.event?._id) : null;
+        if (!existing || (delEventId && !existingEventId)) {
+          delegationMapById.set(delId, del);
+        }
+      }
+    }
+    const mergedDelegations = Array.from(delegationMapById.values());
+
+    const noticeMap = new Map<string, DelegationNotice>();
+
+    const resolveTeamIds = (delegation: any): string[] => {
+      const rawTeamIds = (delegation.teamIds || delegation.team_ids || delegation.teams || [])
+        .map((team: any) => typeof team === 'object' ? (team.id || team._id) : team)
+        .filter(Boolean);
+
+      if (rawTeamIds.length > 0) return rawTeamIds;
+
+      const delegationId = delegation.delegationId || delegation.id || delegation._id;
+      const linkedTeams = managerTeams.filter(team =>
+        team.delegationId === delegationId ||
+        team.delegation_id === delegationId ||
+        team.id === delegationId ||
+        team.delegation === delegationId ||
+        team.delegation?.id === delegationId ||
+        team.delegation?._id === delegationId
+      );
+
+      if (linkedTeams.length > 0) return linkedTeams.map(team => team.id);
+
+      return [];
+    };
+
+    const resolveStatus = (delegation: any, delegationTeamIds: string[]): DelegationNotice['status'] => {
+      const delegationId = delegation.delegationId || delegation.id || delegation._id;
+      const localDelegation = delegationStore.getById(delegationId);
+      const matchedLocal = localDelegations.find(local =>
+        local.id === delegationId ||
+        (local.eventId === (delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id) &&
+          (local.country === (delegation.country || delegation.delegation?.country || delegation.delegationCountry)))
+      );
+      const preferred = matchedLocal?.status || localDelegation?.status || delegation.status || 'Draft';
+
+      const relatedRegistrations = registrationStore.getAll().filter((reg: any) => {
+        const regDelegationId = reg.delegationId || reg.delegation_id;
+        const regTeamId = reg.teamId || reg.team_id || reg.team?.id || reg.team?._id;
+        const regEventId = reg.eventId || reg.event_id || reg.event?.id || reg.event?._id;
+        const regCountry = reg.country || reg.participant?.country || reg.participant?.nationality || reg.team?.country || reg.delegation?.country;
+        const matchesTeam = delegationTeamIds.length > 0 && delegationTeamIds.some(teamId => teamId === regTeamId || teamId === regDelegationId);
+        const matchesScope = regEventId === (delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id) && (!delegation.country || regCountry === (delegation.country || delegation.delegation?.country || delegation.delegationCountry));
+        return regDelegationId === delegationId || regTeamId === delegationId || matchesTeam || matchesScope;
+      });
+
+      // Compute status based on members (matching admin's status resolution logic)
+      const statuses = relatedRegistrations.map((reg: any) => reg.status).filter(Boolean);
+      let registrationStatus: DelegationNotice['status'] | undefined;
+      if (statuses.length > 0) {
+        if (statuses.every((s: string) => s === 'Approved')) {
+          registrationStatus = 'Approved';
+        } else if (statuses.some((s: string) => s === 'Rejected')) {
+          registrationStatus = 'Rejected';
+        } else if (statuses.some((s: string) => s === 'Submitted' || s === 'Under Review')) {
+          registrationStatus = 'Submitted';
+        }
+      }
+
+      if (registrationStatus === 'Approved' || registrationStatus === 'Rejected') {
+        return registrationStatus;
+      }
+
+      if (preferred === 'Approved' || preferred === 'Rejected') return preferred;
+
+      if (preferred === 'Under Review') return 'Submitted';
+      if (localDelegation?.status === 'Submitted' || localDelegation?.status === 'Approved' || localDelegation?.status === 'Rejected') {
+        return localDelegation.status;
+      }
+      return preferred;
+    };
+
+    const getCanonicalKey = (delegation: any): string => {
+      const eventId = delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id || '';
+      const delegationCountry = delegation.country || delegation.delegation?.country || delegation.delegationCountry || '';
+      const delegationTeamIds = resolveTeamIds(delegation);
+      const delegationManagerId = delegation.managerId || delegation.manager_id || delegation.manager?.id || delegation.manager?._id || manager.id;
+      const delegationId = delegation.delegationId || delegation.serverDelegationId || delegation.id || delegation._id || '';
+      const teamKey = delegationTeamIds.length > 0 ? [...delegationTeamIds].sort().join('|') : '';
+
+      return delegationId ? `id:${delegationId}` : `scope:${delegationManagerId}:${eventId}:${delegationCountry}:${teamKey}`;
+    };
+
+    const isBetterStatus = (next: DelegationNotice['status'], current?: DelegationNotice['status']) => {
+      const order: Record<DelegationNotice['status'], number> = {
+        Draft: 0,
+        'Under Review': 1,
+        Submitted: 1,
+        Approved: 3,
+        Rejected: 3,
+      };
+      return !current || order[next] >= order[current];
+    };
+
+    for (const delegation of mergedDelegations as any[]) {
+      const delegationOwnerId = delegation.managerId || delegation.manager_id || delegation.manager?.id || delegation.manager?._id;
+      const delegationOwnerEmail = delegation.managerEmail || delegation.manager_email || delegation.manager?.email;
+      const delegationCountry = delegation.country || delegation.delegation?.country || delegation.delegationCountry;
+      const delegationTeamIds = resolveTeamIds(delegation);
+      const hasManagerTeam = delegationTeamIds.some((teamId: string) => managerTeamIds.has(teamId));
+      const delegationId = delegation.delegationId || delegation.id || delegation._id;
+      const matchedLocalDelegation = localDelegations.find(local =>
+        local.id === delegationId ||
+        (local.eventId === (delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id) &&
+          local.country === delegationCountry) ||
+        (local.eventId === (delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id) &&
+          local.teamIds.some(teamId => managerTeamIds.has(teamId)))
+      );
+      const effectiveTeamCount = matchedLocalDelegation?.teamIds?.length || delegationTeamIds.length || delegation.totalMembers || (hasManagerTeam ? managerTeams.length : 0);
+      const canonicalKey = getCanonicalKey(delegation);
+      const currentNotice = noticeMap.get(canonicalKey);
+      const nextStatus = resolveStatus(delegation, delegationTeamIds);
+
+      const isOwnedByManager =
+        delegationOwnerId === manager.id ||
+        delegationOwnerEmail === manager.email ||
+        delegationCountry === manager.country ||
+        hasManagerTeam ||
+        (!delegationOwnerId && !delegationOwnerEmail && delegationCountry === manager.country);
+
+      if (!isOwnedByManager) continue;
+
+      const event = eventStore.getById(delegation.eventId || delegation.event_id || delegation.event?.id || delegation.event?._id);
+      const notice: DelegationNotice = {
+        id: delegationId,
+        delegationName: delegationCountry ? `${delegationCountry} Delegation` : `${manager.country} Delegation`,
+        eventName: event?.name || delegation.eventName || delegation.event?.name || 'Unknown Event',
+        teamCount: effectiveTeamCount,
+        status: isBetterStatus(nextStatus, currentNotice?.status) ? nextStatus : currentNotice!.status,
+        rejectionReason: matchedLocalDelegation?.rejectionReason || delegation.rejectionReason,
+      };
+
+      if (!currentNotice || isBetterStatus(notice.status, currentNotice.status)) {
+        noticeMap.set(canonicalKey, notice);
+      } else if (currentNotice && currentNotice.status !== 'Approved' && currentNotice.status !== 'Rejected') {
+        noticeMap.set(canonicalKey, {
+          ...currentNotice,
+          teamCount: Math.max(currentNotice.teamCount, notice.teamCount),
+          rejectionReason: currentNotice.rejectionReason || notice.rejectionReason,
+        });
+      }
+    }
+
+    const filteredNotices = Array.from(noticeMap.values()).filter(notice => notice.status !== 'Draft');
+    setDelegationNotices(filteredNotices);
   };
 
   const getStatusBadge = (status: string) => {
@@ -81,6 +385,19 @@ const ManagerInvitationsPage: React.FC = () => {
         return <Badge className="bg-muted text-muted-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
+
+  const getDelegationStatusBadge = (status: string) => {
+    switch (status) {
+      case 'Approved':
+        return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
+      case 'Rejected':
+        return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Rejected</Badge>;
+      case 'Submitted':
+        return <Badge className="bg-status-warning-bg text-status-warning"><Clock className="h-3 w-3 mr-1" />Under Review</Badge>;
+      default:
+        return <Badge variant="secondary">Draft</Badge>;
     }
   };
 
@@ -276,6 +593,65 @@ const ManagerInvitationsPage: React.FC = () => {
                           </span>
                         ) : (
                           <span className="text-sm text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Delegation Review Status
+          </CardTitle>
+          <CardDescription>
+            Latest admin decisions for your delegation submissions
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {delegationNotices.length === 0 ? (
+            <div className="text-center py-12">
+              <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
+              <p className="text-muted-foreground">No delegation submissions found yet</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Delegation</TableHead>
+                    <TableHead>Event</TableHead>
+                    <TableHead>Teams</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Notes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {delegationNotices.map(notice => (
+                    <TableRow key={notice.id}>
+                      <TableCell>
+                        <p className="font-medium">{notice.delegationName}</p>
+                      </TableCell>
+                      <TableCell>{notice.eventName}</TableCell>
+                      <TableCell>{notice.teamCount}</TableCell>
+                      <TableCell>{getDelegationStatusBadge(notice.status)}</TableCell>
+                      <TableCell>
+                        {notice.status === 'Approved' ? (
+                          <span className="text-sm text-status-success">Delegation approved by admin</span>
+                        ) : notice.status === 'Rejected' ? (
+                          <span className="text-sm text-status-error">
+                            Delegation rejected{notice.rejectionReason ? `: ${notice.rejectionReason}` : ''}
+                          </span>
+                        ) : notice.status === 'Submitted' ? (
+                          <span className="text-sm text-muted-foreground">Awaiting admin review</span>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">Draft delegation</span>
                         )}
                       </TableCell>
                     </TableRow>

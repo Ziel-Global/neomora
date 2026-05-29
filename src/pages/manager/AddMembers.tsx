@@ -12,7 +12,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
-import { createRegistration, getMyRegistrations } from '@/api/registrationApi';
+import { getMyRegistrations, createRegistration } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -125,7 +125,7 @@ const AddMembersPage: React.FC = () => {
 
       const merged = serverTeams.map((t: any) => ({
         ...t,
-        memberCount: t.memberCount || t.member_count || 0
+        memberCount: t.memberCount || t.member_count 
       }));
 
       for (const lt of localTeams) {
@@ -188,11 +188,18 @@ const AddMembersPage: React.FC = () => {
     setIsSaving(true);
 
     try {
-      const isLocalTeam = selectedTeamId.startsWith('team-');
       let savedCount = 0;
 
       for (const m of validMembers) {
         if (!selectedTeam) continue;
+
+        const eventId = selectedTeam.eventId || (selectedTeam as any).event?.id;
+        if (!eventId) {
+          toast.error(`Team "${selectedTeam.name}" has no event ID. Please update the team.`);
+          return;
+        }
+
+        const isLocalTeam = selectedTeamId.startsWith('team-');
 
         if (isLocalTeam) {
           // Save to local store
@@ -521,5 +528,5 @@ const AddMembersPage: React.FC = () => {
     </div>
   );
 };
-
 export default AddMembersPage;
+

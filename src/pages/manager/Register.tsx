@@ -4,10 +4,13 @@
  import { Badge } from '@/components/ui/badge';
  import { useManagerSession } from '@/contexts/ManagerSessionContext';
  import { eventStore, invitationStore, participantStore, registrationStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
- import { teamMemberStore, teamStore, TeamMember } from '@/lib/teamStore';
+import { delegationStore, teamMemberStore, teamStore, Team, TeamMember } from '@/lib/teamStore';
  import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
  import { UserPlus, CheckCircle, Clock, Plane, FileCheck } from 'lucide-react';
  import { useNavigate } from 'react-router-dom';
+import { getDelegationsDetails } from '@/api/delegationApi';
+import { getMyTeams, listTeamMembers } from '@/api/teamApi';
+import { getMyRegistrations } from '@/api/registrationApi';
  
  interface ReadyToRegister {
    member: TeamMember;
@@ -15,25 +18,178 @@
    invitation?: EMSInvitation;
    hasTravelPrefs: boolean;
  }
+
+const normalizeStatus = (status?: string) => status?.toString().trim().toLowerCase();
+
+const getDelegationTeamIds = (delegation: any): string[] => {
+  const teamIds = delegation?.teamIds || delegation?.team_ids || [];
+  const teamObjects = (delegation?.teams || []).map((team: any) => team?.id || team?._id).filter(Boolean);
+
+  return Array.from(new Set([...teamIds, ...teamObjects].filter(Boolean)));
+};
  
  const ManagerRegisterPage: React.FC = () => {
    const { manager } = useManagerSession();
    const navigate = useNavigate();
    const [readyMembers, setReadyMembers] = useState<ReadyToRegister[]>([]);
+  const [approvedTeams, setApprovedTeams] = useState<Team[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
+  const [serverTeamMembers, setServerTeamMembers] = useState<ReadyToRegister[]>([]);
  
    useEffect(() => {
      if (manager) {
-       loadReadyMembers();
+      void loadReadyMembers();
      }
    }, [manager]);
+
+  useEffect(() => {
+    const loadServerMembers = async () => {
+      if (!selectedTeamId) {
+        setServerTeamMembers([]);
+        return;
+      }
+
+      // local teams stored in local store using ids like 'team-...'
+      if (selectedTeamId.startsWith('team-')) {
+        setServerTeamMembers([]);
+        return;
+      }
+
+      try {
+        const [members, regs] = await Promise.all([
+          listTeamMembers(selectedTeamId).catch(() => []),
+          getMyRegistrations().catch(() => []),
+        ]);
+
+        const mappedMembers: ReadyToRegister[] = (members as any[]).map((m) => {
+          const participant = (m as any).participant || m;
+          const memberLike: any = {
+            id: participant.id || m.id,
+            teamId: selectedTeamId,
+            firstName: participant.firstName || participant.first_name || participant.fname || '',
+            lastName: participant.lastName || participant.last_name || participant.lname || '',
+            email: participant.email || '',
+            phone: participant.phone || '',
+            nationality: participant.nationality || '',
+            passportNumber: participant.passportNumber || participant.passport_number || '',
+            passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
+            dateOfBirth: participant.dateOfBirth || '',
+            gender: participant.gender || 'Male',
+            sportCategory: '',
+            subCategory: '',
+            role: participant.jobTitle || participant.role || 'Participant',
+            emergencyContact: '',
+            emergencyPhone: '',
+            dietaryRequirements: participant.dietaryNotes || '',
+            medicalConditions: '',
+            travelPreferences: participant.travelPreferences || {},
+          };
+
+          const event = eventStore.getById(m.eventId || m.event?.id || '');
+          return {
+            member: memberLike,
+            event: event || ({ id: '', name: '', city: '' } as EMSEvent),
+            hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
+          } as ReadyToRegister;
+        });
+
+        // also map regs for this team
+        const teamRegs = (regs as any[]).filter(r => r.teamId === selectedTeamId || r.team_id === selectedTeamId || r.team?.id === selectedTeamId);
+        const mappedRegs = teamRegs.map(r => {
+          const participant = r.participant || {};
+          const memberLike: any = {
+            id: participant.id || r.id,
+            teamId: selectedTeamId,
+            firstName: participant.firstName || participant.first_name || '',
+            lastName: participant.lastName || participant.last_name || '',
+            email: participant.email || '',
+            phone: participant.phone || '',
+            nationality: participant.nationality || '',
+            passportNumber: participant.passportNumber || participant.passport_number || '',
+            passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
+            dateOfBirth: participant.dateOfBirth || '',
+            gender: participant.gender || 'Male',
+            sportCategory: '',
+            subCategory: '',
+            role: participant.jobTitle || participant.role || 'Participant',
+            emergencyContact: '',
+            emergencyPhone: '',
+            dietaryRequirements: participant.dietaryNotes || '',
+            medicalConditions: '',
+            travelPreferences: participant.travelPreferences || {},
+          };
+          const event = eventStore.getById(r.eventId || r.event?.id || '');
+          return {
+            member: memberLike,
+            event: event || ({ id: '', name: '', city: '' } as EMSEvent),
+            hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
+          } as ReadyToRegister;
+        });
+
+        // merge without duplicates (by email or id)
+        const seen = new Set<string>();
+        const combined: ReadyToRegister[] = [];
+        for (const it of [...mappedMembers, ...mappedRegs]) {
+          const key = (it.member.email || it.member.id || '').toString().toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            combined.push(it);
+          }
+        }
+
+        setServerTeamMembers(combined);
+      } catch (e) {
+        console.error('Failed to load server team members:', e);
+        setServerTeamMembers([]);
+      }
+    };
+
+    void loadServerMembers();
+  }, [selectedTeamId]);
  
-   const loadReadyMembers = () => {
+  const loadReadyMembers = async () => {
      if (!manager) return;
  
      const allInvitations = invitationStore.getAll();
      const allParticipants = participantStore.getAll();
-     const teamMembers = teamMemberStore.getByManager(manager.id);
-     
+    const localTeams = teamStore.getByManager(manager.id);
+    const localDelegations = delegationStore.getByManager(manager.id);
+    const [remoteDelegations, remoteTeams] = await Promise.all([
+      getDelegationsDetails().catch(() => []),
+      getMyTeams().catch(() => []),
+    ]);
+
+    const managerDelegations = [...remoteDelegations, ...localDelegations].filter((delegation: any) => {
+      const delegationManagerId = delegation?.managerId || delegation?.manager_id || delegation?.manager?.id || delegation?.user?.id;
+      return !delegationManagerId || delegationManagerId === manager.id;
+    });
+
+    const approvedDelegations = managerDelegations.filter((delegation: any) => normalizeStatus(delegation?.status) === 'approved');
+    const approvedDelegationIds = new Set<string>(approvedDelegations.map((delegation: any) => delegation?.id || delegation?._id).filter(Boolean));
+    const approvedTeamIds = new Set<string>();
+
+    for (const delegation of approvedDelegations) {
+      getDelegationTeamIds(delegation).forEach((teamId) => approvedTeamIds.add(teamId));
+    }
+
+    const allTeams = [...remoteTeams, ...localTeams];
+    const approvedTeamsByDelegation = allTeams.filter((team: any) => {
+      const teamDelegationId = team?.delegationId || team?.delegation_id || team?.delegation?.id || team?.delegation?._id;
+      return approvedTeamIds.has(team?.id) || approvedDelegationIds.has(teamDelegationId) || normalizeStatus(team?.status) === 'approved';
+    });
+
+    const uniqueApprovedTeams = Array.from(
+      new Map(approvedTeamsByDelegation.map((team: any) => [team.id, team as Team])).values()
+    );
+
+    const allowedTeamIds = new Set<string>([
+      ...approvedTeamIds,
+      ...uniqueApprovedTeams.map((team) => team.id),
+    ]);
+
+    setApprovedTeams(uniqueApprovedTeams);
+
+    const teamMembers = teamMemberStore.getByManager(manager.id).filter((member) => allowedTeamIds.has(member.teamId));
      const ready: ReadyToRegister[] = [];
  
      // Check accepted invitations for team members
@@ -138,6 +294,12 @@
    const registeredCount = teamMemberStore.getByManager(manager?.id || '').filter(
      m => m.registrationStatus === 'Submitted' || m.registrationStatus === 'Approved'
    ).length;
+
+  const displayMembers = selectedTeamId
+    ? (selectedTeamId.startsWith('team-')
+        ? teamMemberStore.getByTeam(selectedTeamId).map((m) => ({ member: m, event: eventStore.getById(teamStore.getById(m.teamId || '')?.eventId || '') || ({ id: '', name: '', city: '' } as EMSEvent), hasTravelPrefs: !!m.travelPreferences?.originCity } as ReadyToRegister))
+        : (serverTeamMembers.length ? serverTeamMembers : readyMembers.filter(r => r.member.teamId === selectedTeamId)))
+    : readyMembers;
  
    return (
      <div className="space-y-6">
@@ -190,13 +352,41 @@
            </CardContent>
          </Card>
        </div>
+
+           {approvedTeams.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Approved Delegation Teams</CardTitle>
+            <CardDescription>
+              Only teams linked to approved delegations are shown here and available for registration.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap gap-2">
+              {approvedTeams.map((team) => {
+                const active = selectedTeamId === team.id;
+                return (
+                  <Badge
+                    key={team.id}
+                    variant={active ? 'default' : 'secondary'}
+                    className={`px-3 py-1 cursor-pointer ${active ? 'ring-2 ring-primary' : ''}`}
+                    onClick={() => setSelectedTeamId(active ? null : team.id)}
+                  >
+                    {team.name}
+                  </Badge>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
  
        {/* Ready to Register Table */}
        <Card>
-         <CardHeader>
+           <CardHeader>
            <CardTitle className="flex items-center gap-2">
              <UserPlus className="h-5 w-5" />
-             Ready to Register ({readyMembers.length})
+             Ready to Register ({displayMembers.length})
            </CardTitle>
            <CardDescription>
              Members with accepted invitations or team members ready for registration. 
@@ -204,12 +394,12 @@
            </CardDescription>
          </CardHeader>
          <CardContent>
-           {readyMembers.length === 0 ? (
+           {displayMembers.length === 0 ? (
              <div className="text-center py-12">
                <FileCheck className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
                <p className="text-muted-foreground">No members ready to register</p>
                <p className="text-sm text-muted-foreground mt-1">
-                 Accept invitations or add team members to get started
+                 Approve the delegation, then accept invitations or add team members to get started
                </p>
              </div>
            ) : (
@@ -225,7 +415,7 @@
                    </TableRow>
                  </TableHeader>
                  <TableBody>
-                   {readyMembers.map((item, idx) => (
+                   {displayMembers.map((item, idx) => (
                      <TableRow key={`${item.member.id}-${idx}`}>
                        <TableCell>
                          <div>

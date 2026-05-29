@@ -39,6 +39,7 @@ import { InvitationPreviewModal } from '@/components/invitations/InvitationPrevi
 import * as campaignApi from '@/api/campaignApi';
 import { getEvents } from '@/api/eventApi';
 import { getParticipants } from '@/api/participantApi';
+import { getAllDelegations } from '@/api/delegationApi';
 import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
@@ -65,6 +66,7 @@ const InvitationsPage: React.FC = () => {
   const [apiCampaigns, setApiCampaigns] = useState<campaignApi.Campaign[]>([]);
   const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
   const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
+  const [apiDelegations, setApiDelegations] = useState<any[]>([]);
 
   // Wizard form state
   const [selectedEventId, setSelectedEventId] = useState('');
@@ -95,14 +97,16 @@ const InvitationsPage: React.FC = () => {
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
-      const [campaignData, eventData, participantData] = await Promise.all([
+      const [campaignData, eventData, participantData, delegationData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
-        getParticipants()
+        getParticipants(),
+        getAllDelegations().catch(() => [])
       ]);
       setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
       setApiEvents(Array.isArray(eventData) ? eventData : []);
       setApiParticipants(Array.isArray(participantData) ? participantData : []);
+      setApiDelegations(Array.isArray(delegationData) ? delegationData : []);
     } catch (error) {
       console.error('Failed to load invitations data:', error);
     } finally {
@@ -124,15 +128,10 @@ const InvitationsPage: React.FC = () => {
   const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
 
   const campaigns = useMemo(() => {
-    const localCampaigns = campaignStore.getAll();
-    const remoteCampaigns = Array.isArray(apiCampaigns) ? apiCampaigns as any as EMSCampaign[] : [];
-    const merged = [...localCampaigns];
-    for (const campaign of remoteCampaigns) {
-      if (!merged.some(local => local.id === campaign.id)) {
-        merged.push(campaign);
-      }
+    if (Array.isArray(apiCampaigns) && apiCampaigns.length > 0) {
+      return apiCampaigns as any as EMSCampaign[];
     }
-    return merged;
+    return [];
   }, [apiCampaigns, refreshKey]);
 
   const invitations = useMemo(() => {
@@ -165,9 +164,39 @@ const InvitationsPage: React.FC = () => {
     }
   };
 
+  const getEventName = (campaignOrEventId: EMSCampaign | { eventId?: string; event?: { id?: string; name?: string } } | string) => {
+    if (typeof campaignOrEventId === 'string') {
+      return events.find(e => e.id === campaignOrEventId)?.name || 'Unknown Event';
+    }
+
+    if ((campaignOrEventId as any)?.event?.name) return (campaignOrEventId as any).event.name;
+    const eventId = (campaignOrEventId as any)?.eventId;
+    return events.find(e => e.id === eventId)?.name || 'Unknown Event';
+  };
+
+  const getCampaignStats = (campaign: EMSCampaign | { id: string; stats?: any }) => {
+    const invitationsForCampaign = invitationStore.getByCampaign(campaign.id);
+    return {
+      audienceSize: campaign.stats?.audienceSize ?? invitationsForCampaign.length,
+      sentCount: campaign.stats?.sentCount ?? invitationsForCampaign.filter(i => i.sentAt).length,
+      deliveredCount: campaign.stats?.deliveredCount ?? invitationsForCampaign.filter(i => i.deliveredAt).length,
+      openedCount: campaign.stats?.openedCount ?? invitationsForCampaign.filter(i => i.openedAt).length,
+      acceptedCount: campaign.stats?.acceptedCount ?? invitationsForCampaign.filter(i => i.status === 'Accepted').length,
+      maybeCount: campaign.stats?.maybeCount ?? invitationsForCampaign.filter(i => i.status === 'Maybe').length,
+      declinedCount: campaign.stats?.declinedCount ?? invitationsForCampaign.filter(i => i.status === 'Declined').length,
+    };
+  };
+
   const filteredCampaigns = campaigns.filter(c =>
     c.name.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const approvedDelegations = useMemo(() => {
+    return apiDelegations.filter(d => 
+      d.status === 'Approved' && 
+      (d.eventId === selectedEventId || !selectedEventId)
+    );
+  }, [apiDelegations, selectedEventId]);
 
   // Get audience based on filters
   const getFilteredAudience = (): EMSParticipant[] => {
@@ -178,9 +207,16 @@ const InvitationsPage: React.FC = () => {
     }
 
     if (audienceMode === 'delegation') {
-      return participants.filter(p =>
-        selectedDelegations.length === 0 || selectedDelegations.includes(p.organization)
-      );
+      return participants.filter(p => {
+        if (selectedDelegations.length > 0) {
+          return selectedDelegations.includes(p.organization);
+        }
+        return approvedDelegations.some(del => {
+          const countryLower = (del.country || '').toLowerCase();
+          const orgLower = (p.organization || '').toLowerCase();
+          return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
+        });
+      });
     }
 
     return participants.filter(p =>
@@ -311,6 +347,7 @@ const InvitationsPage: React.FC = () => {
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
         roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
+        targetDelegationIds: audienceMode === 'delegation' ? selectedDelegations : undefined,
       }).catch((error) => {
         console.warn('Backend campaign create failed, ignored for local flow:', error);
         return null;
@@ -340,7 +377,10 @@ const InvitationsPage: React.FC = () => {
     const existing = invitationStore.getByCampaign(campaignId);
     if (existing.length > 0) return existing;
 
-    const campaign = campaignStore.getById(campaignId) as any;
+    let campaign = campaignStore.getById(campaignId) as any;
+    if (!campaign) {
+      campaign = apiCampaigns.find(c => c.id === campaignId);
+    }
     if (!campaign) return [];
 
     const audienceIds: string[] = Array.isArray(campaign.audienceIds) ? campaign.audienceIds : Array.isArray(campaign.targetParticipantIds) ? campaign.targetParticipantIds : [];
@@ -369,6 +409,12 @@ const InvitationsPage: React.FC = () => {
 
       campaignStore.update(campaignId, { status: 'Sent', sentAt: new Date().toISOString() } as any);
       campaignStore.updateStats(campaignId);
+
+      // Sync status change to backend API so it stays Sent on refresh
+      await campaignApi.sendCampaignNow(campaignId).catch((error) => {
+        console.warn('Backend sendCampaignNow failed, continuing with local flow:', error);
+      });
+
       toast({ title: 'Campaign sent', description: `Delivered ${sent || created.length} invitations to selected participants.` });
       setRefreshKey(k => k + 1);
       setViewCampaignOpen(false);
@@ -415,10 +461,6 @@ const InvitationsPage: React.FC = () => {
     const link = `${window.location.origin}/invite/${token}`;
     navigator.clipboard.writeText(link);
     toast({ title: 'Link copied', description: 'Invitation link copied to clipboard' });
-  };
-
-  const getEventName = (eventId: string) => {
-    return events.find(e => e.id === eventId)?.name || 'Unknown Event';
   };
 
   const getParticipantName = (participantId: string) => {
@@ -550,29 +592,42 @@ const InvitationsPage: React.FC = () => {
                     </div>
                   </div>
                 )}
-
                 {audienceMode === 'delegation' && (
                   <div className="grid gap-2">
                     <Label>{t('invitations.filter_by_delegation_label')}</Label>
                     <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
-                      {Array.from(new Set(participants.map(p => p.organization).filter(Boolean))).sort().map(org => (
-                        <Badge
-                          key={org}
-                          variant={selectedDelegations.includes(org) ? 'default' : 'outline'}
-                          className="cursor-pointer"
-                          onClick={() => toggleDelegation(org)}
-                        >
-                          {org}
-                        </Badge>
-                      ))}
-                      {/* Handle Empty/No Organization case if needed, though filter(Boolean) removes them */}
+                      {Array.from(new Set(participants.map(p => p.organization).filter(Boolean)))
+                        .filter(org => {
+                          const orgLower = org.toLowerCase();
+                          return approvedDelegations.some(del => {
+                            const countryLower = (del.country || '').toLowerCase();
+                            return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
+                          });
+                        })
+                        .sort()
+                        .map(org => (
+                          <Badge
+                            key={org}
+                            variant={selectedDelegations.includes(org) ? 'default' : 'outline'}
+                            className="cursor-pointer"
+                            onClick={() => toggleDelegation(org)}
+                          >
+                            {org}
+                          </Badge>
+                        ))}
                     </div>
-                    {Array.from(new Set(participants.map(p => p.organization).filter(Boolean))).length === 0 && (
-                      <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
-                    )}
+                    {Array.from(new Set(participants.map(p => p.organization).filter(Boolean)))
+                      .filter(org => {
+                        const orgLower = org.toLowerCase();
+                        return approvedDelegations.some(del => {
+                          const countryLower = (del.country || '').toLowerCase();
+                          return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
+                        });
+                      }).length === 0 && (
+                        <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
+                      )}
                   </div>
                 )}
-
                 {audienceMode === 'individual' && (
                   <div className="space-y-3">
                     <div className="relative">
@@ -767,7 +822,8 @@ const InvitationsPage: React.FC = () => {
     if (!selectedCampaign) return null;
 
     const campInvitations = invitationStore.getByCampaign(selectedCampaign.id);
-    const event = events.find(e => e.id === selectedCampaign.eventId);
+    const eventName = (selectedCampaign as any)?.event?.name || events.find(e => e.id === selectedCampaign.eventId)?.name;
+    const campaignStats = getCampaignStats(selectedCampaign);
 
     return (
       <Dialog open={viewCampaignOpen} onOpenChange={setViewCampaignOpen}>
@@ -775,32 +831,32 @@ const InvitationsPage: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{selectedCampaign.name}</DialogTitle>
             <DialogDescription>
-              {event?.name} • {t('common.participants_count', { count: campInvitations.length })}
+              {eventName || 'Unknown Event'} • {t('common.participants_count', { count: campInvitations.length })}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 my-4">
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold">{selectedCampaign.stats?.sentCount || 0}</p>
+                <p className="text-2xl font-bold">{campaignStats.sentCount}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.delivered')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-success">{selectedCampaign.stats?.acceptedCount || 0}</p>
+                <p className="text-2xl font-bold text-success">{campaignStats.acceptedCount}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.accepted')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-warning">{selectedCampaign.stats?.maybeCount || 0}</p>
+                <p className="text-2xl font-bold text-warning">{campaignStats.maybeCount}</p>
                 <p className="text-xs text-muted-foreground">{t('common.maybe')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-destructive">{selectedCampaign.stats?.declinedCount || 0}</p>
+                <p className="text-2xl font-bold text-destructive">{campaignStats.declinedCount}</p>
                 <p className="text-xs text-muted-foreground">{t('events.declined')}</p>
               </CardContent>
             </Card>
@@ -992,18 +1048,18 @@ const InvitationsPage: React.FC = () => {
                           </p>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm">{getEventName(campaign.eventId)}</TableCell>
-                      <TableCell>{campaign.stats?.audienceSize || 0}</TableCell>
+                      <TableCell className="text-sm">{getEventName(campaign)}</TableCell>
+                      <TableCell>{getCampaignStats(campaign).audienceSize}</TableCell>
                       <TableCell>
                         <div className="flex gap-1">
                           <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                            {campaign.stats?.acceptedCount || 0}
+                            {getCampaignStats(campaign).acceptedCount}
                           </Badge>
                           <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
-                            {campaign.stats?.maybeCount || 0}
+                            {getCampaignStats(campaign).maybeCount}
                           </Badge>
                           <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
-                            {campaign.stats?.declinedCount || 0}
+                            {getCampaignStats(campaign).declinedCount}
                           </Badge>
                         </div>
                       </TableCell>

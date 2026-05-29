@@ -80,6 +80,9 @@ export interface Delegation {
   teamIds: string[];
   totalMembers: number;
   status: 'Draft' | 'Submitted' | 'Approved' | 'Rejected';
+  serverDelegationId?: string;
+  rejectionReason?: string;
+  reviewedAt?: string;
   submittedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -356,6 +359,19 @@ export const delegationStore = {
     delegations[index] = { ...delegations[index], ...updates, updatedAt: now() };
     setItem(KEYS.DELEGATIONS, delegations);
     return delegations[index];
+  },
+
+  upsert: (delegation: Delegation): Delegation => {
+    const delegations = delegationStore.getAll();
+    const index = delegations.findIndex(d => d.id === delegation.id);
+    const nextDelegation = { ...delegation, updatedAt: delegation.updatedAt || now() };
+    if (index === -1) {
+      delegations.push(nextDelegation);
+    } else {
+      delegations[index] = nextDelegation;
+    }
+    setItem(KEYS.DELEGATIONS, delegations);
+    return nextDelegation;
   },
 
   submit: (id: string): Delegation | null => {

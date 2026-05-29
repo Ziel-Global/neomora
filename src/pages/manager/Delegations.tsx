@@ -7,14 +7,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { teamStore, teamMemberStore, delegationStore, Team, Delegation, TeamMember } from '@/lib/teamStore';
+import { Team, Delegation, TeamMember } from '@/lib/teamStore';
 import { eventStore, participantStore, registrationStore, travelStore } from '@/lib/emsStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Flag, Users, Send, CheckCircle, Clock, AlertCircle, Plus, Plane } from 'lucide-react';
+import { Flag, Users, Send, CheckCircle, Clock, AlertCircle, Plus, Plane, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
-import { getDelegationsDetails, createDelegation, submitDelegation } from '@/api/delegationApi';
+import { getDelegationsDetails, createDelegation, submitDelegation, updateDelegation, deleteDelegation } from '@/api/delegationApi';
 import { getEvents } from '@/api/eventApi';
 import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam } from '@/api/teamApi';
 import { createRegistration, getMyRegistrations } from '@/api/registrationApi';
@@ -49,11 +49,15 @@ const DelegationsPage: React.FC = () => {
   const { manager } = useManagerSession();
   const [teams, setTeams] = useState<Team[]>([]);
   const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const [localDraftDelegations, setLocalDraftDelegations] = useState<Delegation[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedEventId, setSelectedEventId] = useState<string>('');
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [delegationCountry, setDelegationCountry] = useState<string>('');
   const [events, setEvents] = useState<EMSEvent[]>([]);
+  const [isCountryDialogOpen, setIsCountryDialogOpen] = useState(false);
+  const [countryInput, setCountryInput] = useState('');
+  const [pendingSubmission, setPendingSubmission] = useState<{ delegationId: string; isDraft: boolean } | null>(null);
 
   // Bulk travel preferences state
   const [isBulkTravelOpen, setIsBulkTravelOpen] = useState(false);
@@ -83,6 +87,30 @@ const DelegationsPage: React.FC = () => {
     }
   }, [manager]);
 
+  const normalizeDelegation = (delegation: any, teamData?: Team[]) => {
+    const id = delegation.id || delegation._id;
+    let teamIds = delegation.teamIds || delegation.team_ids || (delegation.teams || []).map((t: any) => t.id || t._id).filter(Boolean) || [];
+
+    // Fallback: look up in teamData if empty
+    if ((!teamIds || teamIds.length === 0) && teamData) {
+      teamIds = teamData
+        .filter((t: any) => {
+          const tDelId = t.delegationId || t.delegation_id || t.delegation?.id || t.delegation?._id;
+          return tDelId === id;
+        })
+        .map((t: any) => t.id || t._id);
+    }
+
+    return {
+      ...delegation,
+      id,
+      teamIds,
+      status: delegation.status || 'Draft',
+      totalMembers: delegation.totalMembers || delegation.total_members || 0,
+      serverDelegationId: delegation.serverDelegationId || delegation.server_delegation_id,
+    };
+  };
+
   const refreshData = async () => {
     if (manager) {
       setIsLoading(true);
@@ -93,24 +121,37 @@ const DelegationsPage: React.FC = () => {
           getMyTeams(),
           getMyRegistrations().catch(() => [])
         ]);
-        const normalizedDelegations = delegationData.map((d: any) => {
-          let teamIds = d.teamIds || d.team_ids || (d.teams || []).map((t: any) => t.id || t._id) || [];
+        const remoteDelegations = delegationData.map((d: any) => normalizeDelegation(d, teamData));
 
-          // Map backwards from teams if backend didn't link them properly
-          if (teamIds.length === 0) {
-            const delegationTeams = teamData.filter((t: any) => t.delegationId === d.id || t.delegation_id === d.id || t.delegation?.id === d.id);
-            teamIds = delegationTeams.map((t: any) => t.id);
+        // Try to resolve the country name if manager.country is empty or 'Unknown'
+        let resolvedCountry = manager.country || '';
+        if (!resolvedCountry || resolvedCountry === 'Unknown') {
+          const teamWithCountry = teamData.find(t => t.country && t.country !== 'Unknown');
+          if (teamWithCountry) {
+            resolvedCountry = teamWithCountry.country;
+          } else {
+            const regWithCountry = (registrations as any[]).find(r => r.country && r.country !== 'Unknown');
+            if (regWithCountry) {
+              resolvedCountry = regWithCountry.country;
+            }
           }
+        }
 
-          return {
-            ...d,
-            id: d.id || d._id,
-            teamIds,
-            totalMembers: d.totalMembers || d.total_members || 0
-          };
+        if (resolvedCountry && resolvedCountry !== 'Unknown' && resolvedCountry !== manager.country) {
+          manager.country = resolvedCountry;
+          localStorage.setItem('ems_manager_session', JSON.stringify({ ...manager, country: resolvedCountry }));
+        }
+
+        // Fetch delegations from database (including server-side drafts)
+        const remoteDelegationsFiltered = remoteDelegations.filter((delegation: any) =>
+          (delegation.managerId === manager.id || !delegation.managerId)
+        );
+
+        // Use current delegations state to preserve local drafts and avoid stale closure
+        setDelegations(prevDelegations => {
+          const localDrafts = prevDelegations.filter(d => d.id.startsWith('draft-'));
+          return [...localDrafts, ...remoteDelegationsFiltered];
         });
-
-        setDelegations(normalizedDelegations);
         setEvents(eventData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
 
         const registrationCounts = new Map<string, number>();
@@ -132,7 +173,7 @@ const DelegationsPage: React.FC = () => {
           })
         );
 
-        // Normalize memberCount for server teams and merge with local teams
+        // Normalize memberCount for server teams only (from database)
         const mergedTeams = teamData.map((t: any) => {
           const countFromServer = t.memberCount || t.member_count || 0;
           const countFromRegs = registrationCounts.get(t.id) || 0;
@@ -143,13 +184,6 @@ const DelegationsPage: React.FC = () => {
           };
         });
 
-        const localTeams = teamStore.getByManager(manager.id);
-        for (const lt of localTeams) {
-          if (!mergedTeams.find(st => st.id === lt.id)) {
-            const localCount = teamMemberStore.getByTeam(lt.id).length;
-            mergedTeams.push({ ...lt, memberCount: localCount });
-          }
-        }
         setTeams(mergedTeams);
       } catch (error: any) {
         console.error('Failed to load initial delegations data:', error);
@@ -211,106 +245,160 @@ const DelegationsPage: React.FC = () => {
       toast.error('Please enter a country for the delegation');
       return;
     }
-    /* Removed mandatory team selection to resolve deadlock: 
-       backend requires delegationId to create a team, 
-       so we must allow creating a delegation first. */
 
+    // Create local draft delegation only (don't send to server yet)
+    const draftDelegation: Delegation = {
+      id: `draft-${Date.now()}`,
+      managerId: manager.id,
+      country: delegationCountry,
+      eventId: selectedEventId,
+      teamIds: selectedTeamIds,
+      status: 'Draft',
+      totalMembers: 0,
+      submittedAt: undefined,
+    } as any;
+
+    setLocalDraftDelegations(prev => [...prev, draftDelegation]);
+    setDelegations(prev => [...prev, draftDelegation]);
+    toast.success('Delegation saved as draft. Click "Submit for Approval" to submit to admin.');
+    setSelectedEventId('');
+    setSelectedTeamIds([]);
+    setIsCreateOpen(false);
+  };
+
+  const openCountryDialog = (delegationId: string, isDraft: boolean, initialCountry?: string) => {
+    setPendingSubmission({ delegationId, isDraft });
+    setCountryInput(initialCountry || manager?.country || '');
+    setIsCountryDialogOpen(true);
+  };
+
+  const submitDelegationWithCountry = async (delegationId: string, overrideCountry?: string) => {
     try {
-      // 1. Create the delegation on the server
-      const serverTeamIds = selectedTeamIds.filter(id => !id.startsWith('team-'));
-      const newDelegation = await createDelegation({
-        country: delegationCountry,
-        eventId: selectedEventId,
-        teamIds: serverTeamIds,
-      });
+      // Check if it's a local draft
+      const isDraft = delegationId.startsWith('draft-');
+      const sanitizedCountry = overrideCountry?.trim() || '';
 
-      // Update existing teams with the new delegation ID
-      for (const teamId of serverTeamIds) {
-        try {
-          await updateTeam(teamId, { delegationId: newDelegation.id });
-        } catch (e) {
-          console.warn(`[Sync] Failed to link existing team ${teamId} to delegation`, e);
+      if (isDraft) {
+        // Find the draft delegation
+        const draftDelegation = localDraftDelegations.find(d => d.id === delegationId);
+        if (!draftDelegation) {
+          toast.error('Draft delegation not found');
+          return;
         }
-      }
 
-      // 2. Sync local teams
-      const localTeamIds = selectedTeamIds.filter(id => id.startsWith('team-'));
-      for (const localId of localTeamIds) {
-        const localTeam = teamStore.getById(localId);
-        if (!localTeam) continue;
+        const countryToSubmit = sanitizedCountry || draftDelegation.country;
+        if (!countryToSubmit || countryToSubmit === 'Unknown') {
+          openCountryDialog(delegationId, true, draftDelegation.country || manager?.country || '');
+          return;
+        }
 
-        // Find exact sport category names from event data
-        const event = events.find(e => e.id === selectedEventId);
-        const eventSportCat = event?.sportCategories?.find(
-          (c: any) => c.subCategory?.toLowerCase() === localTeam.sportCategory.toLowerCase()
-        );
+        // First create on server
+        const serverDelegation = await createDelegation({
+          managerId: manager?.id,
+          country: countryToSubmit,
+          eventId: draftDelegation.eventId,
+          teamIds: draftDelegation.teamIds || [],
+          team_ids: draftDelegation.teamIds || [],
+          teams: draftDelegation.teamIds || [],
+        } as any);
 
-        // Create team on server
-        const serverTeam = await createTeam({
-          delegationId: newDelegation.id,
-          eventId: selectedEventId,
-          name: localTeam.name,
-          sportCategory: localTeam.sportCategory,
-          sportCategoryGroup: eventSportCat?.name || mapCategory(localTeam.sportCategory),
-          subCategory: localTeam.subCategory || localTeam.sportCategory
-        });
+        const sDelId = serverDelegation.id ||
+          serverDelegation._id ||
+          (serverDelegation as any).data?.id ||
+          (serverDelegation as any).data?._id ||
+          (serverDelegation as any).delegation?.id ||
+          (serverDelegation as any).delegation?._id;
 
-        // Sync members
-        const localMembers = teamMemberStore.getByTeam(localId);
-        for (const m of localMembers) {
-          const formData = new FormData();
-          formData.append('teamId', serverTeam.id);
-          formData.append('eventId', selectedEventId);
-          formData.append('delegationId', newDelegation.id); // Link to delegation
-          formData.append('country', delegationCountry); // Store delegation country
-          formData.append('firstName', m.firstName);
-          formData.append('lastName', m.lastName);
-          formData.append('email', m.email);
-          formData.append('phone', m.phone);
-          formData.append('nationality', m.nationality || manager.country || '');
-          formData.append('passportNumber', m.passportNumber);
-          formData.append('organization', `${delegationCountry || manager.country || ''} Delegation`);
-          formData.append('jobTitle', m.role);
-          formData.append('participantRole', m.role === 'Athlete' ? 'Athlete' : 'Official');
-          formData.append('gender', m.gender.toLowerCase());
+        if (!sDelId) {
+          console.error('Failed to extract delegation ID from server response:', serverDelegation);
+          toast.error('Failed to get delegation ID from server');
+          return;
+        }
 
-          if (m.dateOfBirth) formData.append('dateOfBirth', m.dateOfBirth);
-          if (m.passportExpiry) formData.append('passportExpiry', m.passportExpiry);
-
+        // Update all teams with the new delegationId
+        if (draftDelegation.teamIds && draftDelegation.teamIds.length > 0) {
           try {
-            await createRegistration(formData);
-          } catch (memberError: any) {
-            // If member is already registered, skip silently
-            const errMsg = memberError?.response?.data?.message || memberError?.message || '';
-            console.warn(`[Sync] Skipping member ${m.email}: ${errMsg}`);
+            await Promise.all(
+              draftDelegation.teamIds.map(teamId =>
+                updateTeam(teamId, { delegationId: sDelId, delegation_id: sDelId } as any)
+              )
+            );
+            console.log('Successfully associated teams with delegation on server');
+          } catch (err: any) {
+            console.error('Failed to associate teams with delegation:', err);
+            toast.error(`Warning: Failed to link teams to delegation: ${err.message || err}`);
           }
         }
 
-        // Cleanup
-        teamStore.delete(localId);
+        // Then submit
+        await submitDelegation(sDelId);
+
+        // Remove from local drafts and delegations display
+        setLocalDraftDelegations(prev => prev.filter(d => d.id !== delegationId));
+        setDelegations(prev => prev.filter(d => d.id !== delegationId));
+
+        toast.success('Delegation submitted for admin review!');
+      } else {
+        // Already on server, check if country is unknown/empty
+        const serverDel = delegations.find(d => d.id === delegationId);
+        const countryToSubmit = sanitizedCountry || serverDel?.country;
+        if (!countryToSubmit || countryToSubmit === 'Unknown') {
+          openCountryDialog(delegationId, false, serverDel?.country || manager?.country || '');
+          return;
+        }
+
+        if (sanitizedCountry && sanitizedCountry !== serverDel?.country) {
+          // Update country on server
+          await updateDelegation(delegationId, { country: sanitizedCountry });
+        }
+
+        await submitDelegation(delegationId);
+        toast.success('Delegation submitted for admin review!');
       }
 
-      toast.success('Delegation created and teams synced!');
-      setSelectedEventId('');
-      setSelectedTeamIds([]);
-      setIsCreateOpen(false);
-      refreshData();
-    } catch (error: any) {
-      console.error('Failed to create delegation/sync:', error);
-      const msg = error?.response?.data?.message || error?.message || 'Failed to create delegation';
-      toast.error(msg);
-    }
-  };
-
-  const handleSubmitDelegation = async (delegationId: string) => {
-    try {
-      await submitDelegation(delegationId);
-      toast.success('Delegation submitted for review!');
       refreshData();
     } catch (error: any) {
       console.error('Failed to submit delegation:', error);
       const msg = error?.response?.data?.message || error?.message || 'Failed to submit delegation';
       toast.error(msg);
+    }
+  };
+
+  const handleSubmitDelegation = async (delegationId: string) => {
+    await submitDelegationWithCountry(delegationId);
+  };
+
+  const handleConfirmCountry = async () => {
+    if (!pendingSubmission) return;
+    const trimmed = countryInput.trim();
+    if (!trimmed) {
+      toast.error('Country name is required to submit delegation');
+      return;
+    }
+
+    const { delegationId } = pendingSubmission;
+    setIsCountryDialogOpen(false);
+    setPendingSubmission(null);
+    await submitDelegationWithCountry(delegationId, trimmed);
+  };
+
+  const handleDeleteDraft = async (delegationId: string) => {
+    const isLocal = delegationId.startsWith('draft-');
+    if (isLocal) {
+      setLocalDraftDelegations(prev => prev.filter(d => d.id !== delegationId));
+      setDelegations(prev => prev.filter(d => d.id !== delegationId));
+      toast.success('Draft delegation deleted');
+    } else {
+      try {
+        setIsLoading(true);
+        await deleteDelegation(delegationId);
+        toast.success('Draft delegation deleted from server');
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete delegation from server:', err);
+        toast.error('Failed to delete delegation from server');
+        setIsLoading(false);
+      }
     }
   };
 
@@ -429,10 +517,10 @@ const DelegationsPage: React.FC = () => {
           </p>
         </div>
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <Button onClick={() => setIsCreateOpen(true)}>
+          {/* <Button onClick={() => setIsCreateOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             New Delegation
-          </Button>
+          </Button> */}
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Create Delegation</DialogTitle>
@@ -539,7 +627,7 @@ const DelegationsPage: React.FC = () => {
                 <div className="flex justify-between items-start">
                   <div className="flex items-center gap-2">
                     {getStatusIcon(delegation.status)}
-                    <CardTitle className="text-lg">{manager?.country} Delegation</CardTitle>
+                    <CardTitle className="text-lg">{delegation.country || manager?.country || 'Unknown'} Delegation</CardTitle>
                   </div>
                   <Badge className={getStatusColor(delegation.status)}>{delegation.status}</Badge>
                 </div>
@@ -583,13 +671,22 @@ const DelegationsPage: React.FC = () => {
                           <Plane className="h-4 w-4 mr-2" />
                           Bulk Set Travel Preferences
                         </Button>
-                        <Button
-                          className="w-full"
-                          onClick={() => handleSubmitDelegation(delegation.id)}
-                        >
-                          <Send className="h-4 w-4 mr-2" />
-                          Submit for Approval
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            className="flex-1"
+                            onClick={() => handleSubmitDelegation(delegation.id)}
+                          >
+                            <Send className="h-4 w-4 mr-2" />
+                            Submit for Approval
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleDeleteDraft(delegation.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </>
                     )}
                     {delegation.status === 'Submitted' && (
@@ -633,7 +730,7 @@ const DelegationsPage: React.FC = () => {
                 <CardContent className="pt-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="font-medium">{manager?.country} Delegation</p>
+                      <p className="font-medium">{selectedDelegation.country || manager?.country || 'Unknown'} Delegation</p>
                       <p className="text-sm text-muted-foreground">
                         {getEventName(selectedDelegation)}
                       </p>
@@ -832,6 +929,43 @@ const DelegationsPage: React.FC = () => {
             >
               {isSubmittingBulk ? 'Saving...' : `Set Travel for ${selectedDelegation ? getMemberCount(selectedDelegation) : 0} Members`}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Country Required Dialog */}
+      <Dialog
+        open={isCountryDialogOpen}
+        onOpenChange={(open) => {
+          setIsCountryDialogOpen(open);
+          if (!open) {
+            setPendingSubmission(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delegation Country</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label>Country Name *</Label>
+            <Input
+              placeholder="e.g., Saudi Arabia"
+              value={countryInput}
+              onChange={(e) => setCountryInput(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsCountryDialogOpen(false);
+                setPendingSubmission(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmCountry}>Continue</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

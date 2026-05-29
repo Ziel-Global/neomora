@@ -39,14 +39,20 @@ export const getAllTeams = async (): Promise<Team[]> => {
         const regsResponse = await apiClient.get('/registrations/admin/all');
         const registrations = Array.isArray(regsResponse.data) ? regsResponse.data : (regsResponse.data?.data || []);
         console.log('[API] Got registrations:', registrations.length);
-        
+
         // Extract unique teams from registrations
         const teamMap = new Map<string, Team>();
         for (const reg of registrations) {
             const teamId = reg.teamId || reg.team_id;
+            let delegationId = reg.delegationId || reg.delegation_id;
+            if (!delegationId && reg.team) {
+                const teamDel = reg.team.delegationId || reg.team.delegation_id || reg.team.delegation;
+                delegationId = typeof teamDel === 'object' ? (teamDel.id || teamDel._id) : teamDel;
+            }
             if (teamId && !teamMap.has(teamId)) {
                 teamMap.set(teamId, {
                     id: teamId,
+                    delegationId,
                     managerId: reg.managerId || reg.manager_id || 'unknown',
                     name: reg.team?.name || `Team ${teamId.substring(0, 8)}`,
                     country: reg.country || 'Unknown',
@@ -62,9 +68,12 @@ export const getAllTeams = async (): Promise<Team[]> => {
             } else if (teamId && teamMap.has(teamId)) {
                 const existing = teamMap.get(teamId)!;
                 existing.memberCount = (existing.memberCount || 0) + 1;
+                if (delegationId && !existing.delegationId) {
+                    existing.delegationId = delegationId;
+                }
             }
         }
-        
+
         const teams = Array.from(teamMap.values());
         console.log('[API] Extracted teams from registrations:', teams);
         return teams;

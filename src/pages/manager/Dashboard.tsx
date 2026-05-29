@@ -20,6 +20,7 @@ const ManagerDashboard: React.FC = () => {
     if (manager) {
       const managerTeams = teamStore.getByManager(manager.id);
       const managerDelegations = delegationStore.getByManager(manager.id);
+
       const members = teamMemberStore.getByManager(manager.id);
 
       setTeams(managerTeams);

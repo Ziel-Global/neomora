@@ -168,6 +168,12 @@ export interface EMSRegistration {
   reviewedAt: string | null;
   reviewedBy?: string;
   rejectionReason?: string;
+  delegationId?: string;
+  teamId?: string;
+  country?: string;
+  participant?: any;
+  team?: any;
+  delegation?: any;
   createdAt: string;
   updatedAt: string;
 }
@@ -776,6 +782,26 @@ export const registrationStore = {
     registrations[index] = { ...registrations[index], ...updates, updatedAt: now() };
     setItem(KEYS.REGISTRATIONS, registrations);
     return registrations[index];
+  },
+
+  upsert: (registration: EMSRegistration): EMSRegistration => {
+    const registrations = registrationStore.getAll();
+    const id = registration.id || generateId('reg');
+    const index = registrations.findIndex(r => r.id === id);
+    const nextRegistration = {
+      ...registration,
+      id,
+      registrationId: registration.registrationId || generateRegistrationId(),
+      createdAt: registration.createdAt || now(),
+      updatedAt: now(),
+    };
+    if (index === -1) {
+      registrations.push(nextRegistration);
+    } else {
+      registrations[index] = { ...registrations[index], ...nextRegistration };
+    }
+    setItem(KEYS.REGISTRATIONS, registrations);
+    return nextRegistration;
   },
 
   // Status transition methods
