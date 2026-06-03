@@ -81,14 +81,14 @@ const ManagerInvitationsPage: React.FC = () => {
 
       if (participant && event) {
         // Check if participant is from manager's country, matching organization, or is a team member
-        const isFromCountry = participant.nationality && manager.country && 
+        const isFromCountry = participant.nationality && manager.country &&
           participant.nationality.toLowerCase() === manager.country.toLowerCase();
-        
+
         const isFromOrganization = participant.organization && manager.country && (
           participant.organization.toLowerCase() === manager.country.toLowerCase() ||
           participant.organization.toLowerCase() === `${manager.country.toLowerCase()} delegation`
         );
-        
+
         const isTeamMember = memberEmails.includes(participant.email.toLowerCase());
 
         if (isFromCountry || isFromOrganization || isTeamMember) {

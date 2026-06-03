@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -65,6 +66,7 @@ interface DelegationWithDetails {
 }
 
 const DelegationsPage: React.FC = () => {
+  const { eventId } = useParams();
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [delegations, setDelegations] = useState<DelegationWithDetails[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -235,8 +237,12 @@ const DelegationsPage: React.FC = () => {
         };
       });
 
-      // API already groups delegations, so use them directly
-      setDelegations(enrichedDelegations);
+      // Filter by eventId if present
+      const finalDelegations = eventId 
+        ? enrichedDelegations.filter((d: any) => d.eventId === eventId)
+        : enrichedDelegations;
+        
+      setDelegations(finalDelegations);
     } catch (error) {
       console.error('Failed to load delegations:', error);
       toast.error('Failed to load delegations');
@@ -247,7 +253,7 @@ const DelegationsPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [eventId]);
 
   // Stats
   const stats = {

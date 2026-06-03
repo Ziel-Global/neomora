@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -125,6 +126,7 @@ interface TeamRegistrationsGroup {
 }
 
 const RegistrationsPage: React.FC = () => {
+  const { eventId } = useParams();
   const { t, i18n } = useTranslation();
   const isRtl = i18n.language === 'ar';
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -154,6 +156,17 @@ const RegistrationsPage: React.FC = () => {
       const teamId = group.teamId || group.id || group._id || group.team?.id || group.team?._id;
       const teamName = group.teamName || group.name || group.team?.name || 'Unknown Team';
       const members = group.members || group.participants || group.registrations || [];
+
+      const groupEventId = 
+        group.eventId || 
+        group.event_id || 
+        group.event?.id || 
+        group.event?._id || 
+        members[0]?.event?.id || 
+        members[0]?.event?._id || 
+        members[0]?.registration?.event?.id || 
+        members[0]?.registration?.event?._id || 
+        null;
 
       for (const member of members) {
         const reg = member?.registration || member;
@@ -194,6 +207,7 @@ const RegistrationsPage: React.FC = () => {
           pendingDocs,
           teamId,
           teamName,
+          eventId: reg?.eventId || reg?.event_id || reg?.event?.id || reg?.event?._id || groupEventId,
         });
       }
     }
@@ -214,7 +228,11 @@ const RegistrationsPage: React.FC = () => {
         ? rawGroups
         : [{ teamName: 'Unknown Team', members: rawGroups }];
 
-      setRegistrations(buildRegistrationRows(normalizedGroups));
+      let rows = buildRegistrationRows(normalizedGroups);
+      if (eventId) {
+        rows = rows.filter((r: any) => r.eventId === eventId);
+      }
+      setRegistrations(rows);
     } catch (err) {
       console.error('Failed to load registrations by team:', err);
       toast.error(t('registrations.no_registrations'));
@@ -226,7 +244,7 @@ const RegistrationsPage: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [eventId]);
 
   // Apply filters
   const filteredData = registrations.filter(reg => {

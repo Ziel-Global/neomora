@@ -347,6 +347,7 @@ const InvitationsPage: React.FC = () => {
         name: campaignName,
         subject: selectedTemplate?.subject || campaignName,
         content: selectedTemplate?.body || customMessage,
+        // templateId: selectedTemplateId,           // ← template ID reference
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
