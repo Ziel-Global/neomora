@@ -288,7 +288,12 @@ const getDelegationTeamIds = (delegation: any): string[] => {
    };
  
    const handleRegister = (item: ReadyToRegister) => {
-     navigate(`/manager/register-member?email=${encodeURIComponent(item.member.email)}&eventId=${item.event.id}`);
+    if (item.invitation?.id) {
+      navigate(`/register?invitationId=${encodeURIComponent(item.invitation.id)}`);
+      return;
+    }
+
+    navigate('/register');
    };
  
    const registeredCount = teamMemberStore.getByManager(manager?.id || '').filter(

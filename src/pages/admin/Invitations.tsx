@@ -192,8 +192,8 @@ const InvitationsPage: React.FC = () => {
   );
 
   const approvedDelegations = useMemo(() => {
-    return apiDelegations.filter(d => 
-      d.status === 'Approved' && 
+    return apiDelegations.filter(d =>
+      d.status === 'Approved' &&
       (d.eventId === selectedEventId || !selectedEventId)
     );
   }, [apiDelegations, selectedEventId]);
@@ -209,7 +209,11 @@ const InvitationsPage: React.FC = () => {
     if (audienceMode === 'delegation') {
       return participants.filter(p => {
         if (selectedDelegations.length > 0) {
-          return selectedDelegations.includes(p.organization);
+          return selectedDelegations.some(selected => {
+            const selectedLower = selected.toLowerCase();
+            const orgLower = (p.organization || '').toLowerCase();
+            return selectedLower && (orgLower.includes(selectedLower) || selectedLower.includes(orgLower));
+          });
         }
         return approvedDelegations.some(del => {
           const countryLower = (del.country || '').toLowerCase();
@@ -596,36 +600,22 @@ const InvitationsPage: React.FC = () => {
                   <div className="grid gap-2">
                     <Label>{t('invitations.filter_by_delegation_label')}</Label>
                     <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
-                      {Array.from(new Set(participants.map(p => p.organization).filter(Boolean)))
-                        .filter(org => {
-                          const orgLower = org.toLowerCase();
-                          return approvedDelegations.some(del => {
-                            const countryLower = (del.country || '').toLowerCase();
-                            return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
-                          });
-                        })
+                      {Array.from(new Set(approvedDelegations.map(del => del.country || del.name).filter(Boolean)))
                         .sort()
                         .map(org => (
                           <Badge
                             key={org}
                             variant={selectedDelegations.includes(org) ? 'default' : 'outline'}
-                            className="cursor-pointer"
+                            className="cursor-pointer text-md"
                             onClick={() => toggleDelegation(org)}
                           >
                             {org}
                           </Badge>
                         ))}
                     </div>
-                    {Array.from(new Set(participants.map(p => p.organization).filter(Boolean)))
-                      .filter(org => {
-                        const orgLower = org.toLowerCase();
-                        return approvedDelegations.some(del => {
-                          const countryLower = (del.country || '').toLowerCase();
-                          return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
-                        });
-                      }).length === 0 && (
-                        <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
-                      )}
+                    {approvedDelegations.length === 0 && (
+                      <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
+                    )}
                   </div>
                 )}
                 {audienceMode === 'individual' && (

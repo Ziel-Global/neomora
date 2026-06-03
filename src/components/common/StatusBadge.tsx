@@ -90,7 +90,7 @@ const variantStyles: Record<StatusVariant, string> = {
 };
 
 interface StatusBadgeProps {
-  status: string;
+  status?: string;
   showIcon?: boolean;
   size?: 'sm' | 'md' | 'default';
   variant?: 'success' | 'error' | 'warning' | 'info' | 'pending' | 'neutral' | 'destructive' | 'secondary' | 'default';
@@ -105,6 +105,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   className,
 }) => {
   const { t } = useTranslation();
+  const safeStatus = typeof status === 'string' && status.trim().length > 0 ? status : 'Unknown';
   // Map external variant names to internal ones
   const mapVariant = (v?: string): StatusVariant => {
     if (!v) return 'neutral';
@@ -120,8 +121,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   };
 
   const config = variant
-    ? { variant: mapVariant(variant), icon: statusConfigs[status]?.icon || HelpCircle }
-    : (statusConfigs[status] || { variant: 'neutral' as StatusVariant, icon: HelpCircle });
+    ? { variant: mapVariant(variant), icon: statusConfigs[safeStatus]?.icon || HelpCircle }
+    : (statusConfigs[safeStatus] || { variant: 'neutral' as StatusVariant, icon: HelpCircle });
   const Icon = config.icon;
 
   return (
@@ -134,7 +135,7 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
       )}
     >
       {showIcon && <Icon className={cn('h-3 w-3', size === 'sm' && 'h-2.5 w-2.5')} />}
-      {t(`common.${status.toLowerCase().replace(/\s+/g, '_')}`, { defaultValue: status })}
+      {t(`common.${safeStatus.toLowerCase().replace(/\s+/g, '_')}`, { defaultValue: safeStatus })}
     </span>
   );
 };

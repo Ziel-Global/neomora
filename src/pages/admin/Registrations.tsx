@@ -362,14 +362,6 @@ const RegistrationsPage: React.FC = () => {
 
   const columns: Column<RegistrationWithParticipant>[] = [
     {
-      key: 'registrationId',
-      header: t('registrations.reg_id'),
-      sortable: true,
-      accessor: (row) => (
-        <span className="font-mono text-sm">{row.registrationId}</span>
-      ),
-    },
-    {
       key: 'participant',
       header: t('common.participant'),
       sortable: true,
@@ -685,7 +677,7 @@ const RegistrationsPage: React.FC = () => {
                     keyExtractor={(row) => row.id || row.registrationId || row.participantId}
                     searchable
                     searchPlaceholder={t('registrations.search_placeholder')}
-                    searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email} ${row.registrationId}`}
+                    searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email}`}
                     selectable
                     onSelectionChange={(ids) => console.log('Selected:', ids)}
                   />

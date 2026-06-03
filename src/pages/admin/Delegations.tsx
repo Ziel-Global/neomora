@@ -45,6 +45,7 @@ import { toast } from 'sonner';
 import { getAllDelegations, updateDelegationStatus } from '@/api/delegationApi';
 import { getAllTeams, listTeamMembers } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
+import { getRegistrationsByTeam } from '@/api/registrationApi';
 
 interface DelegationWithDetails {
   id: string;
@@ -78,16 +79,86 @@ const DelegationsPage: React.FC = () => {
   const loadData = async () => {
     setIsLoading(true);
     try {
-      const [delegationData, eventData, teamData] = await Promise.all([
+      const [delegationData, eventData, teamData, registrationGroups] = await Promise.all([
         getAllDelegations(),
         getEvents(),
         getAllTeams().catch(() => []),
+        getRegistrationsByTeam().catch(() => []),
       ]);
+
+      const normalizeRegistrationGroups = (groups: any[]) => {
+        const results: any[] = [];
+
+        for (const group of groups || []) {
+          const teamId = group.teamId || group.id || group._id || group.team?.id || group.team?._id;
+          const teamName = group.teamName || group.name || group.team?.name || 'Unknown Team';
+          const members = group.members || group.participants || group.registrations || [];
+
+          const normalizedMembers = members.map((member: any) => {
+            const reg = member?.registration || member;
+            const participant = member?.participant || reg?.participant || member?.user || reg?.user || member;
+            return {
+              ...participant,
+              registration: reg,
+              teamId,
+              team_id: teamId,
+            };
+          });
+
+          const firstMember = normalizedMembers[0];
+          const organization = firstMember?.organization || firstMember?.registration?.organization || '';
+          const orgCountryMatch = typeof organization === 'string'
+            ? organization.match(/^(.*)\s+delegation$/i)
+            : null;
+
+          const eventId =
+            group.eventId ||
+            group.event_id ||
+            group.event?.id ||
+            group.event?._id ||
+            members[0]?.event?.id ||
+            members[0]?.event?._id ||
+            members[0]?.registration?.event?.id ||
+            members[0]?.registration?.event?._id ||
+            null;
+
+          const country =
+            group.country ||
+            group.team?.country ||
+            firstMember?.country ||
+            firstMember?.nationality ||
+            firstMember?.registration?.country ||
+            (orgCountryMatch ? orgCountryMatch[1] : null) ||
+            null;
+
+          results.push({
+            id: teamId,
+            name: teamName,
+            eventId,
+            country,
+            memberCount: normalizedMembers.length,
+            members: normalizedMembers,
+          });
+        }
+
+        return results;
+      };
+
+      const registrationTeams = normalizeRegistrationGroups(
+        Array.isArray(registrationGroups) ? registrationGroups : []
+      );
 
       // Admin can see Submitted/Under Review/Approved/Rejected; exclude Draft
       const submittedDelegations = delegationData.filter((d: any) =>
         d.status && d.status.toLowerCase() !== 'draft'
       );
+
+      const delegationsByEventId = submittedDelegations.reduce((acc: Map<string, number>, del: any) => {
+        const eventId = del.eventId || del.event_id || del.event?.id || del.event?._id;
+        if (!eventId) return acc;
+        acc.set(eventId, (acc.get(eventId) || 0) + 1);
+        return acc;
+      }, new Map<string, number>());
 
       // API already groups delegations by (manager + country + event)
       // Just enrich with additional data here
@@ -119,6 +190,33 @@ const DelegationsPage: React.FC = () => {
           );
         }
 
+        // Fallback: match by event and country when IDs are not present
+        if (teams.length === 0 && eid && d.country) {
+          teams = teamData.filter((t: any) => {
+            const tEventId = t.eventId || t.event_id || t.event?.id || t.event?._id;
+            const tCountry = t.country || t.team?.country;
+            return tEventId === eid && tCountry === d.country;
+          });
+        }
+
+        // Fallback: use registrations grouped by team
+        if (teams.length === 0 && eid) {
+          const byEvent = registrationTeams.filter((t: any) => t.eventId === eid);
+          if (d.country) {
+            const countryKey = String(d.country).toLowerCase();
+            const byCountry = byEvent.filter((t: any) =>
+              t.country && String(t.country).toLowerCase() === countryKey
+            );
+            teams = byCountry.length > 0 ? byCountry : [];
+          }
+
+          if (teams.length === 0 && (delegationsByEventId.get(eid) || 0) === 1) {
+            teams = byEvent;
+          }
+        }
+
+        const membersFromRegistrations = teams.flatMap((t: any) => t.members || []);
+
         const hasSubmittedMembers = d.status && d.status.toLowerCase() !== 'draft';
 
         return {
@@ -129,9 +227,11 @@ const DelegationsPage: React.FC = () => {
           eventName: event?.name || d.event?.name || d.eventName || 'Unknown Event',
           eventId: eid,
           managerName: d.managerName || d.manager?.name || 'Unknown Team Manager',
-          totalMembers: hasSubmittedMembers ? (d.totalMembers || d.total_members || d.members?.length || 0) : 0,
+          totalMembers: hasSubmittedMembers
+            ? (d.totalMembers || d.total_members || d.members?.length || membersFromRegistrations.length || 0)
+            : 0,
           teams: teams.length > 0 ? teams : [],
-          members: hasSubmittedMembers ? (d.members || []) : [],
+          members: hasSubmittedMembers ? (d.members && d.members.length > 0 ? d.members : membersFromRegistrations) : [],
         };
       });
 
@@ -283,11 +383,7 @@ const DelegationsPage: React.FC = () => {
       header: 'Teams',
       accessor: (row) => (
         <div className="flex flex-wrap gap-1">
-          {row.teamName && row.teamName !== 'Unknown Team' ? (
-            <Badge variant="secondary" className="text-xs">
-              {row.teamName}
-            </Badge>
-          ) : row.teams && row.teams.length > 0 ? (
+          {row.teams && row.teams.length > 0 ? (
             <>
               {row.teams.slice(0, 2).map(t => (
                 <Badge key={t.id || t._id} variant="secondary" className="text-xs">
@@ -300,6 +396,10 @@ const DelegationsPage: React.FC = () => {
                 </Badge>
               )}
             </>
+          ) : row.teamName && row.teamName !== 'Unknown Team' ? (
+            <Badge variant="secondary" className="text-xs">
+              {row.teamName}
+            </Badge>
           ) : (
             <span className="text-xs text-muted-foreground italic">No specific teams</span>
           )}
