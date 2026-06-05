@@ -44,11 +44,13 @@ import EventParticipantsPage from "@/pages/admin/EventParticipants";
 import AdminLogin from "@/pages/auth/AdminLogin";
 import StaffLogin from "@/pages/auth/StaffLogin";
 import ParticipantLogin from "@/pages/auth/ParticipantLogin";
+import ParticipantRegister from "@/pages/auth/ParticipantRegister";
 import ManagerLogin from "@/pages/auth/ManagerLogin";
 import ManagerRegister from "@/pages/auth/ManagerRegister";
 
 // SubAdmin Pages
 import SubAdminDashboard from "@/pages/subadmin/Dashboard";
+import SubAdminInvitationsPage from "@/pages/subadmin/Invitations";
 
 // Manager Pages
 import ManagerDashboard from "@/pages/manager/Dashboard";
@@ -107,6 +109,7 @@ const App = () => (
                 <Route path="/login/admin" element={<AdminLogin />} />
                 <Route path="/login/staff" element={<StaffLogin />} />
                 <Route path="/login/participant" element={<ParticipantLogin />} />
+                <Route path="/participant/register" element={<ParticipantRegister />} />
                 <Route path="/login/manager" element={<ManagerLogin />} />
                 <Route path="/manager/register" element={<ManagerRegister />} />
 
@@ -187,7 +190,7 @@ const App = () => (
                 {/* SubAdmin Routes */}
                 <Route path="/subadmin" element={<SubAdminLayout />}>
                   <Route index element={<SubAdminDashboard />} />
-                  <Route path="invitations" element={<InvitationsPage />} />
+                  <Route path="invitations" element={<SubAdminInvitationsPage />} />
                   <Route path="registrations" element={<RegistrationsPage />} />
                   <Route path="travel" element={<TravelPage />} />
                   <Route path="accommodation" element={<AccommodationPage />} />

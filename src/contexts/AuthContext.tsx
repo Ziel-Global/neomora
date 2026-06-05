@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { adminLogin as adminLoginApi } from '@/api/authApi';
+import { adminLogin as adminLoginApi, subadminLogin as subadminLoginApi } from '@/api/authApi';
 
 export type UserRole = 'admin' | 'subadmin' | 'guest';
 
@@ -43,7 +43,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = useCallback(async (email: string, password: string, role: UserRole): Promise<boolean> => {
     try {
-      const response = await adminLoginApi(email, password);
+      let response;
+      if (role === 'subadmin') {
+        response = await subadminLoginApi(email, password);
+      } else {
+        response = await adminLoginApi(email, password);
+      }
 
       const loggedInUser: User = {
         id: response.user?.id || '',
@@ -62,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return true;
     } catch (error: any) {
-      console.error('Admin login failed:', error?.response?.data || error.message);
+      console.error('Login failed:', error?.response?.data || error.message);
       return false;
     }
   }, []);

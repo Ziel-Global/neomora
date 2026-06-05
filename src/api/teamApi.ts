@@ -52,7 +52,7 @@ export const getAllTeams = async (): Promise<Team[]> => {
             if (teamId && !teamMap.has(teamId)) {
                 teamMap.set(teamId, {
                     id: teamId,
-                    delegationId,
+                    // delegationId,
                     managerId: reg.managerId || reg.manager_id || 'unknown',
                     name: reg.team?.name || `Team ${teamId.substring(0, 8)}`,
                     country: reg.country || 'Unknown',

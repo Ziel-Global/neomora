@@ -238,10 +238,10 @@ const DelegationsPage: React.FC = () => {
       });
 
       // Filter by eventId if present
-      const finalDelegations = eventId 
+      const finalDelegations = eventId
         ? enrichedDelegations.filter((d: any) => d.eventId === eventId)
         : enrichedDelegations;
-        
+
       setDelegations(finalDelegations);
     } catch (error) {
       console.error('Failed to load delegations:', error);

@@ -24,7 +24,8 @@ import {
 import { ParticipantRole } from '@/data/mockData';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plane, MapPin, Calendar } from 'lucide-react';
-import { createRegistration } from '@/api/registrationApi';
+import { createRegistration, submitFinalRegistration } from '@/api/registrationApi';
+import { getEvents } from '@/api/eventApi';
 
 const steps = [
   { id: 1, title: 'Personal Info', icon: User },
@@ -397,12 +398,19 @@ const RegisterPage: React.FC = () => {
 
     try {
       // Get first event for registration
-      const events = eventStore.getAll();
-      const eventId = events.length > 0 ? events[0].id : 'default-event';
+      let eventId = '00000000-0000-0000-0000-000000000000'; // fallback to valid UUID format
+      try {
+        const realEvents = await getEvents();
+        if (realEvents && realEvents.length > 0) {
+          eventId = realEvents[0].id;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch events from API, using fallback UUID', err);
+      }
 
       // Create FormData for multipart/form-data submission
       const registrationFormData = new FormData();
-      
+
       // Add basic fields
       registrationFormData.append('eventId', eventId);
       registrationFormData.append('firstName', formData.firstName);
@@ -414,14 +422,14 @@ const RegisterPage: React.FC = () => {
       registrationFormData.append('organization', formData.organization);
       registrationFormData.append('jobTitle', formData.jobTitle);
       registrationFormData.append('participantRole', formData.role);
-      
+
       // Add travel and service preferences
       registrationFormData.append('arrivalDate', formData.arrivalDate);
       registrationFormData.append('departureDate', formData.departureDate);
       registrationFormData.append('needsVisa', String(formData.needsVisa));
       registrationFormData.append('needsAccommodation', String(formData.needsAccommodation));
       registrationFormData.append('needsTransport', String(formData.needsTransport));
-      
+
       // Add travel preferences if applicable
       if (formData.needsTransport) {
         registrationFormData.append('originCity', formData.originCity);
@@ -432,12 +440,12 @@ const RegisterPage: React.FC = () => {
         registrationFormData.append('travelEmergencyContactName', formData.travelEmergencyContact);
         registrationFormData.append('travelEmergencyContactPhone', formData.travelEmergencyPhone);
       }
-      
+
       // Add other fields
       registrationFormData.append('dietaryRequirements', formData.dietaryRequirements);
       registrationFormData.append('emergencyContact', formData.emergencyContact);
       registrationFormData.append('agreeTerms', String(formData.agreeTerms));
-      
+
       // Add uploaded files
       uploadedDocs.forEach((doc) => {
         if (doc.type === 'Passport') {
@@ -449,7 +457,13 @@ const RegisterPage: React.FC = () => {
 
       // Call API to create registration
       const response = await createRegistration(registrationFormData);
-      
+
+      // Submit the registration immediately after creation using the reference ID
+      const targetId = response.registrationId || response.id;
+      if (targetId) {
+        await submitFinalRegistration(targetId);
+      }
+
       // Also store locally for offline support
       const participant = participantStore.create({
         firstName: formData.firstName,

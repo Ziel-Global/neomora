@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -14,23 +13,30 @@ import {
   EMSEvent,
   EMSParticipant,
   EMSCampaign,
-  EMSInvitation,
   EMSInvitationTemplate,
-  InvitationStatus,
 } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star } from 'lucide-react';
+import {
+  Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal,
+  FileText, Clock, XCircle, Copy, ExternalLink, Trash2, Play,
+  RefreshCw, Crown, Star, Loader2,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
+  DialogFooter, DialogDescription,
+} from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuTrigger, DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from '@/hooks/use-toast';
@@ -39,10 +45,7 @@ import { InvitationPreviewModal } from '@/components/invitations/InvitationPrevi
 import * as campaignApi from '@/api/campaignApi';
 import { getEvents } from '@/api/eventApi';
 import { getParticipants } from '@/api/participantApi';
-import { getAllDelegations } from '@/api/delegationApi';
-import { Loader2 } from 'lucide-react';
 
-// Check if template is VIP based on name/subject
 const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
   const name = template.name.toLowerCase();
   const subject = template.subject.toLowerCase();
@@ -52,10 +55,8 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
 
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
 
-
-const InvitationsPage: React.FC = () => {
+const SubAdminInvitationsPage: React.FC = () => {
   const { t } = useTranslation();
-  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('campaigns');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
@@ -66,15 +67,13 @@ const InvitationsPage: React.FC = () => {
   const [apiCampaigns, setApiCampaigns] = useState<campaignApi.Campaign[]>([]);
   const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
   const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
-  const [apiDelegations, setApiDelegations] = useState<any[]>([]);
 
   // Wizard form state
   const [selectedEventId, setSelectedEventId] = useState('');
   const [campaignName, setCampaignName] = useState('');
   const [selectedRoles, setSelectedRoles] = useState<ParticipantRole[]>([]);
-  const [selectedDelegations, setSelectedDelegations] = useState<string[]>([]);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
-  const [audienceMode, setAudienceMode] = useState<'role' | 'individual' | 'delegation'>('role');
+  const [audienceMode, setAudienceMode] = useState<'role' | 'individual'>('role');
   const [participantSearchTerm, setParticipantSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [rsvpDeadline, setRsvpDeadline] = useState('');
@@ -97,16 +96,26 @@ const InvitationsPage: React.FC = () => {
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
-      const [campaignData, eventData, participantData, delegationData] = await Promise.all([
-        campaignApi.getCampaigns(),
-        getEvents(),
-        getParticipants(),
-        getAllDelegations().catch(() => [])
+      const [campaignData, eventData, participantData] = await Promise.all([
+        campaignApi.getCampaigns().catch((err) => {
+          console.error('Failed to load campaigns:', err);
+          return [];
+        }),
+        getEvents().catch((err) => {
+          console.error('Failed to load events:', err);
+          return [];
+        }),
+        getParticipants().catch((err) => {
+          console.error('Failed to load participants:', err);
+          return [];
+        }),
       ]);
+      console.log('[SubAdmin Invitations] campaigns:', campaignData);
+      console.log('[SubAdmin Invitations] events:', eventData);
+      console.log('[SubAdmin Invitations] participants:', participantData);
       setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
       setApiEvents(Array.isArray(eventData) ? eventData : []);
       setApiParticipants(Array.isArray(participantData) ? participantData : []);
-      setApiDelegations(Array.isArray(delegationData) ? delegationData : []);
     } catch (error) {
       console.error('Failed to load invitations data:', error);
     } finally {
@@ -135,8 +144,7 @@ const InvitationsPage: React.FC = () => {
   }, [apiCampaigns, refreshKey]);
 
   const invitations = useMemo(() => {
-    const localInvitations = invitationStore.getAll();
-    return localInvitations;
+    return invitationStore.getAll();
   }, [refreshKey]);
 
   // Calculate stats
@@ -168,7 +176,6 @@ const InvitationsPage: React.FC = () => {
     if (typeof campaignOrEventId === 'string') {
       return events.find(e => e.id === campaignOrEventId)?.name || 'Unknown Event';
     }
-
     if ((campaignOrEventId as any)?.event?.name) return (campaignOrEventId as any).event.name;
     const eventId = (campaignOrEventId as any)?.eventId;
     return events.find(e => e.id === eventId)?.name || 'Unknown Event';
@@ -188,17 +195,10 @@ const InvitationsPage: React.FC = () => {
   };
 
   const filteredCampaigns = campaigns.filter(c =>
-    c.name.toLowerCase().includes(searchTerm.toLowerCase())
+    (c.name || '').toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const approvedDelegations = useMemo(() => {
-    return apiDelegations.filter(d =>
-      d.status === 'Approved' &&
-      (d.eventId === selectedEventId || !selectedEventId)
-    );
-  }, [apiDelegations, selectedEventId]);
-
-  // Get audience based on filters
+  // Get audience based on filters (no delegation mode)
   const getFilteredAudience = (): EMSParticipant[] => {
     if (!selectedEventId) return [];
 
@@ -206,23 +206,7 @@ const InvitationsPage: React.FC = () => {
       return participants.filter(p => selectedParticipantIds.includes(p.id));
     }
 
-    if (audienceMode === 'delegation') {
-      return participants.filter(p => {
-        if (selectedDelegations.length > 0) {
-          return selectedDelegations.some(selected => {
-            const selectedLower = selected.toLowerCase();
-            const orgLower = (p.organization || '').toLowerCase();
-            return selectedLower && (orgLower.includes(selectedLower) || selectedLower.includes(orgLower));
-          });
-        }
-        return approvedDelegations.some(del => {
-          const countryLower = (del.country || '').toLowerCase();
-          const orgLower = (p.organization || '').toLowerCase();
-          return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
-        });
-      });
-    }
-
+    // role mode
     return participants.filter(p =>
       selectedRoles.length === 0 || selectedRoles.includes(p.role)
     );
@@ -250,20 +234,11 @@ const InvitationsPage: React.FC = () => {
     );
   };
 
-  const toggleDelegation = (delegation: string) => {
-    setSelectedDelegations(prev =>
-      prev.includes(delegation)
-        ? prev.filter(d => d !== delegation)
-        : [...prev, delegation]
-    );
-  };
-
   const resetWizard = () => {
     setWizardStep(1);
     setSelectedEventId('');
     setCampaignName('');
     setSelectedRoles([]);
-    setSelectedDelegations([]);
     setSelectedParticipantIds([]);
     setAudienceMode('role');
     setParticipantSearchTerm('');
@@ -342,19 +317,17 @@ const InvitationsPage: React.FC = () => {
         selectedRoles,
       });
 
-      // Keep backend in sync when available, but never block local creation.
+      // Sync with backend — no delegation IDs sent
       const backendCampaign = await campaignApi.createCampaign({
         name: campaignName,
         subject: selectedTemplate?.subject || campaignName,
         content: selectedTemplate?.body || customMessage,
         // templateId: selectedTemplateId,
-
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
         // invitationIds: createdInvitations.map(i => i.id),
         roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
-        targetDelegationIds: audienceMode === 'delegation' ? selectedDelegations : undefined,
       }).catch((error) => {
         console.warn('Backend campaign create failed, ignored for local flow:', error);
         return null;
@@ -373,7 +346,7 @@ const InvitationsPage: React.FC = () => {
       resetWizard();
       setRefreshKey(k => k + 1);
     } catch (error) {
-      console.error('Failed to create campaign locally:', error);
+      console.error('Failed to create campaign:', error);
       toast({ title: 'Error', description: 'Failed to create campaign', variant: 'destructive' });
     } finally {
       setIsActionLoading(false);
@@ -390,7 +363,11 @@ const InvitationsPage: React.FC = () => {
     }
     if (!campaign) return [];
 
-    const audienceIds: string[] = Array.isArray(campaign.audienceIds) ? campaign.audienceIds : Array.isArray(campaign.targetParticipantIds) ? campaign.targetParticipantIds : [];
+    const audienceIds: string[] = Array.isArray(campaign.audienceIds)
+      ? campaign.audienceIds
+      : Array.isArray(campaign.targetParticipantIds)
+        ? campaign.targetParticipantIds
+        : [];
     if (audienceIds.length === 0) return [];
 
     return invitationStore.bulkCreateForCampaign(
@@ -400,7 +377,7 @@ const InvitationsPage: React.FC = () => {
       audienceIds,
       campaign.rsvpDeadline || rsvpDeadline || '',
       Object.fromEntries(
-        (campaign.audienceIds || audienceIds).map((participantId: string) => {
+        audienceIds.map((participantId: string) => {
           const participant = participants.find(p => p.id === participantId);
           return [participantId, participant?.email || ''];
         })
@@ -417,7 +394,6 @@ const InvitationsPage: React.FC = () => {
       campaignStore.update(campaignId, { status: 'Sent', sentAt: new Date().toISOString() } as any);
       campaignStore.updateStats(campaignId);
 
-      // Sync status change to backend API so it stays Sent on refresh
       await campaignApi.sendCampaignNow(campaignId).catch((error) => {
         console.warn('Backend sendCampaignNow failed, continuing with local flow:', error);
       });
@@ -426,7 +402,7 @@ const InvitationsPage: React.FC = () => {
       setRefreshKey(k => k + 1);
       setViewCampaignOpen(false);
     } catch (error: any) {
-      console.error('Failed to send campaign locally:', error);
+      console.error('Failed to send campaign:', error);
       toast({ title: 'Error', description: 'Failed to send campaign', variant: 'destructive' });
     } finally {
       setIsActionLoading(false);
@@ -475,6 +451,7 @@ const InvitationsPage: React.FC = () => {
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
   };
 
+  // ─── Wizard Steps ───────────────────────────────────────────
   const renderWizardStep = () => {
     switch (wizardStep) {
       case 1:
@@ -489,9 +466,6 @@ const InvitationsPage: React.FC = () => {
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
                   <p className="text-muted-foreground mb-2">{t('invitations.no_events_created')}</p>
-                  <Button variant="outline" onClick={() => navigate('/admin/events')}>
-                    {t('invitations.create_event_first')}
-                  </Button>
                 </CardContent>
               </Card>
             ) : (
@@ -526,6 +500,7 @@ const InvitationsPage: React.FC = () => {
             )}
           </div>
         );
+
       case 2:
         return (
           <div className="space-y-4">
@@ -538,36 +513,21 @@ const InvitationsPage: React.FC = () => {
               <Card className="border-dashed">
                 <CardContent className="p-6 text-center">
                   <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
-                  <Button variant="outline" onClick={() => navigate('/admin/participants')}>
-                    {t('invitations.add_participants_first')}
-                  </Button>
                 </CardContent>
               </Card>
             ) : (
               <>
-                {/* Selection Mode Toggle */}
+                {/* Selection Mode Toggle — role or individual only */}
                 <div className="flex gap-2">
                   <Button
                     variant={audienceMode === 'role' ? 'default' : 'outline'}
                     size="sm"
                     onClick={() => {
                       setAudienceMode('role');
-                      setSelectedDelegations([]);
                       setSelectedParticipantIds([]);
                     }}
                   >
                     Filter by Role
-                  </Button>
-                  <Button
-                    variant={audienceMode === 'delegation' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setAudienceMode('delegation');
-                      setSelectedRoles([]);
-                      setSelectedParticipantIds([]);
-                    }}
-                  >
-                    {t('invitations.filter_by_delegation')}
                   </Button>
                   <Button
                     variant={audienceMode === 'individual' ? 'default' : 'outline'}
@@ -575,7 +535,6 @@ const InvitationsPage: React.FC = () => {
                     onClick={() => {
                       setAudienceMode('individual');
                       setSelectedRoles([]);
-                      setSelectedDelegations([]);
                     }}
                   >
                     {t('invitations.select_individuals')}
@@ -599,28 +558,7 @@ const InvitationsPage: React.FC = () => {
                     </div>
                   </div>
                 )}
-                {audienceMode === 'delegation' && (
-                  <div className="grid gap-2">
-                    <Label>{t('invitations.filter_by_delegation_label')}</Label>
-                    <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
-                      {Array.from(new Set(approvedDelegations.map(del => del.country || del.name).filter(Boolean)))
-                        .sort()
-                        .map(org => (
-                          <Badge
-                            key={org}
-                            variant={selectedDelegations.includes(org) ? 'default' : 'outline'}
-                            className="cursor-pointer text-md"
-                            onClick={() => toggleDelegation(org)}
-                          >
-                            {org}
-                          </Badge>
-                        ))}
-                    </div>
-                    {approvedDelegations.length === 0 && (
-                      <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
-                    )}
-                  </div>
-                )}
+
                 {audienceMode === 'individual' && (
                   <div className="space-y-3">
                     <div className="relative">
@@ -641,8 +579,7 @@ const InvitationsPage: React.FC = () => {
                         filteredParticipantsForSelection.map(p => (
                           <div
                             key={p.id}
-                            className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 border-b last:border-b-0 ${selectedParticipantIds.includes(p.id) ? 'bg-primary/5' : ''
-                              }`}
+                            className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 border-b last:border-b-0 ${selectedParticipantIds.includes(p.id) ? 'bg-primary/5' : ''}`}
                             onClick={() => toggleParticipant(p.id)}
                           >
                             <Checkbox
@@ -686,8 +623,8 @@ const InvitationsPage: React.FC = () => {
             )}
           </div>
         );
+
       case 3:
-        const selectedEvent3 = events.find(e => e.id === selectedEventId);
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_3_choose_template')}</h3>
@@ -713,19 +650,13 @@ const InvitationsPage: React.FC = () => {
                             <div className="flex items-center gap-2 mb-1">
                               <p className="font-medium">{template.name}</p>
                               <Badge
-                                variant={isVIP ? "default" : "secondary"}
-                                className={isVIP ? "bg-amber-500 hover:bg-amber-600 text-amber-950 text-xs" : "text-xs"}
+                                variant={isVIP ? 'default' : 'secondary'}
+                                className={isVIP ? 'bg-amber-500 hover:bg-amber-600 text-amber-950 text-xs' : 'text-xs'}
                               >
                                 {isVIP ? (
-                                  <>
-                                    <Crown className="h-3 w-3 mr-1" />
-                                    {t('invitations.vip')}
-                                  </>
+                                  <><Crown className="h-3 w-3 mr-1" />{t('invitations.vip')}</>
                                 ) : (
-                                  <>
-                                    <Star className="h-3 w-3 mr-1" />
-                                    {t('invitations.standard')}
-                                  </>
+                                  <><Star className="h-3 w-3 mr-1" />{t('invitations.standard')}</>
                                 )}
                               </Badge>
                             </div>
@@ -764,6 +695,7 @@ const InvitationsPage: React.FC = () => {
             </div>
           </div>
         );
+
       case 4:
         const selectedEvent = events.find(e => e.id === selectedEventId);
         const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
@@ -805,12 +737,13 @@ const InvitationsPage: React.FC = () => {
             </p>
           </div>
         );
+
       default:
         return null;
     }
   };
 
-  // Campaign detail view
+  // ─── Campaign detail dialog ─────────────────────────────────
   const CampaignDetailDialog = () => {
     if (!selectedCampaign) return null;
 
@@ -916,6 +849,7 @@ const InvitationsPage: React.FC = () => {
     );
   };
 
+  // ─── Main Render ────────────────────────────────────────────
   return (
     <div className="space-y-6">
       <PageHeader
@@ -934,8 +868,7 @@ const InvitationsPage: React.FC = () => {
               <div className="flex justify-between mb-6">
                 {[1, 2, 3, 4].map((step) => (
                   <div key={step} className="flex items-center">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${wizardStep >= step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                      }`}>
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${wizardStep >= step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
                       {step}
                     </div>
                     {step < 4 && <div className={`w-12 sm:w-16 h-1 mx-1 sm:mx-2 ${wizardStep > step ? 'bg-primary' : 'bg-muted'}`} />}
@@ -959,7 +892,10 @@ const InvitationsPage: React.FC = () => {
                     {t('invitations.next')}
                   </Button>
                 ) : (
-                  <Button onClick={handleCreateCampaign}>{t('common.create')}</Button>
+                  <Button onClick={handleCreateCampaign} disabled={isActionLoading}>
+                    {isActionLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    {t('common.create')}
+                  </Button>
                 )}
               </DialogFooter>
             </DialogContent>
@@ -979,7 +915,6 @@ const InvitationsPage: React.FC = () => {
         <TabsList>
           <TabsTrigger value="campaigns">{t('invitations.campaigns')}</TabsTrigger>
           <TabsTrigger value="invitations">{t('invitations.all_invitations')}</TabsTrigger>
-          <TabsTrigger value="templates">{t('invitations.templates')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="campaigns" className="space-y-4 mt-4">
@@ -998,7 +933,11 @@ const InvitationsPage: React.FC = () => {
             </Button>
           </div>
 
-          {filteredCampaigns.length === 0 ? (
+          {isLoading ? (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : filteredCampaigns.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="p-8 text-center">
                 <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
@@ -1150,35 +1089,6 @@ const InvitationsPage: React.FC = () => {
             </Card>
           )}
         </TabsContent>
-
-        <TabsContent value="templates" className="space-y-4 mt-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            {templates.map((template) => (
-              <Card key={template.id}>
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <CardTitle className="text-base">{template.name}</CardTitle>
-                      <Badge variant="outline" className="mt-1">{template.language}</Badge>
-                    </div>
-                    <Button variant="ghost" size="sm"><Eye className="h-4 w-4" /></Button>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-2">{template.subject}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {template.variables.slice(0, 3).map((v, i) => (
-                      <Badge key={i} variant="secondary" className="text-xs">{`{{${v}}}`}</Badge>
-                    ))}
-                    {template.variables.length > 3 && (
-                      <Badge variant="secondary" className="text-xs">+{template.variables.length - 3}</Badge>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
       </Tabs>
 
       <CampaignDetailDialog />
@@ -1195,4 +1105,4 @@ const InvitationsPage: React.FC = () => {
   );
 };
 
-export default InvitationsPage;
+export default SubAdminInvitationsPage;

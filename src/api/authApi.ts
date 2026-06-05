@@ -53,3 +53,25 @@ export const teamManagerRegister = async (
   const { data } = await apiClient.post('/auth/team-manager/register', payload);
   return data;
 };
+
+export const subadminLogin = async (
+  email: string,
+  password: string
+): Promise<LoginResponse> => {
+  const { data } = await apiClient.post('/auth/Subadmin/login', { email, password });
+  return data;
+};
+
+export interface ParticipantRegisterRequest {
+  name: string;
+  email: string;
+  password: string;
+  confirmPassword: string;
+}
+
+export const participantRegister = async (
+  payload: ParticipantRegisterRequest
+): Promise<{ message: string;[key: string]: unknown }> => {
+  const { data } = await apiClient.post('/auth/participant/register', payload);
+  return data;
+};

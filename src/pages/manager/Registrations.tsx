@@ -57,15 +57,15 @@ const RegistrationsPage: React.FC = () => {
 
       // Try to get registrations from global endpoint first
       let regsData = await getMyRegistrations();
-      
+
       // If none found or global failed, aggregate from teams
       if (regsData.length === 0 && teamsData.length > 0) {
         console.log('No global registrations found, aggregating from teams...');
         const teamMembersPromises = teamsData.map(team => listTeamMembers(team.id));
         const membersPerTeam = await Promise.all(teamMembersPromises);
-        
+
         // Flatten and add teamId context if missing
-        regsData = membersPerTeam.flatMap((teamMembers, index) => 
+        regsData = membersPerTeam.flatMap((teamMembers, index) =>
           teamMembers.map(m => ({ ...m, teamId: teamsData[index].id }))
         );
       }
@@ -107,7 +107,7 @@ const RegistrationsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Team Registrations</h1>
+        <h1 className="text-3xl font-bold">Team Registration</h1>
         <p className="text-muted-foreground mt-1">
           View and manage all registered team members
         </p>

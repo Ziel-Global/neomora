@@ -15,6 +15,7 @@ export interface Campaign {
     targetDelegationIds?: string[] | null;
     rsvpDeadline?: string;
     audienceIds?: string[];
+    // invitationIds?: string[];
     targetParticipantIds?: string[];
     audienceSize?: number | null;
     stats?: {
@@ -52,6 +53,7 @@ export interface CreateCampaignPayload {
     audienceSize?: number;
     rsvpDeadline: string;
     audienceIds?: string[];
+    // invitationIds?: string[];
     roleFilters?: string[];
 }
 
@@ -75,6 +77,8 @@ const normalizeCampaign = (raw: any): Campaign => {
             ? raw.targetParticipantIds
             : [];
 
+    // const invitationIds = Array.isArray(raw?.invitationIds) ? raw.invitationIds : [];
+
     const stats = raw?.stats || {};
 
     return {
@@ -86,6 +90,7 @@ const normalizeCampaign = (raw: any): Campaign => {
         targetDelegationIds: Array.isArray(raw?.targetDelegationIds) ? raw.targetDelegationIds : [],
         rsvpDeadline: raw?.rsvpDeadline || '',
         audienceIds,
+        // invitationIds,
         targetParticipantIds: audienceIds,
         audienceSize: stats.audienceSize ?? raw?.audienceSize ?? audienceIds.length,
         stats: {

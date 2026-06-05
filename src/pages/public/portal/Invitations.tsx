@@ -13,10 +13,12 @@ import {
 } from '@/lib/emsStore';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
+import { InvitationTemplatePreview } from '@/components/invitations/InvitationTemplatePreview';
 import { Calendar, Crown, Star, Eye, Mail, Loader2 } from 'lucide-react';
 import { getMyInvitations, Invitation } from '@/api/invitationApi';
 import { getEvents } from '@/api/eventApi';
 import * as campaignApi from '@/api/campaignApi';
+
 
 const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
     const name = template.name.toLowerCase();
@@ -24,6 +26,7 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
     return name.includes('vip') || name.includes('exclusive') ||
         subject.includes('vip') || subject.includes('exclusive');
 };
+
 
 const Invitations: React.FC = () => {
     const { participant } = useParticipantSession();
@@ -35,10 +38,12 @@ const Invitations: React.FC = () => {
     const [campaignMap, setCampaignMap] = useState<Record<string, campaignApi.Campaign>>({});
     const [campaignAudienceMap, setCampaignAudienceMap] = useState<Record<string, string[]>>({});
 
+
     // Modal state
     const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
     const [previewInvitation, setPreviewInvitation] = useState<Invitation | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
+
 
     useEffect(() => {
         const fetchData = async () => {
@@ -62,31 +67,23 @@ const Invitations: React.FC = () => {
                         mergedInvitations.push(localInvitation);
                     }
                 }
-                setInvitations(mergedInvitations);
                 setApiEvents(Array.isArray(evData) ? evData : eventStore.getAll());
 
-                const uniqueCampaignIds = Array.from(new Set(
-                    mergedInvitations
-                        .map(inv => inv.campaignId)
-                        .filter((id): id is string => !!id)
-                ));
 
-                const fetchedCampaigns = await Promise.all(uniqueCampaignIds.map(async (campaignId) => {
-                    try {
-                        return [campaignId, await campaignApi.getCampaignById(campaignId)] as const;
-                    } catch {
-                        const localCampaign = campaignStore.getById(campaignId) as any;
-                        return localCampaign ? [campaignId, localCampaign] as const : null;
-                    }
-                }));
+                let allCampaigns: campaignApi.Campaign[] = [];
+                try {
+                    allCampaigns = await campaignApi.getCampaigns();
+                } catch (e) {
+                    allCampaigns = campaignStore.getAll() as any[];
+                }
+
 
                 const nextCampaignMap: Record<string, campaignApi.Campaign> = {};
                 const nextAudienceMap: Record<string, string[]> = {};
-                for (const entry of fetchedCampaigns) {
-                    if (entry) {
-                        nextCampaignMap[entry[0]] = entry[1] as any;
-                        const campaign = entry[1] as any;
-                        nextAudienceMap[entry[0]] = Array.isArray(campaign.audienceIds)
+                for (const campaign of allCampaigns) {
+                    if (campaign && campaign.id) {
+                        nextCampaignMap[campaign.id] = campaign;
+                        nextAudienceMap[campaign.id] = Array.isArray(campaign.audienceIds)
                             ? campaign.audienceIds
                             : Array.isArray(campaign.targetParticipantIds)
                                 ? campaign.targetParticipantIds
@@ -95,6 +92,33 @@ const Invitations: React.FC = () => {
                 }
                 setCampaignMap(nextCampaignMap);
                 setCampaignAudienceMap(nextAudienceMap);
+
+
+                const sentCampaigns = allCampaigns.filter(c => c.status?.toLowerCase() === 'sent');
+
+
+                const finalInvitations: any[] = [...mergedInvitations.filter(inv => !inv.campaignId)];
+
+
+                for (const c of sentCampaigns) {
+                    const realInv = mergedInvitations.find(inv => inv.campaignId === c.id);
+                    if (realInv) {
+                        finalInvitations.push(realInv);
+                    } else {
+                        finalInvitations.push({
+                            id: `camp-inv-${c.id}`,
+                            campaignId: c.id,
+                            eventId: c.eventId,
+                            status: 'Sent',
+                            templateId: c.templateId,
+                            rsvpDeadline: c.rsvpDeadline,
+                            token: c.id
+                        });
+                    }
+                }
+
+
+                setInvitations(finalInvitations);
             } catch (err: any) {
                 console.error('Failed to load invitations:', err);
                 setError('Could not load invitations. Please try again.');
@@ -114,8 +138,10 @@ const Invitations: React.FC = () => {
             }
         };
 
+
         fetchData();
     }, [participant]);
+
 
     const getEventName = (eventId: string) => {
         const apiEvent = apiEvents.find(e => e.id === eventId);
@@ -123,10 +149,12 @@ const Invitations: React.FC = () => {
         return eventStore.getById(eventId)?.name || 'Unknown Event';
     };
 
+
     const getCampaignDetails = (campaignId?: string) => {
         if (!campaignId) return null;
         return campaignMap[campaignId] || campaignStore.getById(campaignId) || null;
     };
+
 
     const campaignMatchesParticipant = (campaignId?: string) => {
         if (!campaignId || !participant) return false;
@@ -138,7 +166,9 @@ const Invitations: React.FC = () => {
         return participantIdMatch || participantEmailMatch;
     };
 
+
     if (!participant) return null;
+
 
     return (
         <div className="space-y-6">
@@ -146,6 +176,7 @@ const Invitations: React.FC = () => {
                 <h1 className="text-3xl font-bold mb-2">My Invitations</h1>
                 <p className="text-muted-foreground">Manage your event invitations and RSVPs.</p>
             </div>
+
 
             {isLoading ? (
                 <div className="flex justify-center py-16">
@@ -170,70 +201,78 @@ const Invitations: React.FC = () => {
             ) : (
                 <div className="space-y-4">
                     {invitations.map((invitation) => {
-                        const template = templateStore.getById(invitation.templateId as any);
-                        const isVIP = template ? isVIPTemplate(template) : false;
                         const campaign = getCampaignDetails(invitation.campaignId as any);
+                        const template = templateStore.getById(invitation.templateId as any) || campaign?.template;
+                        const isVIP = template ? isVIPTemplate(template as any) : false;
+
+
+                        const eventObj = apiEvents.find(e => e.id === invitation.eventId) || eventStore.getById(invitation.eventId);
 
                         return (
-                            <Card key={invitation.id} className={`${isVIP ? 'border-amber-200 bg-amber-50/30' : ''}`}>
-                                <CardContent className="pt-6">
-                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                        <div className="flex items-start gap-4">
-                                            <div className={`p-2 rounded-full ${isVIP ? 'bg-amber-100 text-amber-600' : 'bg-muted text-muted-foreground'}`}>
-                                                <Calendar className="h-6 w-6" />
-                                            </div>
-                                            <div>
-                                                {campaign && (
-                                                    <div className="mb-2">
-                                                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-                                                            Campaign: {campaign.name}
-                                                        </Badge>
+                            <div key={invitation.id} className="flex flex-col gap-3 pb-6 border-b last:border-b-0 last:pb-0">
+                                {template ? (
+                                    <InvitationTemplatePreview
+                                        template={template}
+                                        event={eventObj}
+                                        participant={participant}
+                                        rsvpDeadline={invitation.rsvpDeadline}
+                                    />
+                                ) : (
+                                    <Card className={`${isVIP ? 'border-amber-200 bg-amber-50/30' : ''}`}>
+                                        <CardContent className="pt-6">
+                                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                                <div className="flex items-start gap-4">
+                                                    <div className={`p-2 rounded-full ${isVIP ? 'bg-amber-100 text-amber-600' : 'bg-muted text-muted-foreground'}`}>
+                                                        <Calendar className="h-6 w-6" />
                                                     </div>
-                                                )}
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <h3 className="font-bold text-lg">{getEventName(invitation.eventId)}</h3>
-                                                    {isVIP && (
-                                                        <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
-                                                            <Crown className="h-3 w-3 mr-1" /> VIP
-                                                        </Badge>
-                                                    )}
+                                                    <div>
+                                                        {campaign && (
+                                                            <div className="mb-2">
+                                                                <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+                                                                    Campaign: {campaign.name}
+                                                                </Badge>
+                                                            </div>
+                                                        )}
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <h3 className="font-bold text-lg">{getEventName(invitation.eventId)}</h3>
+                                                            {isVIP && (
+                                                                <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
+                                                                    <Crown className="h-3 w-3 mr-1" /> VIP
+                                                                </Badge>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-sm text-muted-foreground">
+                                                            RSVP Deadline: {invitation.rsvpDeadline || 'N/A'}
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <p className="text-sm text-muted-foreground">
-                                                    RSVP Deadline: {invitation.rsvpDeadline || 'N/A'}
-                                                </p>
                                             </div>
-                                        </div>
+                                        </CardContent>
+                                    </Card>
+                                )}
 
-                                        <div className="flex items-center gap-2">
-                                            {template && (
-                                                <Button
-                                                    variant="ghost"
-                                                    size="sm"
-                                                    onClick={() => {
-                                                        setPreviewTemplate(template);
-                                                        setPreviewInvitation(invitation);
-                                                        setPreviewOpen(true);
-                                                    }}
-                                                >
-                                                    <Eye className="h-4 w-4 mr-1" /> View
-                                                </Button>
-                                            )}
-
-                                            <StatusBadge status={invitation.status} />
-
-                                            {['Pending', 'Delivered', 'Opened', 'Sent'].includes(invitation.status) && (
-                                                <Button onClick={() => navigate(`/invite/${invitation.token}`)}>
-                                                    Respond
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </div>
-                                </CardContent>
-                            </Card>
+                                <div className="flex justify-end gap-2 px-2">
+                                    {['Pending', 'Delivered', 'Opened', 'Sent'].includes(invitation.status) && (
+                                        <Button variant="default" className="bg-red-500 hover:bg-red-600" onClick={() => navigate(`/invite/${invitation.token}`)}>
+                                            Reject
+                                        </Button>
+                                    )}
+                                    {['Pending', 'Delivered', 'Opened', 'Sent'].includes(invitation.status) && (
+                                        <Button
+                                            variant="default"
+                                            className="bg-green-500 hover:bg-green-600"
+                                            onClick={() => navigate(`/register?invitationId=${invitation.id}`)}
+                                        >
+                                            Approve
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
                         );
                     })}
                 </div>
             )}
+
 
             <InvitationPreviewModal
                 open={previewOpen}
@@ -247,4 +286,8 @@ const Invitations: React.FC = () => {
     );
 };
 
+
 export default Invitations;
+
+
+

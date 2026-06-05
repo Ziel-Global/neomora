@@ -125,7 +125,7 @@ const AddMembersPage: React.FC = () => {
 
       const merged = serverTeams.map((t: any) => ({
         ...t,
-        memberCount: t.memberCount || t.member_count 
+        memberCount: t.memberCount || t.member_count
       }));
 
       for (const lt of localTeams) {

@@ -7,7 +7,7 @@ export const SubAdminLayout: React.FC = () => {
   const { isAuthenticated, user } = useAuth();
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login/staff" replace />;
   }
 
   // Allow both subadmin and admin roles

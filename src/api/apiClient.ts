@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000',
+  baseURL: import.meta.env.VITE_API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -12,12 +12,15 @@ apiClient.interceptors.request.use((config) => {
   const path = window.location.pathname;
   const isManager = path.startsWith('/manager');
   const isParticipant = path.startsWith('/portal') || path.startsWith('/participant');
+  const isSubadmin = path.startsWith('/subadmin');
 
   let token = null;
   if (isManager) {
     token = localStorage.getItem('ems_manager_token');
   } else if (isParticipant) {
     token = localStorage.getItem('ems_participant_token');
+  } else if (isSubadmin) {
+    token = localStorage.getItem('ems_token');
   }
 
   // Fallback to any available token if the specific one is missing

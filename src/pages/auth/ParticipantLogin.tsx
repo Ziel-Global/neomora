@@ -111,13 +111,21 @@ const ParticipantLogin: React.FC = () => {
               </Button>
             </form>
 
-            <Link
-              to="/"
-              className="flex items-center justify-center text-sm text-muted-foreground hover:text-emerald-700 transition-colors pt-2 border-t border-gray-100"
-            >
-              <ArrowLeft className="h-4 w-4 mr-1.5" />
-              Back to Services
-            </Link>
+            <div className="mt-6 text-center space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Don't have an account?{' '}
+                <Link to="/participant/register" className="text-emerald-600 hover:underline font-medium">
+                  Register as Participant
+                </Link>
+              </p>
+              <Link
+                to="/"
+                className="flex items-center justify-center text-sm text-muted-foreground hover:text-emerald-700 transition-colors pt-2 border-t border-gray-100"
+              >
+                <ArrowLeft className="h-4 w-4 mr-1.5" />
+                Back to Services
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </div>

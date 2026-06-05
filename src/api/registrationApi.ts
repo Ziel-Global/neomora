@@ -66,6 +66,8 @@ export const submitFinalRegistration = async (id: string): Promise<Registration>
     return data;
 };
 
+
+
 // ──────────────────────────────────────────────
 // ADMIN endpoints
 // ──────────────────────────────────────────────
