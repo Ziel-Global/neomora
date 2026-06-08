@@ -372,7 +372,7 @@ const DelegationsPage: React.FC = () => {
           </div>
           <div>
             <p className="font-semibold">{row.country}</p>
-            <p className="text-xs text-muted-foreground">{row.managerName}</p>
+            <p className="text-xs text-muted-foreground">Manager: {row.manager?.firstName} {row.manager?.lastName}</p>
           </div>
         </div>
       ),
