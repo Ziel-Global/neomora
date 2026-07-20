@@ -28,11 +28,12 @@ import { createRegistration, submitFinalRegistration } from '@/api/registrationA
 import { getEvents } from '@/api/eventApi';
 
 const steps = [
-  { id: 1, title: 'Personal Info', icon: User },
-  { id: 2, title: 'Professional', icon: Briefcase },
-  { id: 3, title: 'Travel & Visa', icon: Globe },
-  { id: 4, title: 'Documents', icon: FileText },
-  { id: 5, title: 'Review', icon: Check },
+  { id: 1, title: 'Select Event', icon: Calendar },
+  { id: 2, title: 'Personal Info', icon: User },
+  { id: 3, title: 'Professional', icon: Briefcase },
+  { id: 4, title: 'Travel & Visa', icon: Globe },
+  { id: 5, title: 'Documents', icon: FileText },
+  { id: 6, title: 'Review', icon: Check },
 ];
 
 // Document storage key for dedicated file storage
@@ -82,9 +83,12 @@ const RegisterPage: React.FC = () => {
   const [invitationId, setInvitationId] = useState<string | null>(null); // State for invitationId
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
+  const [availableEvents, setAvailableEvents] = useState<any[]>([]);
+  const [isLoadingEvents, setIsLoadingEvents] = useState(true);
 
   // ... formData state ...
   const [formData, setFormData] = useState({
+    eventId: '',
     firstName: '',
     lastName: '',
     email: '',
@@ -122,6 +126,19 @@ const RegisterPage: React.FC = () => {
   useEffect(() => {
     initializeStore();
 
+    const fetchEvents = async () => {
+      try {
+        const data = await getEvents();
+        setAvailableEvents(data || []);
+      } catch (err) {
+        console.error('Failed to fetch events:', err);
+        setAvailableEvents(eventStore.getAll());
+      } finally {
+        setIsLoadingEvents(false);
+      }
+    };
+    fetchEvents();
+
     // Check for invitationId in URL
     const searchParams = new URLSearchParams(location.search);
     const invId = searchParams.get('invitationId');
@@ -129,11 +146,17 @@ const RegisterPage: React.FC = () => {
       setInvitationId(invId);
       const inv = invitationStore.getById(invId);
       if (inv) {
+        // Auto-select event from invitation
+        setFormData(prev => ({
+          ...prev,
+          eventId: inv.eventId,
+        }));
         // Pre-fill from invitation participant if exists
         const invParticipant = participantStore.getById(inv.participantId);
         if (invParticipant) {
           setFormData(prev => ({
             ...prev,
+            eventId: inv.eventId,
             firstName: invParticipant.firstName,
             lastName: invParticipant.lastName,
             email: invParticipant.email,
@@ -145,6 +168,8 @@ const RegisterPage: React.FC = () => {
             dietaryRequirements: inv.dietaryNotes || invParticipant.dietaryNotes || '',
           }));
         }
+        // Skip Step 1 - event is already selected from invitation
+        setCurrentStep(2);
       }
     }
 
@@ -170,6 +195,8 @@ const RegisterPage: React.FC = () => {
   // Validation function
   const validateField = (field: string, value: any): string => {
     switch (field) {
+      case 'eventId':
+        return !value || value.trim() === '' ? 'Please select an event' : '';
       case 'firstName':
         return !value || value.trim() === '' ? 'First name is required' : '';
       case 'lastName':
@@ -225,19 +252,22 @@ const RegisterPage: React.FC = () => {
 
     switch (currentStep) {
       case 1:
-        fieldsToValidate = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
+        fieldsToValidate = ['eventId'];
         break;
       case 2:
-        fieldsToValidate = ['organization', 'jobTitle', 'role'];
+        fieldsToValidate = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
         break;
       case 3:
+        fieldsToValidate = ['organization', 'jobTitle', 'role'];
+        break;
+      case 4:
         fieldsToValidate = [];
         if (formData.needsTransport) {
           fieldsToValidate = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
         }
         break;
-      case 4:
       case 5:
+      case 6:
         // No required validations for documents and review
         break;
     }
@@ -290,12 +320,15 @@ const RegisterPage: React.FC = () => {
     let fieldsToTouch: string[] = [];
     switch (currentStep) {
       case 1:
-        fieldsToTouch = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
+        fieldsToTouch = ['eventId'];
         break;
       case 2:
-        fieldsToTouch = ['organization', 'jobTitle', 'role'];
+        fieldsToTouch = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
         break;
       case 3:
+        fieldsToTouch = ['organization', 'jobTitle', 'role'];
+        break;
+      case 4:
         if (formData.needsTransport) {
           fieldsToTouch = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
         }
@@ -309,7 +342,7 @@ const RegisterPage: React.FC = () => {
     setTouched(newTouched);
 
     if (validateCurrentStep()) {
-      setCurrentStep(prev => Math.min(prev + 1, 5));
+      setCurrentStep(prev => Math.min(prev + 1, 6));
     } else {
       // Show specific error message based on missing fields
       const stepErrors = getStepErrors(currentStep);
@@ -326,12 +359,15 @@ const RegisterPage: React.FC = () => {
 
     switch (stepNumber) {
       case 1:
-        fieldsToCheck = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
+        fieldsToCheck = ['eventId'];
         break;
       case 2:
-        fieldsToCheck = ['organization', 'jobTitle', 'role'];
+        fieldsToCheck = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
         break;
       case 3:
+        fieldsToCheck = ['organization', 'jobTitle', 'role'];
+        break;
+      case 4:
         if (formData.needsTransport) {
           fieldsToCheck = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
         }
@@ -397,15 +433,11 @@ const RegisterPage: React.FC = () => {
     setIsSubmitting(true);
 
     try {
-      // Get first event for registration
-      let eventId = '00000000-0000-0000-0000-000000000000'; // fallback to valid UUID format
-      try {
-        const realEvents = await getEvents();
-        if (realEvents && realEvents.length > 0) {
-          eventId = realEvents[0].id;
-        }
-      } catch (err) {
-        console.warn('Failed to fetch events from API, using fallback UUID', err);
+      const eventId = formData.eventId;
+      if (!eventId) {
+        toast.error('Please select an event to register for');
+        setIsSubmitting(false);
+        return;
       }
 
       // Create FormData for multipart/form-data submission
@@ -462,6 +494,16 @@ const RegisterPage: React.FC = () => {
       const targetId = response.registrationId || response.id;
       if (targetId) {
         await submitFinalRegistration(targetId);
+
+        // Save registration UUID to localStorage for portal Registrations page
+        const regId = response.id;
+        if (regId) {
+          const savedIds: string[] = JSON.parse(localStorage.getItem('ems_my_registration_ids') || '[]');
+          if (!savedIds.includes(regId)) {
+            savedIds.push(regId);
+            localStorage.setItem('ems_my_registration_ids', JSON.stringify(savedIds));
+          }
+        }
       }
 
       // Also store locally for offline support
@@ -497,6 +539,46 @@ const RegisterPage: React.FC = () => {
   const renderStep = () => {
     switch (currentStep) {
       case 1:
+        return (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="eventId">Select Event *</Label>
+              {isLoadingEvents ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading events...
+                </div>
+              ) : availableEvents.length === 0 ? (
+                <p className="text-sm text-destructive">No events available at the moment.</p>
+              ) : (
+                <Select value={formData.eventId} onValueChange={(v) => updateField('eventId', v)}>
+                  <SelectTrigger className={cn(touched.eventId && errors.eventId && "border-red-500")}>
+                    <SelectValue placeholder="Choose an event to register for" />
+                  </SelectTrigger>
+                  {/* <SelectContent>
+                    {availableEvents.map(evt => (
+                      <SelectItem key={evt.id} value={evt.id}>{evt.name || evt.title || 'Unnamed Event'}</SelectItem>
+                    ))}
+                  </SelectContent> */}
+                  <SelectContent>
+                    {availableEvents
+                      .filter(evt => evt.id === formData.eventId)
+                      .map(evt => (
+                        <SelectItem key={evt.id} value={evt.id}>
+                          {evt.name || evt.title || 'Unnamed Event'}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
+              {touched.eventId && errors.eventId && (
+                <p className="text-sm text-red-500">{errors.eventId}</p>
+              )}
+            </div>
+          </div>
+        );
+
+      case 2:
         return (
           <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -620,7 +702,7 @@ const RegisterPage: React.FC = () => {
           </div>
         );
 
-      case 2:
+      case 3:
         return (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -685,7 +767,7 @@ const RegisterPage: React.FC = () => {
           </div>
         );
 
-      case 3:
+      case 4:
         return (
           <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -892,7 +974,7 @@ const RegisterPage: React.FC = () => {
           </div>
         );
 
-      case 4:
+      case 5:
         return (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
@@ -1032,9 +1114,16 @@ const RegisterPage: React.FC = () => {
           </div>
         );
 
-      case 5:
+      case 6:
         return (
           <div className="space-y-4">
+            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+              <h3 className="font-medium">Event</h3>
+              <div className="text-sm">
+                <span className="text-muted-foreground">Selected Event:</span> {availableEvents.find(e => e.id === formData.eventId)?.name || availableEvents.find(e => e.id === formData.eventId)?.title || 'N/A'}
+              </div>
+            </div>
+
             <div className="bg-muted/50 rounded-lg p-4 space-y-3">
               <h3 className="font-medium">Personal Information</h3>
               <div className="grid sm:grid-cols-2 gap-2 text-sm">
@@ -1107,7 +1196,7 @@ const RegisterPage: React.FC = () => {
       <div className="max-w-2xl mx-auto">
         {/* Event Header */}
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-bold">{event?.name || 'Event Registration'}</h1>
+          {/* <h1 className="text-2xl font-bold">{event?.name || 'Event Registration'}</h1> */}
           <p className="text-muted-foreground">Registration Form</p>
         </div>
 
@@ -1163,7 +1252,7 @@ const RegisterPage: React.FC = () => {
                 <ChevronLeft className="h-4 w-4 mr-1" />
                 Previous
               </Button>
-              {currentStep < 5 ? (
+              {currentStep < 6 ? (
                 <Button onClick={nextStep}>
                   Next
                   <ChevronRight className="h-4 w-4 ml-1" />
@@ -1192,3 +1281,7 @@ const RegisterPage: React.FC = () => {
 };
 
 export default RegisterPage;
+
+
+
+

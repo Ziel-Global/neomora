@@ -384,54 +384,54 @@ const DelegationsPage: React.FC = () => {
         <span className="text-sm">{row.eventName}</span>
       ),
     },
-    {
-      key: 'teams',
-      header: 'Teams',
-      accessor: (row) => (
-        <div className="flex flex-wrap gap-1">
-          {row.teams && row.teams.length > 0 ? (
-            <>
-              {row.teams.slice(0, 2).map(t => (
-                <Badge key={t.id || t._id} variant="secondary" className="text-xs">
-                  {t.name || t.sportCategory || 'Team'}
-                </Badge>
-              ))}
-              {row.teams.length > 2 && (
-                <Badge variant="outline" className="text-xs">
-                  +{row.teams.length - 2} more
-                </Badge>
-              )}
-            </>
-          ) : row.teamName && row.teamName !== 'Unknown Team' ? (
-            <Badge variant="secondary" className="text-xs">
-              {row.teamName}
-            </Badge>
-          ) : (
-            <span className="text-xs text-muted-foreground italic">No specific teams</span>
-          )}
-        </div>
-      ),
-    },
-    {
-      key: 'members',
-      header: 'Members',
-      accessor: (row) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-auto py-1 px-2 -ml-2"
-          onClick={(e) => {
-            e.stopPropagation();
-            openViewMembersDialog(row);
-          }}
-        >
-          <div className="flex items-center gap-1.5">
-            <Users className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{row.totalMembers}</span>
-          </div>
-        </Button>
-      ),
-    },
+    // {
+    //   key: 'teams',
+    //   header: 'Teams',
+    //   accessor: (row) => (
+    //     <div className="flex flex-wrap gap-1">
+    //       {row.teams && row.teams.length > 0 ? (
+    //         <>
+    //           {row.teams.slice(0, 2).map(t => (
+    //             <Badge key={t.id || t._id} variant="secondary" className="text-xs">
+    //               {t.name || t.sportCategory || 'Team'}
+    //             </Badge>
+    //           ))}
+    //           {row.teams.length > 2 && (
+    //             <Badge variant="outline" className="text-xs">
+    //               +{row.teams.length - 2} more
+    //             </Badge>
+    //           )}
+    //         </>
+    //       ) : row.teamName && row.teamName !== 'Unknown Team' ? (
+    //         <Badge variant="secondary" className="text-xs">
+    //           {row.teamName}
+    //         </Badge>
+    //       ) : (
+    //         <span className="text-xs text-muted-foreground italic">No specific teams</span>
+    //       )}
+    //     </div>
+    //   ),
+    // },
+    // {
+    //   key: 'members',
+    //   header: 'Members',
+    //   accessor: (row) => (
+    //     <Button
+    //       variant="ghost"
+    //       size="sm"
+    //       className="h-auto py-1 px-2 -ml-2"
+    //       onClick={(e) => {
+    //         e.stopPropagation();
+    //         openViewMembersDialog(row);
+    //       }}
+    //     >
+    //       <div className="flex items-center gap-1.5">
+    //         <Users className="h-4 w-4 text-muted-foreground" />
+    //         <span className="text-sm font-medium">{row.totalMembers}</span>
+    //       </div>
+    //     </Button>
+    //   ),
+    // },
     {
       key: 'submittedAt',
       header: 'Submitted',

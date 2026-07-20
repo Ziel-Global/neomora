@@ -123,6 +123,7 @@ export interface EMSCampaign {
   templateId: string;
   targetRoles: ParticipantRole[];
   targetNationalities: string[];
+  targetManagerIds?: string[];
   rsvpDeadline: string;
   scheduledAt: string | null;
   sentAt: string | null;
@@ -616,6 +617,37 @@ export const invitationStore = {
     const index = invitations.findIndex(i => i.id === id);
     if (index === -1) return null;
     invitations[index] = { ...invitations[index], ...updates, updatedAt: now() };
+    setItem(KEYS.INVITATIONS, invitations);
+    return invitations[index];
+  },
+
+  upsert: (invitation: Partial<EMSInvitation> & { id: string }): EMSInvitation => {
+    const invitations = invitationStore.getAll();
+    const index = invitations.findIndex(i => i.id === invitation.id);
+    const nextInvitation: EMSInvitation = {
+      id: invitation.id,
+      eventId: invitation.eventId || '',
+      participantId: invitation.participantId || '',
+      participantEmail: invitation.participantEmail,
+      templateId: invitation.templateId || '',
+      campaignId: invitation.campaignId || '',
+      token: invitation.token || generateToken(),
+      status: invitation.status || 'Pending',
+      rsvpDeadline: invitation.rsvpDeadline || '',
+      sentAt: invitation.sentAt || null,
+      deliveredAt: invitation.deliveredAt || null,
+      openedAt: invitation.openedAt || null,
+      respondedAt: invitation.respondedAt || null,
+      guestCount: invitation.guestCount || 0,
+      notes: invitation.notes || '',
+      createdAt: invitation.createdAt || now(),
+      updatedAt: now(),
+    };
+    if (index === -1) {
+      invitations.push(nextInvitation);
+    } else {
+      invitations[index] = { ...invitations[index], ...nextInvitation };
+    }
     setItem(KEYS.INVITATIONS, invitations);
     return invitations[index];
   },

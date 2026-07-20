@@ -11,7 +11,7 @@ const apiClient = axios.create({
 apiClient.interceptors.request.use((config) => {
   const path = window.location.pathname;
   const isManager = path.startsWith('/manager');
-  const isParticipant = path.startsWith('/portal') || path.startsWith('/participant');
+  const isParticipant = path.startsWith('/portal') || path.startsWith('/participant') || path.startsWith('/register');
   const isSubadmin = path.startsWith('/subadmin');
 
   let token = null;

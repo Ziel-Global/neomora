@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Users, Loader2, Plus, Download, Search, Filter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getEvents } from '@/api/eventApi';
-
+import { getEventParticipants } from '@/api/registrationApi';
 const EventParticipantsPage: React.FC = () => {
     const { t } = useTranslation();
     const { eventId } = useParams<{ eventId: string }>();
@@ -27,8 +27,13 @@ const EventParticipantsPage: React.FC = () => {
                     setEventName(event.name);
                 }
 
-                // For now, keep participants empty as requested (separated from global members)
-                setParticipants([]);
+                // Fetch participants for this event
+                if (eventId) {
+                    const eventParticipants = await getEventParticipants(eventId);
+                    setParticipants(eventParticipants);
+                } else {
+                    setParticipants([]);
+                }
             } catch (error) {
                 console.error('Failed to load event participants data:', error);
             } finally {
@@ -43,17 +48,17 @@ const EventParticipantsPage: React.FC = () => {
         {
             key: 'name',
             header: t('common.participant'),
-            accessor: (row) => `${row.firstName} ${row.lastName}`,
+            accessor: (row: any) => row.participantId ? `${row.participantId.firstName || ''} ${row.participantId.lastName || ''}`.trim() : (row.firstName ? `${row.firstName} ${row.lastName}` : 'Unknown'),
         },
         {
             key: 'organization',
             header: t('participants.organization'),
-            accessor: (row) => row.organization || '-',
+            accessor: (row: any) => row.participantId?.organization || row.organization || '-',
         },
         {
             key: 'role',
             header: t('participants.role'),
-            accessor: (row) => row.role || '-',
+            accessor: (row: any) => row.participantId?.role || row.role || '-',
         },
         {
             key: 'status',
@@ -111,7 +116,7 @@ const EventParticipantsPage: React.FC = () => {
                 <DataTable
                     data={participants}
                     columns={columns}
-                    keyExtractor={(row) => row.id}
+                    keyExtractor={(row: any) => row.id || row._id}
                     searchable
                     searchPlaceholder={t('participants.search_placeholder')}
                 />

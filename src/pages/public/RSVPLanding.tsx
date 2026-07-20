@@ -140,7 +140,7 @@ const RSVPLanding: React.FC = () => {
               </div>
             )}
             {response === 'yes' ? (
-              <Button onClick={() => navigate(`/register?invitationId=${invitation.id}`)}>Continue to Registration</Button>
+              <Button onClick={() => navigate(`/register?invitationId=${invitation.id}&eventId=${invitation.eventId}`)}>Continue to Registration</Button>
             ) : (
               <Button onClick={() => navigate('/')}>Return to Home</Button>
             )}

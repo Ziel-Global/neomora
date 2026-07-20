@@ -53,6 +53,21 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
     subject.includes('vip') || subject.includes('exclusive');
 };
 
+// Real backend UUIDs for invitation templates
+const BACKEND_TEMPLATE_IDS = {
+  VIP: '03a64d7b-50df-4be1-a97f-fe9182321174',
+  STANDARD: 'a424a3fd-3afe-4357-a179-41794ff34197',
+};
+
+// Map a local template to its real backend UUID
+const getBackendTemplateId = (template: EMSInvitationTemplate | undefined): string => {
+  if (!template) return BACKEND_TEMPLATE_IDS.STANDARD;
+  if (template.id === BACKEND_TEMPLATE_IDS.VIP || template.id === BACKEND_TEMPLATE_IDS.STANDARD) {
+    return template.id;
+  }
+  return isVIPTemplate(template) ? BACKEND_TEMPLATE_IDS.VIP : BACKEND_TEMPLATE_IDS.STANDARD;
+};
+
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
 
 const SubAdminInvitationsPage: React.FC = () => {
@@ -322,7 +337,7 @@ const SubAdminInvitationsPage: React.FC = () => {
         name: campaignName,
         subject: selectedTemplate?.subject || campaignName,
         content: selectedTemplate?.body || customMessage,
-        // templateId: selectedTemplateId,
+        templateId: getBackendTemplateId(selectedTemplate),
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
@@ -1104,5 +1119,6 @@ const SubAdminInvitationsPage: React.FC = () => {
     </div>
   );
 };
+
 
 export default SubAdminInvitationsPage;

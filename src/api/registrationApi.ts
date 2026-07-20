@@ -35,7 +35,7 @@ export const createRegistration = async (formData: FormData): Promise<Registrati
 
 // GET /registrations — Get registrations (for manager, typically returns their own)
 export const getMyRegistrations = async (): Promise<Registration[]> => {
-    const endpoints = ['/me/registrations', '/registrations/me', '/registrations'];
+    const endpoints = ['/registrations'];
 
     for (const endpoint of endpoints) {
         try {
@@ -53,7 +53,10 @@ export const getMyRegistrations = async (): Promise<Registration[]> => {
 };
 
 // GET /registrations/:id — Get registration by ID
-
+export const getRegistrationById = async (id: string): Promise<Registration> => {
+    const { data } = await apiClient.get(`/registrations/${id}`);
+    return data?.data || data;
+};
 // PUT /registrations/:id — Update registration form (JSON)
 export const updateRegistrationForm = async (id: string, payload: Partial<Registration>): Promise<Registration> => {
     const { data } = await apiClient.put(`/registrations/${id}`, payload);
@@ -102,4 +105,10 @@ export const rejectRegistration = async (id: string, reason?: string): Promise<v
 // POST /registrations/:id/request-update — Request update from participant
 export const requestRegistrationUpdate = async (id: string, reason?: string): Promise<void> => {
     await apiClient.post(`/registrations/${id}/request-update`, reason ? { reason } : undefined);
+};
+
+// GET /registrations/event/:eventId/participants
+export const getEventParticipants = async (eventId: string): Promise<any[]> => {
+    const { data } = await apiClient.get(`/registrations/event/${eventId}/participants`);
+    return Array.isArray(data) ? data : (data?.data || data?.participants || []);
 };
