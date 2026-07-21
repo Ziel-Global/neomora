@@ -1314,7 +1314,7 @@ const InvitationsPage: React.FC = () => {
   const [apiDelegations, setApiDelegations] = useState<any[]>([]);
 
   // Wizard form state
-  const [selectedEventId, setSelectedEventId] = useState('');
+  const [selectedEventId, setSelectedEventId] = useState(eventId || '');
   const [campaignName, setCampaignName] = useState('');
   const [selectedRoles, setSelectedRoles] = useState<ParticipantRole[]>([]);
   const [selectedDelegations, setSelectedDelegations] = useState<string[]>([]);
@@ -1522,8 +1522,9 @@ const InvitationsPage: React.FC = () => {
   };
 
   const resetWizard = () => {
+    // If opened from inside an event page, keep that event pre-selected
     setWizardStep(1);
-    setSelectedEventId('');
+    setSelectedEventId(eventId || '');
     setCampaignName('');
     setSelectedRoles([]);
     setSelectedDelegations([]);
@@ -1598,13 +1599,13 @@ const InvitationsPage: React.FC = () => {
 
       const computedTargetManagerIds = audienceMode === 'delegation' && selectedDelegations.length > 0
         ? Array.from(new Set(
-            selectedDelegations
-              .map(id => {
-                const del = approvedDelegations.find(d => (d.id || d._id) === id);
-                return del?.managerId || del?.manager_id || del?.manager?.id || null;
-              })
-              .filter(Boolean)
-          ))
+          selectedDelegations
+            .map(id => {
+              const del = approvedDelegations.find(d => (d.id || d._id) === id);
+              return del?.managerId || del?.manager_id || del?.manager?.id || null;
+            })
+            .filter(Boolean)
+        ))
         : undefined;
 
       const tempCampaignId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1771,7 +1772,9 @@ const InvitationsPage: React.FC = () => {
 
   const renderWizardStep = () => {
     switch (wizardStep) {
-      case 1:
+      case 1: {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const currentEvent = events.find(e => e.id === selectedEventId);
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_1_select_event')}</h3>
@@ -1790,16 +1793,26 @@ const InvitationsPage: React.FC = () => {
               </Card>
             ) : (
               <>
-                <Select value={selectedEventId} onValueChange={setSelectedEventId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('invitations.choose_event')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {events.map(event => (
-                      <SelectItem key={event.id} value={event.id}>{event.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {/* If opened from an event page, show the event name as read-only */}
+                {eventId && currentEvent ? (
+                  <Card className="border border-primary/30 bg-primary/5">
+                    <CardContent className="p-3 flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">{t('common.event')}:</span>
+                      <span className="font-medium">{currentEvent.name}</span>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <Select value={selectedEventId} onValueChange={setSelectedEventId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('invitations.choose_event')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {events.map(event => (
+                        <SelectItem key={event.id} value={event.id}>{event.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 <div className="grid gap-2">
                   <Label>{t('invitations.campaign_name_label')}</Label>
                   <Input
@@ -1812,6 +1825,7 @@ const InvitationsPage: React.FC = () => {
                   <Label>{t('invitations.rsvp_deadline_label')}</Label>
                   <Input
                     type="date"
+                    min={todayStr}
                     value={rsvpDeadline}
                     onChange={(e) => setRsvpDeadline(e.target.value)}
                   />
@@ -1820,6 +1834,7 @@ const InvitationsPage: React.FC = () => {
             )}
           </div>
         );
+      }
       case 2:
         return (
           <div className="space-y-4">

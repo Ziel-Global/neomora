@@ -1540,14 +1540,14 @@ const RegistrationsPage: React.FC = () => {
                   onClick={() => handleApprove(row)}
                 >
                   <CheckCircle2 className="h-4 w-4" />
-                  {t('common.approve')}
+                  Approve
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="flex items-center gap-2 text-status-error text-start"
                   onClick={() => openRejectDialog(row)}
                 >
                   <XCircle className="h-4 w-4" />
-                  {t('common.reject')}
+                  Reject
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="flex items-center gap-2 text-status-warning text-start"
@@ -1685,8 +1685,8 @@ const RegistrationsPage: React.FC = () => {
               <div>
                 <h3 className="text-2xl font-bold">
                   {viewMode === 'individual'
-                    ? (t('registrations.individuals') || 'Individual Registrations')
-                    : (t('registrations.teams') || 'Team Registrations')}
+                    ? 'Individuals'
+                    : 'Teams'}
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   {viewMode === 'individual'
@@ -1705,7 +1705,7 @@ const RegistrationsPage: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                     }`}
                 >
-                  {t('registrations.individuals') || 'Individual'}
+                  Individuals
                 </button>
                 <button
                   type="button"
@@ -1715,7 +1715,7 @@ const RegistrationsPage: React.FC = () => {
                     : 'text-muted-foreground hover:text-foreground'
                     }`}
                 >
-                  {t('registrations.teams') || 'Team'}
+                  Teams
                 </button>
               </div>
             </div>
