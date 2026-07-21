@@ -100,6 +100,10 @@ export interface EMSInvitation {
   eventId: string;
   participantId: string;
   participantEmail?: string;
+  managerId?: string;
+  managerEmail?: string;
+  delegationId?: string;
+  recipientType?: 'participant' | 'manager';
   templateId: string;
   campaignId: string;
   token: string; // Unique RSVP link token
@@ -123,6 +127,7 @@ export interface EMSCampaign {
   templateId: string;
   targetRoles: ParticipantRole[];
   targetNationalities: string[];
+  targetDelegationIds?: string[];
   targetManagerIds?: string[];
   rsvpDeadline: string;
   scheduledAt: string | null;
@@ -590,6 +595,10 @@ export const invitationStore = {
     return invitationStore.getAll().filter(i => i.participantId === participantId);
   },
 
+  getByManager: (managerId: string): EMSInvitation[] => {
+    return invitationStore.getAll().filter(i => i.managerId === managerId);
+  },
+
   getByCampaign: (campaignId: string): EMSInvitation[] => {
     return invitationStore.getAll().filter(i => i.campaignId === campaignId);
   },
@@ -629,6 +638,10 @@ export const invitationStore = {
       eventId: invitation.eventId || '',
       participantId: invitation.participantId || '',
       participantEmail: invitation.participantEmail,
+      managerId: invitation.managerId,
+      managerEmail: invitation.managerEmail,
+      delegationId: invitation.delegationId,
+      recipientType: invitation.recipientType || (invitation.managerId ? 'manager' : 'participant'),
       templateId: invitation.templateId || '',
       campaignId: invitation.campaignId || '',
       token: invitation.token || generateToken(),
@@ -726,6 +739,49 @@ export const invitationStore = {
         respondedAt: null,
         guestCount: 0,
         notes: '',
+      });
+      created.push(inv);
+    }
+
+    return created;
+  },
+
+  bulkCreateForManagers: (
+    campaignId: string,
+    eventId: string,
+    templateId: string,
+    targets: { managerId: string; managerEmail?: string; delegationId?: string; delegationName?: string }[],
+    rsvpDeadline: string,
+  ): EMSInvitation[] => {
+    const existing = invitationStore.getByCampaign(campaignId);
+    const existingManagerIds = new Set(
+      existing
+        .filter(inv => inv.recipientType === 'manager' && inv.managerId)
+        .map(inv => inv.managerId as string)
+    );
+
+    const created: EMSInvitation[] = [];
+
+    for (const target of targets) {
+      if (existingManagerIds.has(target.managerId)) continue;
+
+      const inv = invitationStore.create({
+        eventId,
+        participantId: '',
+        managerId: target.managerId,
+        managerEmail: target.managerEmail,
+        delegationId: target.delegationId,
+        recipientType: 'manager',
+        templateId,
+        campaignId,
+        status: 'Pending',
+        rsvpDeadline,
+        sentAt: null,
+        deliveredAt: null,
+        openedAt: null,
+        respondedAt: null,
+        guestCount: 0,
+        notes: target.delegationName ? `${target.delegationName} Delegation` : '',
       });
       created.push(inv);
     }

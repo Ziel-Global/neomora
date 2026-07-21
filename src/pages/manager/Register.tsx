@@ -987,12 +987,12 @@ const ManagerRegisterPage: React.FC = () => {
                           </Badge>
                         )}
                       </TableCell>
-                      {/* <TableCell>
+                       <TableCell>
                         <Button size="sm" onClick={() => handleRegister(item)}>
                           <UserPlus className="h-4 w-4 mr-1" />
                           Register
                         </Button>
-                      </TableCell>*/}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

@@ -1564,6 +1564,10 @@ const ManagerInvitationsPage: React.FC = () => {
             id: invId,
             participantId: inv.participantId || inv.participant_id || inv.participant?.id || inv.participant?._id || '',
             participantEmail: inv.participantEmail || inv.participant_email || inv.participant?.email || '',
+            managerId: inv.managerId || inv.manager_id || inv.manager?.id || inv.manager?._id || '',
+            managerEmail: inv.managerEmail || inv.manager_email || inv.manager?.email || '',
+            delegationId: inv.delegationId || inv.delegation_id || '',
+            recipientType: inv.recipientType || inv.recipient_type || ((inv.managerId || inv.manager_id || inv.manager?.id) ? 'manager' : 'participant'),
             eventId: inv.eventId || inv.event_id || inv.event?.id || inv.event?._id || '',
             status: inv.status || 'Pending',
             rsvpDeadline: inv.rsvpDeadline || inv.rsvp_deadline || '',
@@ -1587,10 +1591,33 @@ const ManagerInvitationsPage: React.FC = () => {
       const delegationInvitations: DelegationInvitation[] = [];
 
       for (const inv of allInvitations) {
-        const participant = allParticipants.find(p => p.id === inv.participantId);
         const event = eventStore.getById(inv.eventId);
+        if (!event) continue;
 
-        if (participant && event) {
+        if (inv.recipientType === 'manager' || inv.managerId) {
+          const matchesManager =
+            inv.managerId === manager.id ||
+            (!!inv.managerEmail && inv.managerEmail.toLowerCase() === manager.email.toLowerCase());
+
+          if (matchesManager) {
+            const localDelegation = inv.delegationId ? delegationStore.getById(inv.delegationId) : undefined;
+            const delegationLabel = inv.notes || (localDelegation?.country
+              ? `${localDelegation.country} Delegation`
+              : `${manager.country} Delegation`);
+
+            delegationInvitations.push({
+              invitation: inv,
+              event,
+              participantName: delegationLabel,
+              participantEmail: inv.managerEmail || manager.email,
+            });
+            continue;
+          }
+        }
+
+        const participant = allParticipants.find(p => p.id === inv.participantId);
+
+        if (participant) {
           // Check if participant is from manager's country, matching organization, or is a team member
           const isFromCountry = participant.nationality && manager.country &&
             participant.nationality.toLowerCase() === manager.country.toLowerCase();

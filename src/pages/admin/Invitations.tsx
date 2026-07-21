@@ -1266,7 +1266,7 @@ import { format } from 'date-fns';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
 import * as campaignApi from '@/api/campaignApi';
 import { getEvents } from '@/api/eventApi';
-import { getParticipants } from '@/api/participantApi';
+import { getAllParticipantsForInvitations } from '@/api/participantApi';
 import { getAllDelegations } from '@/api/delegationApi';
 import { Loader2 } from 'lucide-react';
 
@@ -1312,6 +1312,7 @@ const InvitationsPage: React.FC = () => {
   const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
   const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
   const [apiDelegations, setApiDelegations] = useState<any[]>([]);
+  const [isParticipantsLoading, setIsParticipantsLoading] = useState(false);
 
   // Wizard form state
   const [selectedEventId, setSelectedEventId] = useState(eventId || '');
@@ -1339,13 +1340,26 @@ const InvitationsPage: React.FC = () => {
     loadCampaigns();
   }, [refreshKey]);
 
+  const loadParticipantsForInvitations = async () => {
+    setIsParticipantsLoading(true);
+    try {
+      const participantData = await getAllParticipantsForInvitations();
+      setApiParticipants(Array.isArray(participantData) ? participantData : []);
+    } catch (error) {
+      console.error('Failed to load participants for invitations:', error);
+      setApiParticipants([]);
+    } finally {
+      setIsParticipantsLoading(false);
+    }
+  };
+
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
       const [campaignData, eventData, participantData, delegationData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
-        getParticipants(),
+        getAllParticipantsForInvitations().catch(() => []),
         getAllDelegations().catch(() => [])
       ]);
       setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
@@ -1359,6 +1373,12 @@ const InvitationsPage: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    if (isCreateOpen && wizardStep === 2 && audienceMode === 'individual') {
+      loadParticipantsForInvitations();
+    }
+  }, [isCreateOpen, wizardStep, audienceMode]);
+
   // Fetch data
   const events = useMemo(() => {
     if (Array.isArray(apiEvents) && apiEvents.length > 0) return apiEvents;
@@ -1366,8 +1386,25 @@ const InvitationsPage: React.FC = () => {
   }, [apiEvents, refreshKey]);
 
   const participants = useMemo(() => {
-    if (Array.isArray(apiParticipants) && apiParticipants.length > 0) return apiParticipants;
-    return participantStore.getAll();
+    const merged = new Map<string, EMSParticipant>();
+
+    for (const participant of participantStore.getAll()) {
+      const key = participant.id || participant.email.toLowerCase();
+      if (key) merged.set(key, participant);
+    }
+
+    for (const participant of apiParticipants) {
+      const key = participant.id || participant.email.toLowerCase();
+      if (!key) continue;
+      const existing = merged.get(key);
+      merged.set(key, existing ? { ...existing, ...participant } : participant);
+    }
+
+    return Array.from(merged.values()).sort((a, b) => {
+      const nameA = `${a.firstName} ${a.lastName}`.trim().toLowerCase();
+      const nameB = `${b.firstName} ${b.lastName}`.trim().toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
   }, [apiParticipants, refreshKey]);
 
   const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
@@ -1450,6 +1487,79 @@ const InvitationsPage: React.FC = () => {
     );
   }, [apiDelegations, selectedEventId]);
 
+  interface ManagerInvitationTarget {
+    managerId: string;
+    managerEmail?: string;
+    delegationId: string;
+    delegationName?: string;
+  }
+
+  const resolveManagerTargetsFromDelegations = (): ManagerInvitationTarget[] => {
+    if (audienceMode !== 'delegation') return [];
+
+    const delegationIds = selectedDelegations.length > 0
+      ? selectedDelegations
+      : approvedDelegations.map(d => (d.id || d._id) as string).filter(Boolean);
+
+    const targets: ManagerInvitationTarget[] = [];
+    const seenManagerIds = new Set<string>();
+
+    for (const delegationId of delegationIds) {
+      const del = approvedDelegations.find(d => (d.id || d._id) === delegationId);
+      if (!del) continue;
+
+      const managerId = del.managerId || del.manager_id || del.manager?.id;
+      if (!managerId || seenManagerIds.has(managerId)) continue;
+
+      seenManagerIds.add(managerId);
+      targets.push({
+        managerId,
+        managerEmail: del.managerEmail || del.manager_email || del.manager?.email,
+        delegationId,
+        delegationName: del.country || del.name,
+      });
+    }
+
+    return targets;
+  };
+
+  const resolveManagerTargetsForCampaign = (campaign: any): ManagerInvitationTarget[] => {
+    const delegationIds: string[] = Array.isArray(campaign?.targetDelegationIds)
+      ? campaign.targetDelegationIds
+      : [];
+
+    if (delegationIds.length === 0 && !Array.isArray(campaign?.targetManagerIds)) return [];
+
+    const targets: ManagerInvitationTarget[] = [];
+    const seenManagerIds = new Set<string>();
+
+    for (const delegationId of delegationIds) {
+      const del = apiDelegations.find(d => (d.id || d._id) === delegationId);
+      if (!del) continue;
+
+      const managerId = del.managerId || del.manager_id || del.manager?.id;
+      if (!managerId || seenManagerIds.has(managerId)) continue;
+
+      seenManagerIds.add(managerId);
+      targets.push({
+        managerId,
+        managerEmail: del.managerEmail || del.manager_email || del.manager?.email,
+        delegationId,
+        delegationName: del.country || del.name,
+      });
+    }
+
+    if (targets.length === 0 && Array.isArray(campaign?.targetManagerIds)) {
+      for (const managerId of campaign.targetManagerIds) {
+        if (!managerId || seenManagerIds.has(managerId)) continue;
+        seenManagerIds.add(managerId);
+        targets.push({ managerId, delegationId: managerId });
+      }
+    }
+
+    return targets;
+  };
+
   // Get audience based on filters
   const getFilteredAudience = (): EMSParticipant[] => {
     if (!selectedEventId) return [];
@@ -1491,10 +1601,28 @@ const InvitationsPage: React.FC = () => {
     );
   };
 
+  const hasValidAudience = (): boolean => {
+    if (audienceMode === 'individual') {
+      return selectedParticipantIds.length > 0;
+    }
+    if (audienceMode === 'delegation') {
+      return getFilteredAudience().length > 0 || resolveManagerTargetsFromDelegations().length > 0;
+    }
+    return getFilteredAudience().length > 0;
+  };
+
   const filteredParticipantsForSelection = participants.filter(p => {
+    const searchLower = participantSearchTerm.toLowerCase().trim();
+    if (!searchLower) return true;
+
     const fullName = `${p.firstName} ${p.lastName}`.toLowerCase();
-    const searchLower = participantSearchTerm.toLowerCase();
-    return fullName.includes(searchLower) || p.email.toLowerCase().includes(searchLower);
+    return (
+      fullName.includes(searchLower) ||
+      p.email.toLowerCase().includes(searchLower) ||
+      (p.organization || '').toLowerCase().includes(searchLower) ||
+      (p.nationality || '').toLowerCase().includes(searchLower) ||
+      (p.role || '').toLowerCase().includes(searchLower)
+    );
   });
 
   const toggleParticipant = (participantId: string) => {
@@ -1546,6 +1674,8 @@ const InvitationsPage: React.FC = () => {
     rsvpDeadline: string;
     selectedRoles: ParticipantRole[];
     targetManagerIds?: string[];
+    targetDelegationIds?: string[];
+    managerTargets?: ManagerInvitationTarget[];
   }) => {
     const participantEmailMap = Object.fromEntries(
       payload.audience.map(participant => [participant.id, participant.email])
@@ -1557,6 +1687,7 @@ const InvitationsPage: React.FC = () => {
       templateId: payload.selectedTemplateId,
       targetRoles: payload.selectedRoles,
       targetNationalities: [],
+      targetDelegationIds: payload.targetDelegationIds,
       targetManagerIds: payload.targetManagerIds,
       rsvpDeadline: payload.rsvpDeadline,
       scheduledAt: null,
@@ -1568,14 +1699,28 @@ const InvitationsPage: React.FC = () => {
       content: payload.selectedTemplate?.body,
     } as any);
 
-    const createdInvitations = invitationStore.bulkCreateForCampaign(
-      localCampaign.id,
-      payload.selectedEventId,
-      payload.selectedTemplateId,
-      payload.audience.map(participant => participant.id),
-      payload.rsvpDeadline,
-      participantEmailMap
-    );
+    const createdParticipantInvitations = payload.audience.length > 0
+      ? invitationStore.bulkCreateForCampaign(
+        localCampaign.id,
+        payload.selectedEventId,
+        payload.selectedTemplateId,
+        payload.audience.map(participant => participant.id),
+        payload.rsvpDeadline,
+        participantEmailMap
+      )
+      : [];
+
+    const createdManagerInvitations = payload.managerTargets?.length
+      ? invitationStore.bulkCreateForManagers(
+        localCampaign.id,
+        payload.selectedEventId,
+        payload.selectedTemplateId,
+        payload.managerTargets,
+        payload.rsvpDeadline
+      )
+      : [];
+
+    const createdInvitations = [...createdParticipantInvitations, ...createdManagerInvitations];
 
     campaignStore.updateStats(localCampaign.id);
     return { localCampaign, createdInvitations };
@@ -1588,8 +1733,9 @@ const InvitationsPage: React.FC = () => {
     }
 
     const audience = getFilteredAudience();
-    if (audience.length === 0) {
-      toast({ title: 'No audience', description: 'No participants match your criteria', variant: 'destructive' });
+    const managerTargets = resolveManagerTargetsFromDelegations();
+    if (!hasValidAudience()) {
+      toast({ title: 'No audience', description: 'No participants or managers match your criteria', variant: 'destructive' });
       return;
     }
 
@@ -1597,16 +1743,15 @@ const InvitationsPage: React.FC = () => {
     try {
       const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
 
-      const computedTargetManagerIds = audienceMode === 'delegation' && selectedDelegations.length > 0
-        ? Array.from(new Set(
-          selectedDelegations
-            .map(id => {
-              const del = approvedDelegations.find(d => (d.id || d._id) === id);
-              return del?.managerId || del?.manager_id || del?.manager?.id || null;
-            })
-            .filter(Boolean)
-        ))
+      const computedTargetManagerIds = managerTargets.length > 0
+        ? managerTargets.map(target => target.managerId)
         : undefined;
+
+      const computedTargetDelegationIds = audienceMode === 'delegation' && selectedDelegations.length > 0
+        ? selectedDelegations.filter(Boolean) as string[]
+        : audienceMode === 'delegation'
+          ? approvedDelegations.map(d => (d.id || d._id) as string).filter(Boolean)
+          : undefined;
 
       const tempCampaignId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       const { createdInvitations } = createLocalCampaignInvitations({
@@ -1619,6 +1764,8 @@ const InvitationsPage: React.FC = () => {
         rsvpDeadline,
         selectedRoles,
         targetManagerIds: computedTargetManagerIds,
+        targetDelegationIds: computedTargetDelegationIds,
+        managerTargets: managerTargets.length > 0 ? managerTargets : undefined,
       });
 
       const backendCampaign = await campaignApi.createCampaign({
@@ -1631,9 +1778,7 @@ const InvitationsPage: React.FC = () => {
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
         roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
-        targetDelegationIds: audienceMode === 'delegation' && selectedDelegations.length > 0
-          ? selectedDelegations.filter(Boolean) as string[]
-          : undefined,
+        targetDelegationIds: computedTargetDelegationIds,
         targetManagerIds: computedTargetManagerIds,
       }).catch((error) => {
         console.warn('Backend campaign create failed, ignored for local flow:', error);
@@ -1648,7 +1793,18 @@ const InvitationsPage: React.FC = () => {
         }
       }
 
-      toast({ title: 'Campaign created', description: `Created ${createdInvitations.length} invitations for participants.` });
+      const participantCount = createdInvitations.filter(inv => inv.recipientType !== 'manager').length;
+      const managerCount = createdInvitations.filter(inv => inv.recipientType === 'manager').length;
+      const descriptionParts: string[] = [];
+      if (participantCount > 0) descriptionParts.push(`${participantCount} participant invitation(s)`);
+      if (managerCount > 0) descriptionParts.push(`${managerCount} manager invitation(s)`);
+
+      toast({
+        title: 'Campaign created',
+        description: descriptionParts.length > 0
+          ? `Created ${descriptionParts.join(' and ')}.`
+          : 'Campaign created successfully.',
+      });
       setIsCreateOpen(false);
       resetWizard();
       setRefreshKey(k => k + 1);
@@ -1674,7 +1830,23 @@ const InvitationsPage: React.FC = () => {
       : Array.isArray(campaign.targetParticipantIds)
         ? campaign.targetParticipantIds
         : [];
-    if (audienceIds.length === 0) return existing;
+
+    const managerTargets = resolveManagerTargetsForCampaign(campaign);
+    const ensureManagerInvitations = () => {
+      if (managerTargets.length === 0) return [] as ReturnType<typeof invitationStore.bulkCreateForManagers>;
+      return invitationStore.bulkCreateForManagers(
+        campaignId,
+        campaign.eventId,
+        campaign.templateId || selectedTemplateId || '',
+        managerTargets,
+        campaign.rsvpDeadline || rsvpDeadline || ''
+      );
+    };
+
+    if (audienceIds.length === 0) {
+      const createdManagers = ensureManagerInvitations();
+      return createdManagers.length > 0 ? [...existing, ...createdManagers] : existing;
+    }
 
     // Sirf wahi audienceIds ke liye invitation banao jinke liye abhi tak nahi bani.
     // Participant-id basis par duplicate-check karo — sirf existing.length > 0 kaafi nahi,
@@ -1684,7 +1856,10 @@ const InvitationsPage: React.FC = () => {
     const existingParticipantIds = new Set(existing.map(inv => inv.participantId));
     const missingIds = audienceIds.filter(id => !existingParticipantIds.has(id));
 
-    if (missingIds.length === 0) return existing;
+    if (missingIds.length === 0) {
+      const createdManagers = ensureManagerInvitations();
+      return createdManagers.length > 0 ? [...existing, ...createdManagers] : existing;
+    }
 
     const created = invitationStore.bulkCreateForCampaign(
       campaignId,
@@ -1700,7 +1875,9 @@ const InvitationsPage: React.FC = () => {
       ) as Record<string, string>
     );
 
-    return [...existing, ...created];
+    const createdManagers = ensureManagerInvitations();
+
+    return [...existing, ...created, ...createdManagers];
   };
 
   const handleSendCampaign = async (campaignId: string) => {
@@ -1937,6 +2114,18 @@ const InvitationsPage: React.FC = () => {
                 )}
                 {audienceMode === 'individual' && (
                   <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm text-muted-foreground">
+                        {participants.length} participant(s) available
+                        {selectedParticipantIds.length > 0 && ` · ${selectedParticipantIds.length} selected`}
+                      </p>
+                      {isParticipantsLoading && (
+                        <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Refreshing...
+                        </span>
+                      )}
+                    </div>
                     <div className="relative">
                       <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -1947,7 +2136,12 @@ const InvitationsPage: React.FC = () => {
                       />
                     </div>
                     <div className="max-h-60 overflow-y-auto border rounded-lg">
-                      {filteredParticipantsForSelection.length === 0 ? (
+                      {isParticipantsLoading && participants.length === 0 ? (
+                        <div className="text-center py-8">
+                          <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin text-primary" />
+                          <p className="text-sm text-muted-foreground">Loading participants...</p>
+                        </div>
+                      ) : filteredParticipantsForSelection.length === 0 ? (
                         <p className="text-sm text-muted-foreground text-center py-4">
                           {t('invitations.no_participants_found')}
                         </p>
@@ -1993,7 +2187,16 @@ const InvitationsPage: React.FC = () => {
                 <Card>
                   <CardContent className="p-4">
                     <p className="text-sm text-muted-foreground">{t('invitations.selected_audience')}</p>
-                    <p className="text-2xl font-bold">{t('common.participants_count', { count: getFilteredAudience().length })}</p>
+                    <p className="text-2xl font-bold">
+                      {audienceMode === 'individual'
+                        ? selectedParticipantIds.length
+                        : t('common.participants_count', { count: getFilteredAudience().length })}
+                    </p>
+                    {audienceMode === 'delegation' && resolveManagerTargetsFromDelegations().length > 0 && (
+                      <p className="text-sm text-muted-foreground mt-2">
+                        {resolveManagerTargetsFromDelegations().length} manager invitation(s) will be sent
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               </>
@@ -2082,6 +2285,7 @@ const InvitationsPage: React.FC = () => {
         const selectedEvent = events.find(e => e.id === selectedEventId);
         const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
         const audience = getFilteredAudience();
+        const managerTargets = resolveManagerTargetsFromDelegations();
 
         return (
           <div className="space-y-4">
@@ -2100,6 +2304,12 @@ const InvitationsPage: React.FC = () => {
                   <span className="text-muted-foreground">{t('common.audience')}:</span>
                   <span>{t('common.participants_count', { count: audience.length })}</span>
                 </div>
+                {managerTargets.length > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Managers:</span>
+                    <span>{managerTargets.length} delegation manager(s)</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{t('invitations.templates')}:</span>
                   <span>{selectedTemplate?.name || '-'}</span>
@@ -2266,7 +2476,7 @@ const InvitationsPage: React.FC = () => {
                     onClick={() => setWizardStep(wizardStep + 1)}
                     disabled={
                       (wizardStep === 1 && (!selectedEventId || !campaignName || !rsvpDeadline)) ||
-                      (wizardStep === 2 && getFilteredAudience().length === 0) ||
+                      (wizardStep === 2 && !hasValidAudience()) ||
                       (wizardStep === 3 && !selectedTemplateId)
                     }
                   >
