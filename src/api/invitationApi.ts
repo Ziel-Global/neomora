@@ -93,6 +93,14 @@
 
 import apiClient from './apiClient';
 import axios from 'axios';
+import {
+    getCachedEndpoint,
+    hasParticipantToken,
+    isEndpointBlocked,
+    markEndpointBlocked,
+    orderEndpoints,
+    setCachedEndpoint,
+} from './endpointCache';
 
 export interface Invitation {
     id: string;
@@ -110,8 +118,104 @@ export interface Invitation {
     templateId?: string;
     createdAt?: string;
     updatedAt?: string;
+    event?: {
+        id?: string;
+        name?: string;
+        city?: string;
+        startDate?: string;
+        endDate?: string;
+        start_date?: string;
+        end_date?: string;
+        [key: string]: unknown;
+    };
+    template?: {
+        id?: string;
+        name?: string;
+        subject?: string;
+        body?: string;
+        content?: string;
+        language?: string;
+        variables?: string[];
+        [key: string]: unknown;
+    };
+    campaign?: {
+        id?: string;
+        name?: string;
+        eventId?: string;
+        templateId?: string;
+        rsvpDeadline?: string;
+        event?: Invitation['event'];
+        template?: Invitation['template'];
+        [key: string]: unknown;
+    };
     [key: string]: any;
 }
+
+const normalizeEmbeddedTemplate = (raw: any) => {
+    if (!raw || typeof raw !== 'object') return undefined;
+    return {
+        id: String(raw.id || raw._id || ''),
+        name: raw.name || '',
+        subject: raw.subject || '',
+        body: raw.body || raw.content || '',
+        language: raw.language || 'en',
+        variables: Array.isArray(raw.variables) ? raw.variables : [],
+        createdAt: raw.createdAt || raw.created_at || new Date().toISOString(),
+    };
+};
+
+export const normalizeInvitation = (raw: any): Invitation => {
+    const event = raw?.event && typeof raw.event === 'object' ? raw.event : undefined;
+    const template = normalizeEmbeddedTemplate(raw?.template);
+    const campaignRaw = raw?.campaign && typeof raw.campaign === 'object' ? raw.campaign : undefined;
+    const campaign = campaignRaw
+        ? {
+            ...campaignRaw,
+            event: campaignRaw.event || event,
+            template: normalizeEmbeddedTemplate(campaignRaw.template) || template,
+        }
+        : undefined;
+
+    return {
+        ...raw,
+        id: String(raw?.id || raw?._id || ''),
+        eventId:
+            raw?.eventId ||
+            raw?.event_id ||
+            event?.id ||
+            campaign?.eventId ||
+            campaign?.event?.id ||
+            '',
+        templateId:
+            raw?.templateId ||
+            raw?.template_id ||
+            template?.id ||
+            campaign?.templateId ||
+            campaign?.template?.id ||
+            '',
+        campaignId: raw?.campaignId || raw?.campaign_id || campaign?.id || '',
+        rsvpDeadline:
+            raw?.rsvpDeadline ||
+            raw?.rsvp_deadline ||
+            campaign?.rsvpDeadline ||
+            campaign?.rsvp_deadline ||
+            '',
+        event: event || campaign?.event,
+        template: template || campaign?.template,
+        campaign,
+    };
+};
+
+const normalizeInvitationList = (data: unknown): Invitation[] => {
+    const list = Array.isArray(data)
+        ? data
+        : Array.isArray((data as any)?.data)
+            ? (data as any).data
+            : Array.isArray((data as any)?.invitations)
+                ? (data as any).invitations
+                : [];
+    return list.map(normalizeInvitation).filter(inv => Boolean(inv.id));
+};
 
 // Create a client that works for BOTH participant and manager sessions.
 // getMyInvitations() is used from both the participant "My Invitations" page
@@ -140,32 +244,41 @@ myInvitationsClient.interceptors.request.use((config) => {
 // token. If your backend instead needs a distinct manager route, swap the
 // endpoints list below for that route.
 export const getMyInvitations = async (): Promise<Invitation[]> => {
-    // Try multiple known endpoint patterns
-    const endpoints = [
+    const participantEndpoints = [
+        '/invitations/me',
+        '/participant/invitations',
+    ];
+    const managerEndpoints = [
         '/invitations/me',
         '/participant/invitations',
         '/invitations/my',
+        '/participant/campaigns/invitations',
     ];
 
     const token =
         localStorage.getItem('ems_participant_token') ||
         localStorage.getItem('ems_manager_token');
     if (!token) {
-        console.warn('No participant or manager token found');
         return [];
     }
 
+    const isParticipantOnly = hasParticipantToken() && !localStorage.getItem('ems_manager_token');
+    const endpoints = orderEndpoints(
+        'invitationsEndpoint',
+        isParticipantOnly ? participantEndpoints : managerEndpoints,
+    );
+
     for (const endpoint of endpoints) {
+        if (isEndpointBlocked(endpoint)) continue;
         try {
             const { data } = await myInvitationsClient.get(endpoint);
-            const result = Array.isArray(data) ? data : (data?.data || data?.invitations || []);
-            return Array.isArray(result) ? result : [];
-        } catch (err: any) {
-            // If 404, try next endpoint. Otherwise rethrow
-            if (err?.response?.status !== 404) {
-                throw err;
+            const result = normalizeInvitationList(data);
+            if (result.length > 0) {
+                setCachedEndpoint('invitationsEndpoint', endpoint);
+                return result;
             }
-            console.warn(`Endpoint ${endpoint} returned 404, trying next...`);
+        } catch (err: any) {
+            markEndpointBlocked(endpoint, err?.response?.status);
         }
     }
 
@@ -193,4 +306,32 @@ export const respondToInvitation = async (token: string, response: 'Accepted' | 
 // Mark invitation as opened
 export const markInvitationOpened = async (token: string): Promise<void> => {
     await apiClient.post(`/invitations/token/${token}/open`).catch(() => { /* silent */ });
+};
+
+export const getInvitationById = async (id: string): Promise<Invitation | null> => {
+    const endpoints = [`/invitations/${id}`];
+
+    for (const endpoint of endpoints) {
+        if (isEndpointBlocked(endpoint)) continue;
+        try {
+            const { data } = await myInvitationsClient.get(endpoint);
+            const raw = data?.data || data?.invitation || data;
+            if (raw) return normalizeInvitation(raw);
+        } catch (err: any) {
+            markEndpointBlocked(endpoint, err?.response?.status);
+        }
+    }
+
+    const cachedEndpoint = getCachedEndpoint('invitationsEndpoint');
+    if (cachedEndpoint) {
+        try {
+            const { data } = await myInvitationsClient.get(cachedEndpoint);
+            const result = normalizeInvitationList(data);
+            return result.find(inv => inv.id === id) || null;
+        } catch {
+            // ignore
+        }
+    }
+
+    return null;
 };

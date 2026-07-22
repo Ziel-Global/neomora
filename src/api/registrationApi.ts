@@ -1,4 +1,10 @@
 import apiClient from './apiClient';
+import {
+    isEndpointBlocked,
+    markEndpointBlocked,
+    orderEndpoints,
+    setCachedEndpoint,
+} from './endpointCache';
 
 export interface Registration {
     id: string;
@@ -35,18 +41,23 @@ export const createRegistration = async (formData: FormData): Promise<Registrati
 
 // GET /registrations — Get registrations (for manager, typically returns their own)
 export const getMyRegistrations = async (): Promise<Registration[]> => {
-    const endpoints = ['/registrations'];
+    const endpoints = orderEndpoints('registrationsEndpoint', [
+        '/registrations/me',
+        '/participant/registrations',
+        '/registrations',
+    ]);
 
     for (const endpoint of endpoints) {
+        if (isEndpointBlocked(endpoint)) continue;
         try {
             const { data } = await apiClient.get(endpoint);
             const result = Array.isArray(data) ? data : (data?.data || data?.registrations || []);
-            if (Array.isArray(result)) return result;
-        } catch (err: any) {
-            if (err?.response?.status !== 404) {
-                console.error(`Error fetching from ${endpoint}:`, err);
+            if (Array.isArray(result)) {
+                setCachedEndpoint('registrationsEndpoint', endpoint);
+                return result;
             }
-            // Continue to next endpoint if 404 or just fails silently for now
+        } catch (err: any) {
+            markEndpointBlocked(endpoint, err?.response?.status);
         }
     }
     return [];

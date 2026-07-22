@@ -158,10 +158,7 @@ const EventSelector: React.FC = () => {
 
     /* ─── CRUD ─── */
     const handleCreate = async () => {
-        if (!form.name || !form.startDate || !form.endDate || !form.city) {
-            toast.error(t('common.fill_required') || 'Please fill in all required fields');
-            return;
-        }
+        if (!validateForm()) return;
         const sportCategories = form.selectedSports
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
             .filter(Boolean)
@@ -217,6 +214,7 @@ const EventSelector: React.FC = () => {
 
     const handleUpdate = async () => {
         if (!editTarget) return;
+        if (!validateForm()) return;
         const sportCategories = form.selectedSports
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
             .filter(Boolean)
@@ -285,6 +283,39 @@ const EventSelector: React.FC = () => {
         return matchSearch && matchStatus;
     });
 
+    const RequiredLabel = ({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) => (
+        <Label htmlFor={htmlFor}>
+            {children}
+            <span className="text-destructive ms-1">*</span>
+        </Label>
+    );
+
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const validateForm = (): boolean => {
+        if (!form.name.trim() || !form.theme.trim() || !form.startDate || !form.endDate || !form.city.trim() || !form.venues.trim() || !form.eventType || !form.status) {
+            toast.error(t('common.fill_required') || 'Please fill in all required fields');
+            return false;
+        }
+
+        if ((form.eventType === 'team-based' || form.eventType === 'hybrid') && form.selectedSports.length === 0) {
+            toast.error('Please select at least one sport category');
+            return false;
+        }
+
+        if (form.endDate < form.startDate) {
+            toast.error('End date cannot be before start date');
+            return false;
+        }
+
+        if (form.startDate < todayStr) {
+            toast.error('Start date cannot be in the past');
+            return false;
+        }
+
+        return true;
+    };
+
     /* ─── Shared form fields JSX ─── */
     const FormFields = (
         <div className="grid gap-4 py-2">
@@ -322,33 +353,49 @@ const EventSelector: React.FC = () => {
             </div>
 
             <div className="grid gap-2">
-                <Label htmlFor="f-name">{t('events.name_label')} <span className="text-destructive">*</span></Label>
-                <Input id="f-name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+                <RequiredLabel htmlFor="f-name">{t('events.name_label')}</RequiredLabel>
+                <Input id="f-name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
             </div>
             <div className="grid gap-2">
-                <Label htmlFor="f-theme">{t('events.theme_label')}</Label>
-                <Input id="f-theme" value={form.theme} onChange={e => setForm(f => ({ ...f, theme: e.target.value }))} />
+                <RequiredLabel htmlFor="f-theme">{t('events.theme_label')}</RequiredLabel>
+                <Input id="f-theme" value={form.theme} onChange={e => setForm(f => ({ ...f, theme: e.target.value }))} required />
             </div>
             <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
-                    <Label htmlFor="f-start">{t('events.start_label')} <span className="text-destructive">*</span></Label>
-                    <Input id="f-start" type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} />
+                    <RequiredLabel htmlFor="f-start">{t('events.start_label')}</RequiredLabel>
+                    <Input
+                        id="f-start"
+                        type="date"
+                        value={form.startDate}
+                        min={todayStr}
+                        onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
+                        onPaste={e => e.preventDefault()}
+                        required
+                    />
                 </div>
                 <div className="grid gap-2">
-                    <Label htmlFor="f-end">{t('events.end_label')} <span className="text-destructive">*</span></Label>
-                    <Input id="f-end" type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} />
+                    <RequiredLabel htmlFor="f-end">{t('events.end_label')}</RequiredLabel>
+                    <Input
+                        id="f-end"
+                        type="date"
+                        value={form.endDate}
+                        min={form.startDate || todayStr}
+                        onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))}
+                        onPaste={e => e.preventDefault()}
+                        required
+                    />
                 </div>
             </div>
             <div className="grid gap-2">
-                <Label htmlFor="f-city">{t('events.city_label')} <span className="text-destructive">*</span></Label>
-                <Input id="f-city" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} />
+                <RequiredLabel htmlFor="f-city">{t('events.city_label')}</RequiredLabel>
+                <Input id="f-city" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} required />
             </div>
             <div className="grid gap-2">
-                <Label htmlFor="f-venues">{t('events.venues_label')}</Label>
-                <Textarea id="f-venues" placeholder={t('events.venues_placeholder')} value={form.venues} onChange={e => setForm(f => ({ ...f, venues: e.target.value }))} />
+                <RequiredLabel htmlFor="f-venues">{t('events.venues_label')}</RequiredLabel>
+                <Textarea id="f-venues" placeholder={t('events.venues_placeholder')} value={form.venues} onChange={e => setForm(f => ({ ...f, venues: e.target.value }))} required />
             </div>
             <div className="grid gap-2">
-                <Label>{t('events.type')}</Label>
+                <RequiredLabel>{t('events.type')}</RequiredLabel>
                 <Select value={form.eventType} onValueChange={(v: 'individual' | 'team-based' | 'hybrid') => setForm(f => ({ ...f, eventType: v }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -369,7 +416,7 @@ const EventSelector: React.FC = () => {
                         <Label htmlFor="f-teamreg" className="font-normal">{t('events.allow_team_reg')}</Label>
                     </div>
                     <div className="grid gap-2">
-                        <Label>{t('events.sport_cats')}</Label>
+                        <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto border rounded-lg p-3">
                             {SPORT_CATEGORIES.map(sport => (
                                 <div key={sport.id} className="flex items-center gap-2">
@@ -382,7 +429,7 @@ const EventSelector: React.FC = () => {
                 </>
             )}
             <div className="grid gap-2">
-                <Label>{t('events.status_label')}</Label>
+                <RequiredLabel>{t('events.status_label')}</RequiredLabel>
                 <Select value={form.status} onValueChange={(v: EMSEvent['status']) => setForm(f => ({ ...f, status: v }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>

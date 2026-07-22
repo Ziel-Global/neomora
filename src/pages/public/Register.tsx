@@ -24,8 +24,37 @@ import {
 import { ParticipantRole } from '@/data/mockData';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plane, MapPin, Calendar } from 'lucide-react';
-import { createRegistration, submitFinalRegistration } from '@/api/registrationApi';
+import { createRegistration, submitFinalRegistration, getMyRegistrations } from '@/api/registrationApi';
 import { getEvents } from '@/api/eventApi';
+import { getInvitationById, Invitation } from '@/api/invitationApi';
+
+const REGISTRATION_IDS_KEY = 'ems_my_registration_ids';
+const INVITATION_REGISTRATIONS_KEY = 'ems_invitation_registrations';
+
+const saveInvitationRegistration = (invitationId: string, registrationId: string) => {
+  const map: Record<string, string> = JSON.parse(localStorage.getItem(INVITATION_REGISTRATIONS_KEY) || '{}');
+  map[invitationId] = registrationId;
+  localStorage.setItem(INVITATION_REGISTRATIONS_KEY, JSON.stringify(map));
+};
+
+const getInvitationRegistrationMap = (): Record<string, string> =>
+  JSON.parse(localStorage.getItem(INVITATION_REGISTRATIONS_KEY) || '{}');
+
+const hasExistingInvitationRegistration = async (
+  invitationId: string,
+  eventId?: string,
+): Promise<boolean> => {
+  if (getInvitationRegistrationMap()[invitationId]) return true;
+
+  const registrations = await getMyRegistrations().catch(() => []);
+  return registrations.some(reg => {
+    const regInvitationId = reg.invitationId || reg.invitation_id;
+    if (regInvitationId && String(regInvitationId) === invitationId) return true;
+    if (!eventId) return false;
+    const regEventId = reg.eventId || (reg as any).event?.id;
+    return regEventId === eventId;
+  });
+};
 
 const steps = [
   { id: 1, title: 'Select Event', icon: Calendar },
@@ -70,6 +99,15 @@ const isValidPhone = (phone: string) => {
   return phone.replace(/[^0-9]/g, '').length >= 10;
 };
 
+const getLocalDateString = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const isPastDate = (value: string) => Boolean(value) && value < getLocalDateString();
+
 interface FormErrors {
   [key: string]: string;
 }
@@ -80,7 +118,9 @@ const RegisterPage: React.FC = () => {
   const { participant: sessionParticipant, login } = useParticipantSession();
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [invitationId, setInvitationId] = useState<string | null>(null); // State for invitationId
+  const [invitationId, setInvitationId] = useState<string | null>(null);
+  const [isInvitationLocked, setIsInvitationLocked] = useState(false);
+  const [lockedEvent, setLockedEvent] = useState<any | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
   const [availableEvents, setAvailableEvents] = useState<any[]>([]);
@@ -126,55 +166,12 @@ const RegisterPage: React.FC = () => {
   useEffect(() => {
     initializeStore();
 
-    const fetchEvents = async () => {
-      try {
-        const data = await getEvents();
-        setAvailableEvents(data || []);
-      } catch (err) {
-        console.error('Failed to fetch events:', err);
-        setAvailableEvents(eventStore.getAll());
-      } finally {
-        setIsLoadingEvents(false);
-      }
-    };
-    fetchEvents();
-
-    // Check for invitationId in URL
     const searchParams = new URLSearchParams(location.search);
     const invId = searchParams.get('invitationId');
-    if (invId) {
-      setInvitationId(invId);
-      const inv = invitationStore.getById(invId);
-      if (inv) {
-        // Auto-select event from invitation
-        setFormData(prev => ({
-          ...prev,
-          eventId: inv.eventId,
-        }));
-        // Pre-fill from invitation participant if exists
-        const invParticipant = participantStore.getById(inv.participantId);
-        if (invParticipant) {
-          setFormData(prev => ({
-            ...prev,
-            eventId: inv.eventId,
-            firstName: invParticipant.firstName,
-            lastName: invParticipant.lastName,
-            email: invParticipant.email,
-            phone: invParticipant.phone || '',
-            nationality: invParticipant.nationality || '',
-            passportNumber: invParticipant.passportNumber || '',
-            organization: invParticipant.organization || '',
-            role: invParticipant.role || '',
-            dietaryRequirements: inv.dietaryNotes || invParticipant.dietaryNotes || '',
-          }));
-        }
-        // Skip Step 1 - event is already selected from invitation
-        setCurrentStep(2);
-      }
-    }
+    const urlEventId = searchParams.get('eventId');
 
-    // Pre-fill form if participant is logged in (overrides invitation pre-fill if both present, which is fine)
-    if (sessionParticipant) {
+    const applySessionPrefill = () => {
+      if (!sessionParticipant) return;
       setFormData(prev => ({
         ...prev,
         firstName: sessionParticipant.firstName,
@@ -189,7 +186,91 @@ const RegisterPage: React.FC = () => {
         emergencyContact: sessionParticipant.emergencyContact || '',
         dietaryRequirements: sessionParticipant.dietaryNotes || '',
       }));
-    }
+    };
+
+    const loadRegistrationContext = async () => {
+      setIsLoadingEvents(true);
+      let resolvedEventId = urlEventId || '';
+      let invitationEvent: any = null;
+
+      try {
+        if (invId) {
+          setInvitationId(invId);
+
+          let invitation: Invitation | null = invitationStore.getById(invId) as Invitation | null;
+          if (!invitation) {
+            invitation = await getInvitationById(invId).catch(() => null);
+          }
+
+          if (invitation) {
+            resolvedEventId =
+              invitation.eventId ||
+              invitation.event?.id ||
+              invitation.campaign?.eventId ||
+              invitation.campaign?.event?.id ||
+              urlEventId ||
+              '';
+            invitationEvent = invitation.event || invitation.campaign?.event || null;
+
+            if (invitation.participantId) {
+              const invParticipant = participantStore.getById(invitation.participantId);
+              if (invParticipant) {
+                setFormData(prev => ({
+                  ...prev,
+                  eventId: resolvedEventId,
+                  firstName: invParticipant.firstName,
+                  lastName: invParticipant.lastName,
+                  email: invParticipant.email,
+                  phone: invParticipant.phone || '',
+                  nationality: invParticipant.nationality || '',
+                  passportNumber: invParticipant.passportNumber || '',
+                  organization: invParticipant.organization || '',
+                  jobTitle: invParticipant.jobTitle || '',
+                  role: invParticipant.role || '',
+                  dietaryRequirements: invParticipant.dietaryNotes || invParticipant.dietaryNotes || '',
+                }));
+              }
+            }
+          }
+        }
+
+        const fetchedEvents = await getEvents().catch(() => eventStore.getAll());
+        let events = Array.isArray(fetchedEvents) ? fetchedEvents : eventStore.getAll();
+
+        if (invId && resolvedEventId) {
+          const alreadyRegistered = await hasExistingInvitationRegistration(invId, resolvedEventId);
+          if (alreadyRegistered) {
+            toast.info('You have already registered for this invitation.');
+            navigate('/portal/registrations');
+            return;
+          }
+
+          const matchedEvent =
+            events.find(evt => evt.id === resolvedEventId) ||
+            invitationEvent ||
+            { id: resolvedEventId, name: invitationEvent?.name || 'Invited Event' };
+
+          setLockedEvent(matchedEvent);
+          setAvailableEvents([matchedEvent]);
+          setIsInvitationLocked(true);
+          setFormData(prev => ({ ...prev, eventId: resolvedEventId }));
+          setCurrentStep(2);
+        } else {
+          setLockedEvent(null);
+          setAvailableEvents(events);
+          setIsInvitationLocked(false);
+        }
+      } catch (err) {
+        console.error('Failed to load registration context:', err);
+        setAvailableEvents(eventStore.getAll());
+      } finally {
+        setIsLoadingEvents(false);
+      }
+
+      applySessionPrefill();
+    };
+
+    loadRegistrationContext();
   }, [sessionParticipant, location.search]);
 
   // Validation function
@@ -286,8 +367,21 @@ const RegisterPage: React.FC = () => {
   // ... updateField, nextStep, prevStep, handleFileUpload, removeDoc, getDocByType ... Use original code
 
   const updateField = (field: string, value: any) => {
+    if ((field === 'arrivalDate' || field === 'departureDate') && typeof value === 'string' && value && isPastDate(value)) {
+      toast.error('Past dates cannot be selected');
+      return;
+    }
+
     setFormData(prev => {
       const newData = { ...prev, [field]: value };
+
+      if (field === 'arrivalDate' && value && prev.departureDate && prev.departureDate < value) {
+        newData.departureDate = '';
+      }
+
+      if (field === 'departureDate' && value && prev.arrivalDate && value < prev.arrivalDate) {
+        newData.departureDate = prev.arrivalDate;
+      }
 
       // Auto-update visa assistance based on nationality
       if (field === 'nationality') {
@@ -384,7 +478,7 @@ const RegisterPage: React.FC = () => {
     return stepErrors;
   };
 
-  const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, 1));
+  const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, isInvitationLocked ? 2 : 1));
 
   const handleFileUpload = (type: UploadedDoc['type'], file: File) => {
     // Limit to 2MB to avoid quota issues
@@ -477,6 +571,9 @@ const RegisterPage: React.FC = () => {
       registrationFormData.append('dietaryRequirements', formData.dietaryRequirements);
       registrationFormData.append('emergencyContact', formData.emergencyContact);
       registrationFormData.append('agreeTerms', String(formData.agreeTerms));
+      if (invitationId) {
+        registrationFormData.append('invitationId', invitationId);
+      }
 
       // Add uploaded files
       uploadedDocs.forEach((doc) => {
@@ -498,10 +595,13 @@ const RegisterPage: React.FC = () => {
         // Save registration UUID to localStorage for portal Registrations page
         const regId = response.id;
         if (regId) {
-          const savedIds: string[] = JSON.parse(localStorage.getItem('ems_my_registration_ids') || '[]');
+          const savedIds: string[] = JSON.parse(localStorage.getItem(REGISTRATION_IDS_KEY) || '[]');
           if (!savedIds.includes(regId)) {
             savedIds.push(regId);
-            localStorage.setItem('ems_my_registration_ids', JSON.stringify(savedIds));
+            localStorage.setItem(REGISTRATION_IDS_KEY, JSON.stringify(savedIds));
+          }
+          if (invitationId) {
+            saveInvitationRegistration(invitationId, regId);
           }
         }
       }
@@ -548,6 +648,27 @@ const RegisterPage: React.FC = () => {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Loading events...
                 </div>
+              ) : isInvitationLocked && lockedEvent ? (
+                <div className="rounded-lg border bg-muted/40 p-4 space-y-2">
+                  <p className="font-medium">{lockedEvent.name || lockedEvent.title || 'Invited Event'}</p>
+                  {lockedEvent.city && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <MapPin className="h-3 w-3" />
+                      {lockedEvent.city}
+                    </p>
+                  )}
+                  {(lockedEvent.startDate || lockedEvent.start_date) && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Calendar className="h-3 w-3" />
+                      {lockedEvent.startDate || lockedEvent.start_date}
+                      {(lockedEvent.endDate || lockedEvent.end_date) &&
+                        ` - ${lockedEvent.endDate || lockedEvent.end_date}`}
+                    </p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    This event was selected from your invitation and cannot be changed.
+                  </p>
+                </div>
               ) : availableEvents.length === 0 ? (
                 <p className="text-sm text-destructive">No events available at the moment.</p>
               ) : (
@@ -555,19 +676,12 @@ const RegisterPage: React.FC = () => {
                   <SelectTrigger className={cn(touched.eventId && errors.eventId && "border-red-500")}>
                     <SelectValue placeholder="Choose an event to register for" />
                   </SelectTrigger>
-                  {/* <SelectContent>
-                    {availableEvents.map(evt => (
-                      <SelectItem key={evt.id} value={evt.id}>{evt.name || evt.title || 'Unnamed Event'}</SelectItem>
-                    ))}
-                  </SelectContent> */}
                   <SelectContent>
-                    {availableEvents
-                      .filter(evt => evt.id === formData.eventId)
-                      .map(evt => (
-                        <SelectItem key={evt.id} value={evt.id}>
-                          {evt.name || evt.title || 'Unnamed Event'}
-                        </SelectItem>
-                      ))}
+                    {availableEvents.map(evt => (
+                      <SelectItem key={evt.id} value={evt.id}>
+                        {evt.name || evt.title || 'Unnamed Event'}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}
@@ -768,6 +882,13 @@ const RegisterPage: React.FC = () => {
         );
 
       case 4:
+        {
+          const todayMinDate = getLocalDateString();
+          const departureMinDate =
+            formData.arrivalDate && formData.arrivalDate > todayMinDate
+              ? formData.arrivalDate
+              : todayMinDate;
+
         return (
           <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
@@ -776,6 +897,7 @@ const RegisterPage: React.FC = () => {
                 <Input
                   id="arrival"
                   type="date"
+                  min={todayMinDate}
                   value={formData.arrivalDate}
                   onChange={(e) => updateField('arrivalDate', e.target.value)}
                 />
@@ -785,6 +907,7 @@ const RegisterPage: React.FC = () => {
                 <Input
                   id="departure"
                   type="date"
+                  min={departureMinDate}
                   value={formData.departureDate}
                   onChange={(e) => updateField('departureDate', e.target.value)}
                 />
@@ -973,6 +1096,7 @@ const RegisterPage: React.FC = () => {
             </div>
           </div>
         );
+        }
 
       case 5:
         return (
@@ -1120,7 +1244,8 @@ const RegisterPage: React.FC = () => {
             <div className="bg-muted/50 rounded-lg p-4 space-y-3">
               <h3 className="font-medium">Event</h3>
               <div className="text-sm">
-                <span className="text-muted-foreground">Selected Event:</span> {availableEvents.find(e => e.id === formData.eventId)?.name || availableEvents.find(e => e.id === formData.eventId)?.title || 'N/A'}
+                <span className="text-muted-foreground">Selected Event:</span>{' '}
+                {lockedEvent?.name || lockedEvent?.title || availableEvents.find(e => e.id === formData.eventId)?.name || availableEvents.find(e => e.id === formData.eventId)?.title || 'N/A'}
               </div>
             </div>
 
@@ -1247,7 +1372,7 @@ const RegisterPage: React.FC = () => {
               <Button
                 variant="outline"
                 onClick={prevStep}
-                disabled={currentStep === 1}
+                disabled={currentStep === 1 || (isInvitationLocked && currentStep === 2)}
               >
                 <ChevronLeft className="h-4 w-4 mr-1" />
                 Previous

@@ -11,8 +11,9 @@ import { toast } from 'sonner';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
-import { getMyRegistrations, createRegistration } from '@/api/registrationApi';
+import { createRegistration } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -57,6 +58,60 @@ const emptyMember: MemberForm = {
   medicalConditions: '',
 };
 
+interface TeamMemberDetail {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  nationality?: string;
+  passportNumber?: string;
+  passportExpiry?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  role: string;
+  status?: string;
+  sportCategory?: string;
+  subCategory?: string;
+  emergencyContact?: string;
+  emergencyPhone?: string;
+  dietaryRequirements?: string;
+  medicalConditions?: string;
+}
+
+const normalizeTeamMember = (raw: any): TeamMemberDetail | null => {
+  if (!raw) return null;
+  const source = raw.participant || raw.user || raw;
+  const id = raw.id || source.id || source._id || raw.memberId || source.email;
+  const email = source.email || raw.email || '';
+  const firstName = source.firstName || raw.firstName || '';
+  const lastName = source.lastName || raw.lastName || '';
+  if (!id && !email) return null;
+
+  return {
+    id: String(id),
+    firstName: firstName || 'Unknown',
+    lastName,
+    email,
+    phone: source.phone || raw.phone,
+    nationality: source.nationality || raw.nationality || source.country || raw.country,
+    passportNumber: source.passportNumber || raw.passportNumber || source.passport_number,
+    passportExpiry: source.passportExpiry || raw.passportExpiry || source.passport_expiry,
+    dateOfBirth: source.dateOfBirth || raw.dateOfBirth || source.date_of_birth,
+    gender: source.gender || raw.gender,
+    role: source.role || raw.role || raw.jobTitle || source.jobTitle || 'Member',
+    status: raw.status || source.status,
+    sportCategory: source.sportCategory || raw.sportCategory || source.sport_category,
+    subCategory: source.subCategory || raw.subCategory || source.sub_category,
+    emergencyContact: source.emergencyContact || raw.emergencyContact || source.emergency_contact,
+    emergencyPhone: source.emergencyPhone || raw.emergencyPhone || source.emergency_phone,
+    dietaryRequirements: source.dietaryRequirements || raw.dietaryRequirements || source.dietary_requirements,
+    medicalConditions: source.medicalConditions || raw.medicalConditions || source.medical_conditions,
+  };
+};
+
+const formatDetailValue = (value?: string) => (value && value.trim() ? value : 'N/A');
+
 const AddMembersPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -64,10 +119,13 @@ const AddMembersPage: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [members, setMembers] = useState<MemberForm[]>([{ ...emptyMember }]);
-  const [currentMembers, setCurrentMembers] = useState<any[]>([]);
+  const [currentMembers, setCurrentMembers] = useState<TeamMemberDetail[]>([]);
+  const [selectedMember, setSelectedMember] = useState<TeamMemberDetail | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMembersLoading, setIsMembersLoading] = useState(false);
+
+  const maxDateOfBirth = new Date().toISOString().split('T')[0];
 
   useEffect(() => {
     if (selectedTeamId) {
@@ -78,34 +136,33 @@ const AddMembersPage: React.FC = () => {
   }, [selectedTeamId]);
 
   const loadCurrentMembers = async () => {
+    if (!selectedTeamId) {
+      setCurrentMembers([]);
+      return;
+    }
+
     setIsMembersLoading(true);
     try {
       if (selectedTeamId.startsWith('team-')) {
-        const members = teamMemberStore.getByTeam(selectedTeamId);
-        setCurrentMembers(members);
-      } else {
-        // For server teams, try to get from registrations first as it's more comprehensive for managers
-        const [regs, teamMembers] = await Promise.all([
-          getMyRegistrations().catch(() => []),
-          listTeamMembers(selectedTeamId).catch(() => [])
-        ]);
-
-        // Filter registrations for this team and merge with team members
-        const teamRegs = regs.filter((r: any) => r.teamId === selectedTeamId || r.team_id === selectedTeamId || r.team?.id === selectedTeamId);
-
-        // Merge them avoiding duplicates by ID or Email
-        const merged = [...teamRegs];
-        for (const tm of teamMembers) {
-          const participant = (tm as any).participant || tm;
-          if (!merged.find((r: any) => r.id === tm.id || (r.participant || r).email === participant.email)) {
-            merged.push(tm);
-          }
-        }
-
-        setCurrentMembers(merged);
+        const localMembers = teamMemberStore.getByTeam(selectedTeamId);
+        setCurrentMembers(
+          localMembers
+            .map(normalizeTeamMember)
+            .filter(Boolean) as TeamMemberDetail[]
+        );
+        return;
       }
+
+      const teamMembers = await listTeamMembers(selectedTeamId);
+      setCurrentMembers(
+        (Array.isArray(teamMembers) ? teamMembers : [])
+          .map(normalizeTeamMember)
+          .filter(Boolean) as TeamMemberDetail[]
+      );
     } catch (e) {
       console.error('Failed to load current members:', e);
+      toast.error('Failed to load team members');
+      setCurrentMembers([]);
     } finally {
       setIsMembersLoading(false);
     }
@@ -318,6 +375,62 @@ const AddMembersPage: React.FC = () => {
         </CardContent>
       </Card>
 
+      {/* Current team members from API */}
+      {selectedTeamId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Current Team Members</CardTitle>
+            <CardDescription>
+             Added members of team: {selectedTeam?.name}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isMembersLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : currentMembers.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                <p>No members in this team yet</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {currentMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedMember(member)}
+                    className="w-full flex items-center justify-between gap-3 p-3 border rounded-lg text-left transition-colors hover:bg-muted/50 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>
+                          {(member.firstName[0] || '?').toUpperCase()}
+                          {(member.lastName[0] || '').toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {member.firstName} {member.lastName}
+                        </p>
+                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline">{member.role}</Badge>
+                      {member.status && (
+                        <Badge variant="secondary">{member.status}</Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Member Entry Forms */}
       {selectedTeamId && (
         <Card>
@@ -412,6 +525,7 @@ const AddMembersPage: React.FC = () => {
                     <Label>Date of Birth</Label>
                     <Input
                       type="date"
+                      max={maxDateOfBirth}
                       value={member.dateOfBirth}
                       onChange={(e) => updateMember(index, 'dateOfBirth', e.target.value)}
                     />
@@ -525,11 +639,109 @@ const AddMembersPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      <Dialog open={!!selectedMember} onOpenChange={(open) => !open && setSelectedMember(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Member Details</DialogTitle>
+          </DialogHeader>
+          {selectedMember && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 pb-2 border-b">
+                <Avatar className="h-12 w-12">
+                  <AvatarFallback>
+                    {(selectedMember.firstName[0] || '?').toUpperCase()}
+                    {(selectedMember.lastName[0] || '').toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="font-semibold text-lg">
+                    {selectedMember.firstName} {selectedMember.lastName}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{selectedMember.email}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-start">
+                <div>
+                  <p className="text-sm text-muted-foreground">Role</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.role)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  {selectedMember.status ? (
+                    <Badge variant="secondary">{selectedMember.status}</Badge>
+                  ) : (
+                    <p className="font-medium">N/A</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Phone</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.phone)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Nationality</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.nationality)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Passport Number</p>
+                  <p className="font-medium font-mono">{formatDetailValue(selectedMember.passportNumber)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Passport Expiry</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.passportExpiry)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Date of Birth</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.dateOfBirth)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Gender</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.gender)}</p>
+                </div>
+                {selectedMember.sportCategory && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sport</p>
+                    <p className="font-medium">{formatDetailValue(selectedMember.sportCategory)}</p>
+                  </div>
+                )}
+                {selectedMember.subCategory && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sub Category</p>
+                    <p className="font-medium">{formatDetailValue(selectedMember.subCategory)}</p>
+                  </div>
+                )}
+              </div>
+
+              {selectedMember.dietaryRequirements && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Dietary Requirements</p>
+                  <p className="font-medium">{selectedMember.dietaryRequirements}</p>
+                </div>
+              )}
+              {selectedMember.medicalConditions && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Medical Conditions</p>
+                  <p className="font-medium">{selectedMember.medicalConditions}</p>
+                </div>
+              )}
+              {(selectedMember.emergencyContact || selectedMember.emergencyPhone) && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Emergency Contact</p>
+                  <p className="font-medium">
+                    {formatDetailValue(selectedMember.emergencyContact)}
+                    {selectedMember.emergencyPhone ? ` · ${selectedMember.emergencyPhone}` : ''}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 export default AddMembersPage;
-
 // import React, { useState, useEffect } from 'react';
 // import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 // import { Button } from '@/components/ui/button';

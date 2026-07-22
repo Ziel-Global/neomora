@@ -45,6 +45,16 @@ export const AdminHomeHeader: React.FC = () => {
                         {t('common.members')}
                     </Button>
                 </Link>
+                <Link to="/admin/managers">
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        className={`gap-2 ${isActive('/admin/managers') ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'text-sidebar-foreground/70 hover:text-sidebar-foreground'}`}
+                    >
+                        <Users className="h-4 w-4" />
+                        Managers
+                    </Button>
+                </Link>
                 <Link to="/admin/subadmins">
                     <Button
                         variant="ghost"

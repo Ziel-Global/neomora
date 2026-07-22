@@ -1234,7 +1234,6 @@ import { StatsCard } from '@/components/common/StatsCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import {
   eventStore,
-  participantStore,
   templateStore,
   campaignStore,
   invitationStore,
@@ -1247,7 +1246,7 @@ import {
   InvitationStatus,
 } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star } from 'lucide-react';
+import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -1266,7 +1265,7 @@ import { format } from 'date-fns';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
 import * as campaignApi from '@/api/campaignApi';
 import { getEvents } from '@/api/eventApi';
-import { getAllParticipantsForInvitations } from '@/api/participantApi';
+import { getParticipants } from '@/api/participantApi';
 import { getAllDelegations } from '@/api/delegationApi';
 import { Loader2 } from 'lucide-react';
 
@@ -1296,6 +1295,51 @@ const getBackendTemplateId = (template: EMSInvitationTemplate | undefined): stri
 
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
 
+interface InvitationManager {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  email: string;
+  country?: string;
+  organization?: string;
+}
+
+// UI-only manager list until backend manager API is available.
+const MOCK_MANAGERS: InvitationManager[] = [
+  {
+    id: 'm-1',
+    firstName: 'Ahmed',
+    lastName: 'Hassan',
+    email: 'ahmed.hassan@example.com',
+    country: 'Saudi Arabia',
+    organization: 'Saudi Sports Federation',
+  },
+  {
+    id: 'm-2',
+    firstName: 'John',
+    lastName: 'Doe',
+    email: 'john.doe@example.com',
+    country: 'USA',
+    organization: 'USA Athletics',
+  },
+  {
+    id: 'm-3',
+    name: 'Ali Raza',
+    email: 'ali.raza@example.com',
+    country: 'UAE',
+    organization: 'UAE Olympic Committee',
+  },
+];
+
+const getManagerDisplayName = (manager: Pick<InvitationManager, 'firstName' | 'lastName' | 'name' | 'email'>): string => {
+  if (manager.firstName || manager.lastName) {
+    return `${manager.firstName || ''} ${manager.lastName || ''}`.trim();
+  }
+  if (manager.name) return manager.name;
+  return manager.email || 'Unknown Manager';
+};
+
 
 const InvitationsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -1320,8 +1364,12 @@ const InvitationsPage: React.FC = () => {
   const [selectedRoles, setSelectedRoles] = useState<ParticipantRole[]>([]);
   const [selectedDelegations, setSelectedDelegations] = useState<string[]>([]);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
-  const [audienceMode, setAudienceMode] = useState<'role' | 'individual' | 'delegation'>('role');
+  const [selectedManagerIds, setSelectedManagerIds] = useState<string[]>([]);
+  const [invitedManagerEmails, setInvitedManagerEmails] = useState<string[]>([]);
+  const [newManagerEmailInput, setNewManagerEmailInput] = useState('');
+  const [audienceMode, setAudienceMode] = useState<'role' | 'individual' | 'delegation' | 'manager'>('role');
   const [participantSearchTerm, setParticipantSearchTerm] = useState('');
+  const [managerSearchTerm, setManagerSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [rsvpDeadline, setRsvpDeadline] = useState('');
   const [customMessage, setCustomMessage] = useState('');
@@ -1343,7 +1391,7 @@ const InvitationsPage: React.FC = () => {
   const loadParticipantsForInvitations = async () => {
     setIsParticipantsLoading(true);
     try {
-      const participantData = await getAllParticipantsForInvitations();
+      const participantData = await getParticipants();
       setApiParticipants(Array.isArray(participantData) ? participantData : []);
     } catch (error) {
       console.error('Failed to load participants for invitations:', error);
@@ -1359,8 +1407,8 @@ const InvitationsPage: React.FC = () => {
       const [campaignData, eventData, participantData, delegationData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
-        getAllParticipantsForInvitations().catch(() => []),
-        getAllDelegations().catch(() => [])
+        getParticipants().catch(() => []),
+        getAllDelegations().catch(() => []),
       ]);
       setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
       setApiEvents(Array.isArray(eventData) ? eventData : []);
@@ -1385,27 +1433,16 @@ const InvitationsPage: React.FC = () => {
     return eventStore.getAll();
   }, [apiEvents, refreshKey]);
 
+  // Individual participant picker uses only GET /admin/participants — no registrations or local store merge.
   const participants = useMemo(() => {
-    const merged = new Map<string, EMSParticipant>();
-
-    for (const participant of participantStore.getAll()) {
-      const key = participant.id || participant.email.toLowerCase();
-      if (key) merged.set(key, participant);
-    }
-
-    for (const participant of apiParticipants) {
-      const key = participant.id || participant.email.toLowerCase();
-      if (!key) continue;
-      const existing = merged.get(key);
-      merged.set(key, existing ? { ...existing, ...participant } : participant);
-    }
-
-    return Array.from(merged.values()).sort((a, b) => {
+    return [...apiParticipants].sort((a, b) => {
       const nameA = `${a.firstName} ${a.lastName}`.trim().toLowerCase();
       const nameB = `${b.firstName} ${b.lastName}`.trim().toLowerCase();
       return nameA.localeCompare(nameB);
     });
-  }, [apiParticipants, refreshKey]);
+  }, [apiParticipants]);
+
+  const managers = MOCK_MANAGERS;
 
   const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
 
@@ -1523,6 +1560,50 @@ const InvitationsPage: React.FC = () => {
     return targets;
   };
 
+  const resolveManagerTargetsFromSelection = (): ManagerInvitationTarget[] => {
+    if (audienceMode !== 'manager') return [];
+
+    const targets: ManagerInvitationTarget[] = [];
+    const seenKeys = new Set<string>();
+
+    for (const managerId of selectedManagerIds) {
+      const manager = managers.find(m => m.id === managerId);
+      if (!manager) continue;
+
+      const key = manager.email.toLowerCase();
+      if (seenKeys.has(key)) continue;
+
+      seenKeys.add(key);
+      targets.push({
+        managerId: manager.id,
+        managerEmail: manager.email,
+        delegationId: manager.id,
+        delegationName: manager.organization || manager.country || 'Manager',
+      });
+    }
+
+    for (const email of invitedManagerEmails) {
+      const normalized = email.toLowerCase().trim();
+      if (!normalized || seenKeys.has(normalized)) continue;
+
+      seenKeys.add(normalized);
+      targets.push({
+        managerId: `email:${normalized}`,
+        managerEmail: normalized,
+        delegationId: `email:${normalized}`,
+        delegationName: 'Manager',
+      });
+    }
+
+    return targets;
+  };
+
+  const resolveAllManagerTargets = (): ManagerInvitationTarget[] => {
+    if (audienceMode === 'manager') return resolveManagerTargetsFromSelection();
+    if (audienceMode === 'delegation') return resolveManagerTargetsFromDelegations();
+    return [];
+  };
+
   const resolveManagerTargetsForCampaign = (campaign: any): ManagerInvitationTarget[] => {
     const delegationIds: string[] = Array.isArray(campaign?.targetDelegationIds)
       ? campaign.targetDelegationIds
@@ -1553,7 +1634,16 @@ const InvitationsPage: React.FC = () => {
       for (const managerId of campaign.targetManagerIds) {
         if (!managerId || seenManagerIds.has(managerId)) continue;
         seenManagerIds.add(managerId);
-        targets.push({ managerId, delegationId: managerId });
+
+        const manager = managers.find(m => m.id === managerId);
+        const managerEmail = manager?.email || (managerId.startsWith('email:') ? managerId.slice(6) : undefined);
+
+        targets.push({
+          managerId,
+          managerEmail,
+          delegationId: managerId,
+          delegationName: manager ? (manager.organization || manager.country || 'Manager') : 'Manager',
+        });
       }
     }
 
@@ -1596,20 +1686,49 @@ const InvitationsPage: React.FC = () => {
         : [];
     }
 
-    return participants.filter(p =>
-      selectedRoles.length === 0 || selectedRoles.includes(p.role)
-    );
+    if (selectedRoles.length === 0) return [];
+
+    return participants.filter(p => selectedRoles.includes(p.role));
   };
 
   const hasValidAudience = (): boolean => {
     if (audienceMode === 'individual') {
       return selectedParticipantIds.length > 0;
     }
+    if (audienceMode === 'role') {
+      return selectedRoles.length > 0 && getFilteredAudience().length > 0;
+    }
+    if (audienceMode === 'manager') {
+      return resolveManagerTargetsFromSelection().length > 0;
+    }
     if (audienceMode === 'delegation') {
       return getFilteredAudience().length > 0 || resolveManagerTargetsFromDelegations().length > 0;
     }
     return getFilteredAudience().length > 0;
   };
+
+  const getCampaignTargetRoles = (): string[] | undefined => {
+    if (audienceMode === 'role' && selectedRoles.length > 0) {
+      return selectedRoles;
+    }
+    if (audienceMode === 'individual' && selectedParticipantIds.length > 0) {
+      return selectedParticipantIds;
+    }
+    return undefined;
+  };
+
+  const filteredManagersForSelection = managers.filter(manager => {
+    const searchLower = managerSearchTerm.toLowerCase().trim();
+    if (!searchLower) return true;
+
+    const fullName = getManagerDisplayName(manager).toLowerCase();
+    return (
+      fullName.includes(searchLower) ||
+      manager.email.toLowerCase().includes(searchLower) ||
+      (manager.country || '').toLowerCase().includes(searchLower) ||
+      (manager.organization || '').toLowerCase().includes(searchLower)
+    );
+  });
 
   const filteredParticipantsForSelection = participants.filter(p => {
     const searchLower = participantSearchTerm.toLowerCase().trim();
@@ -1649,6 +1768,45 @@ const InvitationsPage: React.FC = () => {
     );
   };
 
+  const toggleManager = (managerId: string) => {
+    setSelectedManagerIds(prev =>
+      prev.includes(managerId)
+        ? prev.filter(id => id !== managerId)
+        : [...prev, managerId]
+    );
+  };
+
+  const addManagerEmailInvite = () => {
+    const email = newManagerEmailInput.trim().toLowerCase();
+    if (!email) return;
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({ title: 'Invalid email', description: 'Please enter a valid manager email address', variant: 'destructive' });
+      return;
+    }
+
+    const existingManager = managers.find(m => m.email.toLowerCase() === email);
+    if (existingManager) {
+      if (!selectedManagerIds.includes(existingManager.id)) {
+        setSelectedManagerIds(prev => [...prev, existingManager.id]);
+      }
+      setNewManagerEmailInput('');
+      return;
+    }
+
+    if (invitedManagerEmails.includes(email)) {
+      toast({ title: 'Already added', description: 'This email is already in your manager invite list' });
+      return;
+    }
+
+    setInvitedManagerEmails(prev => [...prev, email]);
+    setNewManagerEmailInput('');
+  };
+
+  const removeManagerEmailInvite = (email: string) => {
+    setInvitedManagerEmails(prev => prev.filter(item => item !== email));
+  };
+
   const resetWizard = () => {
     // If opened from inside an event page, keep that event pre-selected
     setWizardStep(1);
@@ -1657,8 +1815,12 @@ const InvitationsPage: React.FC = () => {
     setSelectedRoles([]);
     setSelectedDelegations([]);
     setSelectedParticipantIds([]);
+    setSelectedManagerIds([]);
+    setInvitedManagerEmails([]);
+    setNewManagerEmailInput('');
     setAudienceMode('role');
     setParticipantSearchTerm('');
+    setManagerSearchTerm('');
     setSelectedTemplateId('');
     setRsvpDeadline('');
     setCustomMessage('');
@@ -1733,7 +1895,7 @@ const InvitationsPage: React.FC = () => {
     }
 
     const audience = getFilteredAudience();
-    const managerTargets = resolveManagerTargetsFromDelegations();
+    const managerTargets = resolveAllManagerTargets();
     if (!hasValidAudience()) {
       toast({ title: 'No audience', description: 'No participants or managers match your criteria', variant: 'destructive' });
       return;
@@ -1754,6 +1916,7 @@ const InvitationsPage: React.FC = () => {
           : undefined;
 
       const tempCampaignId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const campaignTargetRoles = getCampaignTargetRoles();
       const { createdInvitations } = createLocalCampaignInvitations({
         campaignId: tempCampaignId,
         campaignName,
@@ -1762,11 +1925,13 @@ const InvitationsPage: React.FC = () => {
         selectedTemplate,
         audience,
         rsvpDeadline,
-        selectedRoles,
+        selectedRoles: (campaignTargetRoles ?? []) as ParticipantRole[],
         targetManagerIds: computedTargetManagerIds,
         targetDelegationIds: computedTargetDelegationIds,
         managerTargets: managerTargets.length > 0 ? managerTargets : undefined,
       });
+
+      const participantIds = audience.map(p => p.id);
 
       const backendCampaign = await campaignApi.createCampaign({
         name: campaignName,
@@ -1776,8 +1941,11 @@ const InvitationsPage: React.FC = () => {
 
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
-        audienceIds: audience.map(p => p.id),
-        roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
+        audienceIds: participantIds,
+        targetParticipantIds: participantIds,
+        audienceSize: participantIds.length,
+        roleFilters: campaignTargetRoles,
+        targetRoles: campaignTargetRoles,
         targetDelegationIds: computedTargetDelegationIds,
         targetManagerIds: computedTargetManagerIds,
       }).catch((error) => {
@@ -1884,6 +2052,38 @@ const InvitationsPage: React.FC = () => {
     setIsActionLoading(true);
     try {
       const created = ensureLocalInvitationsForCampaign(campaignId);
+
+      let campaign = campaignStore.getById(campaignId) as any;
+      if (!campaign) {
+        campaign = apiCampaigns.find(c => c.id === campaignId);
+      }
+
+      const participantIds: string[] = Array.isArray(campaign?.audienceIds)
+        ? campaign.audienceIds
+        : Array.isArray(campaign?.targetParticipantIds)
+          ? campaign.targetParticipantIds
+          : created
+            .filter(inv => inv.recipientType !== 'manager' && inv.participantId)
+            .map(inv => inv.participantId as string);
+
+      const campaignTargetRoles = Array.isArray(campaign?.targetRoles) && campaign.targetRoles.length > 0
+        ? campaign.targetRoles
+        : participantIds.length > 0
+          ? participantIds
+          : undefined;
+
+      if (participantIds.length > 0 || campaignTargetRoles?.length) {
+        await campaignApi.updateCampaign(campaignId, {
+          audienceIds: participantIds,
+          targetParticipantIds: participantIds,
+          audienceSize: participantIds.length,
+          roleFilters: campaignTargetRoles,
+          targetRoles: campaignTargetRoles,
+        }).catch((error) => {
+          console.warn('Backend campaign audience sync failed before send:', error);
+        });
+      }
+
       const sent = invitationStore.sendCampaign(campaignId);
 
       campaignStore.update(campaignId, { status: 'Sent', sentAt: new Date().toISOString() } as any);
@@ -1945,6 +2145,25 @@ const InvitationsPage: React.FC = () => {
   const getParticipantName = (participantId: string) => {
     const p = participants.find(p => p.id === participantId);
     return p ? `${p.firstName} ${p.lastName}` : 'Unknown';
+  };
+
+  const getInvitationRecipientLabel = (inv: EMSInvitation) => {
+    if (inv.recipientType === 'manager' || inv.managerId) {
+      const manager = managers.find(m => m.id === inv.managerId);
+      if (manager) return getManagerDisplayName(manager);
+      if (inv.managerEmail) return inv.managerEmail;
+      if (inv.notes) return inv.notes;
+      return 'Manager';
+    }
+    return getParticipantName(inv.participantId);
+  };
+
+  const getInvitationRecipientEmail = (inv: EMSInvitation) => {
+    if (inv.recipientType === 'manager' || inv.managerId) {
+      return inv.managerEmail || managers.find(m => m.id === inv.managerId)?.email || '-';
+    }
+    const participant = participants.find(p => p.id === inv.participantId);
+    return participant?.email || inv.participantEmail || '-';
   };
 
   const renderWizardStep = () => {
@@ -2016,191 +2235,337 @@ const InvitationsPage: React.FC = () => {
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_2_select_audience')}</h3>
-            {isLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={audienceMode === 'role' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setAudienceMode('role');
+                  setSelectedDelegations([]);
+                  setSelectedParticipantIds([]);
+                  setSelectedManagerIds([]);
+                  setInvitedManagerEmails([]);
+                }}
+              >
+                Filter by Role
+              </Button>
+              <Button
+                variant={audienceMode === 'delegation' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setAudienceMode('delegation');
+                  setSelectedRoles([]);
+                  setSelectedParticipantIds([]);
+                  setSelectedManagerIds([]);
+                  setInvitedManagerEmails([]);
+                }}
+              >
+                {t('invitations.filter_by_delegation')}
+              </Button>
+              <Button
+                variant={audienceMode === 'individual' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setAudienceMode('individual');
+                  setSelectedRoles([]);
+                  setSelectedDelegations([]);
+                  setSelectedManagerIds([]);
+                  setInvitedManagerEmails([]);
+                }}
+              >
+                {t('invitations.select_individuals')}
+              </Button>
+              <Button
+                variant={audienceMode === 'manager' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setAudienceMode('manager');
+                  setSelectedRoles([]);
+                  setSelectedDelegations([]);
+                  setSelectedParticipantIds([]);
+                }}
+              >
+                <UserCog className="h-4 w-4 mr-1" />
+                Select Manager
+              </Button>
+            </div>
+
+            {audienceMode === 'role' && (
+              participants.length === 0 && !isLoading ? (
+                <Card className="border-dashed">
+                  <CardContent className="p-6 text-center">
+                    <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
+                    <Button variant="outline" onClick={() => navigate('/admin/participants')}>
+                      {t('invitations.add_participants_first')}
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-2">
+                  <Label>{t('invitations.filter_by_role_label')}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {ROLES.map(role => (
+                      <Badge
+                        key={role}
+                        variant={selectedRoles.includes(role) ? 'default' : 'outline'}
+                        className="cursor-pointer"
+                        onClick={() => toggleRole(role)}
+                      >
+                        {role}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )
+            )}
+
+            {audienceMode === 'delegation' && (
+              <div className="grid gap-2">
+                <Label>{t('invitations.filter_by_delegation_label')}</Label>
+                <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
+                  {approvedDelegations
+                    .filter(del => del.country || del.name)
+                    .sort((a, b) => (a.country || a.name || '').localeCompare(b.country || b.name || ''))
+                    .map(del => {
+                      const delId = del.id || del._id;
+                      const label = del.country || del.name;
+                      return (
+                        <Badge
+                          key={delId}
+                          variant={selectedDelegations.includes(delId) ? 'default' : 'outline'}
+                          className="cursor-pointer text-md"
+                          onClick={() => toggleDelegation(delId)}
+                        >
+                          {label}
+                        </Badge>
+                      );
+                    })}
+                </div>
+                {approvedDelegations.length === 0 && (
+                  <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
+                )}
               </div>
-            ) : participants.length === 0 ? (
-              <Card className="border-dashed">
-                <CardContent className="p-6 text-center">
-                  <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
-                  <Button variant="outline" onClick={() => navigate('/admin/participants')}>
-                    {t('invitations.add_participants_first')}
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <>
-                {/* Selection Mode Toggle */}
-                <div className="flex gap-2">
-                  <Button
-                    variant={audienceMode === 'role' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setAudienceMode('role');
-                      setSelectedDelegations([]);
-                      setSelectedParticipantIds([]);
-                    }}
-                  >
-                    Filter by Role
-                  </Button>
-                  <Button
-                    variant={audienceMode === 'delegation' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setAudienceMode('delegation');
-                      setSelectedRoles([]);
-                      setSelectedParticipantIds([]);
-                    }}
-                  >
-                    {t('invitations.filter_by_delegation')}
-                  </Button>
-                  <Button
-                    variant={audienceMode === 'individual' ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => {
-                      setAudienceMode('individual');
-                      setSelectedRoles([]);
-                      setSelectedDelegations([]);
-                    }}
-                  >
-                    {t('invitations.select_individuals')}
-                  </Button>
+            )}
+
+            {audienceMode === 'individual' && (
+              participants.length === 0 && !isParticipantsLoading ? (
+                <Card className="border-dashed">
+                  <CardContent className="p-6 text-center">
+                    <p className="text-muted-foreground mb-2">{t('invitations.no_participants_in_system')}</p>
+                    <Button variant="outline" onClick={() => navigate('/admin/participants')}>
+                      {t('invitations.add_participants_first')}
+                    </Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm text-muted-foreground">
+                      {participants.length} participant(s) available
+                      {selectedParticipantIds.length > 0 && ` · ${selectedParticipantIds.length} selected`}
+                    </p>
+                    {isParticipantsLoading && (
+                      <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Refreshing...
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder={t('invitations.search_participants_placeholder')}
+                      value={participantSearchTerm}
+                      onChange={(e) => setParticipantSearchTerm(e.target.value)}
+                      className="pl-10"
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-y-auto border rounded-lg">
+                    {isParticipantsLoading && participants.length === 0 ? (
+                      <div className="text-center py-8">
+                        <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin text-primary" />
+                        <p className="text-sm text-muted-foreground">Loading participants...</p>
+                      </div>
+                    ) : filteredParticipantsForSelection.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        {t('invitations.no_participants_found')}
+                      </p>
+                    ) : (
+                      filteredParticipantsForSelection.map(p => (
+                        <div
+                          key={p.id}
+                          className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 border-b last:border-b-0 ${selectedParticipantIds.includes(p.id) ? 'bg-primary/5' : ''
+                            }`}
+                          onClick={() => toggleParticipant(p.id)}
+                        >
+                          <Checkbox
+                            checked={selectedParticipantIds.includes(p.id)}
+                            onCheckedChange={() => toggleParticipant(p.id)}
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-sm truncate">
+                              {p.firstName} {p.lastName}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {p.email}
+                            </p>
+                          </div>
+                          <Badge variant="outline" className="text-xs">
+                            {p.role}
+                          </Badge>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  {selectedParticipantIds.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedParticipantIds([])}
+                    >
+                      {t('invitations.clear_selection')}
+                    </Button>
+                  )}
+                </div>
+              )
+            )}
+
+            {audienceMode === 'manager' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    {managers.length} manager(s) available
+                    {selectedManagerIds.length > 0 && ` · ${selectedManagerIds.length} selected`}
+                  </p>
                 </div>
 
-                {audienceMode === 'role' && (
-                  <div className="grid gap-2">
-                    <Label>{t('invitations.filter_by_role_label')}</Label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search managers by name, email, or organization..."
+                    value={managerSearchTerm}
+                    onChange={(e) => setManagerSearchTerm(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+
+                <div className="max-h-52 overflow-y-auto border rounded-lg">
+                  {filteredManagersForSelection.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      No managers found. Invite a new manager by email below.
+                    </p>
+                  ) : (
+                    filteredManagersForSelection.map(manager => (
+                      <div
+                        key={manager.id}
+                        className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 border-b last:border-b-0 ${selectedManagerIds.includes(manager.id) ? 'bg-primary/5' : ''
+                          }`}
+                        onClick={() => toggleManager(manager.id)}
+                      >
+                        <Checkbox
+                          checked={selectedManagerIds.includes(manager.id)}
+                          onCheckedChange={() => toggleManager(manager.id)}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">
+                            {getManagerDisplayName(manager)}
+                          </p>
+                          <p className="text-xs text-muted-foreground truncate">
+                            {manager.email}
+                          </p>
+                        </div>
+                        {(manager.organization || manager.country) && (
+                          <Badge variant="outline" className="text-xs shrink-0">
+                            {manager.organization || manager.country}
+                          </Badge>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {selectedManagerIds.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setSelectedManagerIds([])}
+                  >
+                    Clear manager selection
+                  </Button>
+                )}
+
+                <div className="border-t pt-4 space-y-3">
+                  <Label>Invite a new manager by email</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Enter an email address to send an invitation to a manager who is not yet in the system.
+                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      type="email"
+                      placeholder="manager@example.com"
+                      value={newManagerEmailInput}
+                      onChange={(e) => setNewManagerEmailInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addManagerEmailInvite();
+                        }
+                      }}
+                    />
+                    <Button type="button" variant="outline" onClick={addManagerEmailInvite}>
+                      Add Email
+                    </Button>
+                  </div>
+                  {invitedManagerEmails.length > 0 && (
                     <div className="flex flex-wrap gap-2">
-                      {ROLES.map(role => (
-                        <Badge
-                          key={role}
-                          variant={selectedRoles.includes(role) ? 'default' : 'outline'}
-                          className="cursor-pointer"
-                          onClick={() => toggleRole(role)}
-                        >
-                          {role}
+                      {invitedManagerEmails.map(email => (
+                        <Badge key={email} variant="secondary" className="gap-1 pr-1">
+                          {email}
+                          <button
+                            type="button"
+                            className="ml-1 rounded-full hover:bg-muted p-0.5"
+                            onClick={() => removeManagerEmailInvite(email)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </Badge>
                       ))}
                     </div>
-                  </div>
-                )}
-                {audienceMode === 'delegation' && (
-                  <div className="grid gap-2">
-                    <Label>{t('invitations.filter_by_delegation_label')}</Label>
-                    <div className="flex flex-wrap gap-2 max-h-60 overflow-y-auto p-1">
-                      {approvedDelegations
-                        .filter(del => del.country || del.name)
-                        .sort((a, b) => (a.country || a.name || '').localeCompare(b.country || b.name || ''))
-                        .map(del => {
-                          const delId = del.id || del._id;
-                          const label = del.country || del.name;
-                          return (
-                            <Badge
-                              key={delId}
-                              variant={selectedDelegations.includes(delId) ? 'default' : 'outline'}
-                              className="cursor-pointer text-md"
-                              onClick={() => toggleDelegation(delId)}
-                            >
-                              {label}
-                            </Badge>
-                          );
-                        })}
-                    </div>
-                    {approvedDelegations.length === 0 && (
-                      <p className="text-sm text-muted-foreground">{t('invitations.no_delegations_found')}</p>
-                    )}
-                  </div>
-                )}
-                {audienceMode === 'individual' && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm text-muted-foreground">
-                        {participants.length} participant(s) available
-                        {selectedParticipantIds.length > 0 && ` · ${selectedParticipantIds.length} selected`}
-                      </p>
-                      {isParticipantsLoading && (
-                        <span className="text-xs text-muted-foreground inline-flex items-center gap-1">
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                          Refreshing...
-                        </span>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder={t('invitations.search_participants_placeholder')}
-                        value={participantSearchTerm}
-                        onChange={(e) => setParticipantSearchTerm(e.target.value)}
-                        className="pl-10"
-                      />
-                    </div>
-                    <div className="max-h-60 overflow-y-auto border rounded-lg">
-                      {isParticipantsLoading && participants.length === 0 ? (
-                        <div className="text-center py-8">
-                          <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin text-primary" />
-                          <p className="text-sm text-muted-foreground">Loading participants...</p>
-                        </div>
-                      ) : filteredParticipantsForSelection.length === 0 ? (
-                        <p className="text-sm text-muted-foreground text-center py-4">
-                          {t('invitations.no_participants_found')}
-                        </p>
-                      ) : (
-                        filteredParticipantsForSelection.map(p => (
-                          <div
-                            key={p.id}
-                            className={`flex items-center gap-3 p-3 cursor-pointer hover:bg-muted/50 border-b last:border-b-0 ${selectedParticipantIds.includes(p.id) ? 'bg-primary/5' : ''
-                              }`}
-                            onClick={() => toggleParticipant(p.id)}
-                          >
-                            <Checkbox
-                              checked={selectedParticipantIds.includes(p.id)}
-                              onCheckedChange={() => toggleParticipant(p.id)}
-                            />
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm truncate">
-                                {p.firstName} {p.lastName}
-                              </p>
-                              <p className="text-xs text-muted-foreground truncate">
-                                {p.email}
-                              </p>
-                            </div>
-                            <Badge variant="outline" className="text-xs">
-                              {p.role}
-                            </Badge>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    {selectedParticipantIds.length > 0 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setSelectedParticipantIds([])}
-                      >
-                        {t('invitations.clear_selection')}
-                      </Button>
-                    )}
-                  </div>
-                )}
+                  )}
+                </div>
+              </div>
+            )}
 
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-sm text-muted-foreground">{t('invitations.selected_audience')}</p>
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm text-muted-foreground">{t('invitations.selected_audience')}</p>
+                {audienceMode === 'manager' ? (
+                  <>
                     <p className="text-2xl font-bold">
-                      {audienceMode === 'individual'
-                        ? selectedParticipantIds.length
-                        : t('common.participants_count', { count: getFilteredAudience().length })}
+                      {resolveManagerTargetsFromSelection().length}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      manager invitation(s) selected
+                    </p>
+                  </>
+                ) : audienceMode === 'individual' ? (
+                  <p className="text-2xl font-bold">
+                    {selectedParticipantIds.length}
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-2xl font-bold">
+                      {t('common.participants_count', { count: getFilteredAudience().length })}
                     </p>
                     {audienceMode === 'delegation' && resolveManagerTargetsFromDelegations().length > 0 && (
                       <p className="text-sm text-muted-foreground mt-2">
                         {resolveManagerTargetsFromDelegations().length} manager invitation(s) will be sent
                       </p>
                     )}
-                  </CardContent>
-                </Card>
-              </>
-            )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </div>
         );
       case 3:
@@ -2246,7 +2611,6 @@ const InvitationsPage: React.FC = () => {
                                 )}
                               </Badge>
                             </div>
-                            <p className="text-sm text-muted-foreground">{template.subject}</p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Button
@@ -2285,7 +2649,7 @@ const InvitationsPage: React.FC = () => {
         const selectedEvent = events.find(e => e.id === selectedEventId);
         const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
         const audience = getFilteredAudience();
-        const managerTargets = resolveManagerTargetsFromDelegations();
+        const managerTargets = resolveAllManagerTargets();
 
         return (
           <div className="space-y-4">
@@ -2300,14 +2664,21 @@ const InvitationsPage: React.FC = () => {
                   <span className="text-muted-foreground">{t('common.campaign')}:</span>
                   <span>{campaignName || '-'}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('common.audience')}:</span>
-                  <span>{t('common.participants_count', { count: audience.length })}</span>
-                </div>
-                {managerTargets.length > 0 && (
+                {audienceMode === 'manager' ? (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Managers:</span>
-                    <span>{managerTargets.length} delegation manager(s)</span>
+                    <span>{managerTargets.length} manager(s)</span>
+                  </div>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">{t('common.audience')}:</span>
+                    <span>{t('common.participants_count', { count: audience.length })}</span>
+                  </div>
+                )}
+                {managerTargets.length > 0 && audienceMode !== 'manager' && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Managers:</span>
+                    <span>{managerTargets.length} manager invitation(s)</span>
                   </div>
                 )}
                 <div className="flex justify-between">
@@ -2321,9 +2692,11 @@ const InvitationsPage: React.FC = () => {
               </CardContent>
             </Card>
             <p className="text-sm text-muted-foreground">
-              {audience.length === 1
-                ? t('invitations.review_create_desc_singular')
-                : t('invitations.review_create_desc_plural', { count: audience.length })}
+              {audienceMode === 'manager'
+                ? `${managerTargets.length} manager invitation(s) will be created.`
+                : audience.length === 1
+                  ? t('invitations.review_create_desc_singular')
+                  : t('invitations.review_create_desc_plural', { count: audience.length })}
               <br />
               {t('invitations.review_create_subdesc')}
             </p>
@@ -2407,13 +2780,12 @@ const InvitationsPage: React.FC = () => {
             </TableHeader>
             <TableBody>
               {campInvitations.map((inv) => {
-                const participant = participants.find(p => p.id === inv.participantId);
                 return (
                   <TableRow key={inv.id}>
                     <TableCell>
                       <div>
-                        <p className="font-medium">{participant ? `${participant.firstName} ${participant.lastName}` : 'Unknown'}</p>
-                        <p className="text-sm text-muted-foreground">{participant?.email}</p>
+                        <p className="font-medium">{getInvitationRecipientLabel(inv)}</p>
+                        <p className="text-sm text-muted-foreground">{getInvitationRecipientEmail(inv)}</p>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -2641,7 +3013,7 @@ const InvitationsPage: React.FC = () => {
                   {invitations.slice(0, 50).map((inv) => (
                     <TableRow key={inv.id}>
                       <TableCell>
-                        <p className="font-medium">{getParticipantName(inv.participantId)}</p>
+                        <p className="font-medium">{getInvitationRecipientLabel(inv)}</p>
                       </TableCell>
                       <TableCell className="text-sm">{getEventName(inv.eventId)}</TableCell>
                       <TableCell>
@@ -2689,7 +3061,6 @@ const InvitationsPage: React.FC = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-sm text-muted-foreground mb-2">{template.subject}</p>
                   <div className="flex flex-wrap gap-1">
                     {template.variables.slice(0, 3).map((v, i) => (
                       <Badge key={i} variant="secondary" className="text-xs">{`{{${v}}}`}</Badge>

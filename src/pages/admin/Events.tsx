@@ -76,10 +76,7 @@ const EventsPage: React.FC = () => {
   };
 
   const handleCreate = async () => {
-    if (!formData.name || !formData.startDate || !formData.endDate || !formData.city) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
+    if (!validateForm()) return;
 
     const mapCategoryGroup = (catId: string) => {
       const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
@@ -158,6 +155,7 @@ const EventsPage: React.FC = () => {
 
   const handleUpdate = async () => {
     if (!editingEvent) return;
+    if (!validateForm()) return;
 
     const mapCategoryGroup = (catId: string) => {
       const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
@@ -264,68 +262,111 @@ const EventsPage: React.FC = () => {
     }));
   };
 
+  const RequiredLabel = ({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) => (
+    <Label htmlFor={htmlFor}>
+      {children}
+      <span className="text-destructive ms-1">*</span>
+    </Label>
+  );
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const validateForm = (): boolean => {
+    if (!formData.name.trim() || !formData.theme.trim() || !formData.startDate || !formData.endDate || !formData.city.trim() || !formData.venues.trim() || !formData.eventType || !formData.status) {
+      toast.error('Please fill in all required fields');
+      return false;
+    }
+
+    if ((formData.eventType === 'team-based' || formData.eventType === 'hybrid') && formData.selectedSports.length === 0) {
+      toast.error('Please select at least one sport category');
+      return false;
+    }
+
+    if (formData.endDate < formData.startDate) {
+      toast.error('End date cannot be before start date');
+      return false;
+    }
+
+    if (formData.startDate < todayStr) {
+      toast.error('Start date cannot be in the past');
+      return false;
+    }
+
+    return true;
+  };
+
   const formFieldsJsx = (
     <div className="grid gap-4 py-4">
       <div className="grid gap-2">
-        <Label htmlFor="name">{t('events.name_label')}</Label>
+        <RequiredLabel htmlFor="name">{t('events.name_label')}</RequiredLabel>
         <Input
           id="name"
           placeholder={t('events.name_label')}
           value={formData.name}
           onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+          required
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="theme">{t('events.theme_label')}</Label>
+        <RequiredLabel htmlFor="theme">{t('events.theme_label')}</RequiredLabel>
         <Input
           id="theme"
           placeholder={t('events.theme_label')}
           value={formData.theme}
           onChange={(e) => setFormData(prev => ({ ...prev, theme: e.target.value }))}
+          required
         />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
-          <Label htmlFor="startDate">{t('events.start_label')}</Label>
+          <RequiredLabel htmlFor="startDate">{t('events.start_label')}</RequiredLabel>
           <Input
             id="startDate"
             type="date"
             value={formData.startDate}
+            min={todayStr}
             onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))}
+            onPaste={(e) => e.preventDefault()}
+            required
           />
         </div>
         <div className="grid gap-2">
-          <Label htmlFor="endDate">{t('events.end_label')}</Label>
+          <RequiredLabel htmlFor="endDate">{t('events.end_label')}</RequiredLabel>
           <Input
             id="endDate"
             type="date"
             value={formData.endDate}
+            min={formData.startDate || todayStr}
             onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))}
+            onPaste={(e) => e.preventDefault()}
+            required
           />
         </div>
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="city">{t('events.city_label')}</Label>
+        <RequiredLabel htmlFor="city">{t('events.city_label')}</RequiredLabel>
         <Input
           id="city"
           placeholder={t('events.city_label')}
           value={formData.city}
           onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
+          required
         />
       </div>
       <div className="grid gap-2">
-        <Label htmlFor="venues">{t('events.venues_label')}</Label>
+        <RequiredLabel htmlFor="venues">{t('events.venues_label')}</RequiredLabel>
         <Textarea
           id="venues"
           placeholder={t('events.venues_placeholder')}
           value={formData.venues}
           onChange={(e) => setFormData(prev => ({ ...prev, venues: e.target.value }))}
+          required
         />
       </div>
 
       {/* Event Type */}
       <div className="grid gap-2">
-        <Label>{t('events.type')}</Label>
+        <RequiredLabel>{t('events.type')}</RequiredLabel>
         <Select
           value={formData.eventType}
           onValueChange={(value: 'individual' | 'team-based' | 'hybrid') => setFormData(prev => ({ ...prev, eventType: value }))}
@@ -357,7 +398,7 @@ const EventsPage: React.FC = () => {
 
           {/* Sport Categories */}
           <div className="grid gap-2">
-            <Label>{t('events.sport_cats')}</Label>
+            <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
             <p className="text-sm text-muted-foreground mb-2">{t('events.select_sports')}</p>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
               {SPORT_CATEGORIES.map(sport => (
@@ -378,7 +419,7 @@ const EventsPage: React.FC = () => {
       )}
 
       <div className="grid gap-2">
-        <Label htmlFor="status">{t('events.status_label')}</Label>
+        <RequiredLabel htmlFor="status">{t('events.status_label')}</RequiredLabel>
         <Select value={formData.status} onValueChange={(value: EMSEvent['status']) => setFormData(prev => ({ ...prev, status: value }))}>
           <SelectTrigger>
             <SelectValue placeholder={t('events.status_label')} />

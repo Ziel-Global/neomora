@@ -39,6 +39,7 @@ import ProjectsPage from "@/pages/admin/Projects";
 import SubAdminsPage from "@/pages/admin/SubAdmins";
 import AdminDelegationsPage from "@/pages/admin/Delegations";
 import EventParticipantsPage from "@/pages/admin/EventParticipants";
+import ManagerListPage from "@/pages/admin/ManagerList";
 
 // Auth Pages
 import AdminLogin from "@/pages/auth/AdminLogin";
@@ -163,6 +164,7 @@ const App = () => (
                 <Route path="/admin" element={<EventSelector />} />
                 <Route path="/admin/participants" element={<ParticipantsPage />} />
                 <Route path="/admin/participants/:id" element={<ParticipantProfile />} />
+                <Route path="/admin/managers" element={<ManagerListPage />} />
                 <Route path="/admin/subadmins" element={<SubAdminsPage />} />
                 <Route path="/admin/notifications" element={<NotificationsPage />} />
                 <Route path="/admin/audit" element={<AuditLogPage />} />

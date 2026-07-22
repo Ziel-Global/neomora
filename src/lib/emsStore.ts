@@ -754,16 +754,20 @@ export const invitationStore = {
     rsvpDeadline: string,
   ): EMSInvitation[] => {
     const existing = invitationStore.getByCampaign(campaignId);
-    const existingManagerIds = new Set(
+    const existingManagerKeys = new Set(
       existing
-        .filter(inv => inv.recipientType === 'manager' && inv.managerId)
-        .map(inv => inv.managerId as string)
+        .filter(inv => inv.recipientType === 'manager')
+        .flatMap(inv => [
+          inv.managerId,
+          inv.managerEmail?.toLowerCase(),
+        ].filter(Boolean) as string[])
     );
 
     const created: EMSInvitation[] = [];
 
     for (const target of targets) {
-      if (existingManagerIds.has(target.managerId)) continue;
+      const emailKey = target.managerEmail?.toLowerCase();
+      if (existingManagerKeys.has(target.managerId) || (emailKey && existingManagerKeys.has(emailKey))) continue;
 
       const inv = invitationStore.create({
         eventId,

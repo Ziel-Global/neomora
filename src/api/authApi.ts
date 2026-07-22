@@ -7,8 +7,13 @@ export interface LoginResponse {
     email: string;
     name: string;
     role: string;
+    participantId?: string;
+    participant_id?: string;
+    participant?: { id?: string; _id?: string; [key: string]: unknown };
     [key: string]: unknown;
   };
+  participant?: { id?: string; _id?: string; email?: string; [key: string]: unknown };
+  [key: string]: unknown;
 }
 
 export interface TeamManagerRegisterRequest {
@@ -44,7 +49,18 @@ export const participantLogin = async (
   password: string
 ): Promise<LoginResponse> => {
   const { data } = await apiClient.post('/auth/participant/login', { email, password });
-  return data;
+  const token = data?.token || data?.accessToken || data?.access_token;
+  const user = data?.user || data?.profile || data;
+  const participant = data?.participant || user?.participant || null;
+
+  return {
+    ...data,
+    token,
+    user: participant && typeof participant === 'object'
+      ? { ...user, participant, participantId: participant.id || participant._id || user?.participantId }
+      : user,
+    participant,
+  };
 };
 
 export const teamManagerRegister = async (

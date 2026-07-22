@@ -2,7 +2,13 @@ import apiClient from './apiClient';
 import { EMSParticipant } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
 import { getRegistrations } from './registrationApi';
-
+import {
+    hasParticipantToken,
+    isEndpointBlocked,
+    markEndpointBlocked,
+    orderEndpoints,
+    setCachedEndpoint,
+} from './endpointCache';
 export interface ParticipantPayload {
   firstName: string;
   lastName: string;
@@ -154,4 +160,77 @@ export const updateParticipant = async (id: string, payload: Partial<Participant
 
 export const deleteParticipant = async (id: string): Promise<void> => {
   await apiClient.delete(`/admin/participants/${id}`);
+};
+
+export const getMyParticipantProfile = async (): Promise<EMSParticipant | null> => {
+  const endpoints = orderEndpoints('profileEndpoint', [
+    '/participant/me',
+    '/participants/me',
+    '/auth/me',
+  ]);
+
+  for (const endpoint of endpoints) {
+    if (isEndpointBlocked(endpoint)) continue;
+    try {
+      const { data } = await apiClient.get(endpoint);
+      const raw = data?.data || data?.participant || data?.user || data;
+
+      const recordId =
+        (typeof raw?.participantId === 'string' ? raw.participantId : undefined) ||
+        (typeof raw?.participant_id === 'string' ? raw.participant_id : undefined) ||
+        raw?.participant?.id ||
+        raw?.participant?._id ||
+        raw?.id ||
+        raw?._id;
+
+      const normalized = normalizeParticipant({ ...raw, id: recordId }, recordId);
+      if (normalized?.id) {
+        setCachedEndpoint('profileEndpoint', endpoint);
+        return normalized;
+      }
+    } catch (err: any) {
+      markEndpointBlocked(endpoint, err?.response?.status);
+    }
+  }
+
+  return null;
+};
+
+export const resolveParticipantIdentityIds = async (
+  session: { id?: string; participantId?: string; email?: string; teamMemberId?: string; [key: string]: unknown } | null,
+  options?: { allowNetwork?: boolean },
+): Promise<string[]> => {
+  const ids = new Set<string>();
+  if (!session) return [];
+
+  [session.id, session.participantId, session.teamMemberId, session._id, session.userId]
+    .filter(Boolean)
+    .forEach(id => ids.add(String(id)));
+
+  const nestedParticipant = session.participant;
+  if (nestedParticipant && typeof nestedParticipant === 'object') {
+    const record = nestedParticipant as Record<string, unknown>;
+    [record.id, record._id, record.participantId, record.participant_id]
+      .filter(Boolean)
+      .forEach(id => ids.add(String(id)));
+  }
+
+  if (options?.allowNetwork === false) {
+    return [...ids];
+  }
+
+  // Skip expensive network lookups when session already has a resolved participant id.
+  const hasResolvedRecordId = Boolean(session.participantId || session.id);
+  if (hasResolvedRecordId && hasParticipantToken()) {
+    return [...ids];
+  }
+
+  try {
+    const profile = await getMyParticipantProfile();
+    if (profile?.id) ids.add(String(profile.id));
+  } catch {
+    // ignore
+  }
+
+  return [...ids];
 };
