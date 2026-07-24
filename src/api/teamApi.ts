@@ -2,17 +2,28 @@ import apiClient from './apiClient';
 import { Team, TeamMember } from '@/lib/teamStore';
 
 export interface CreateTeamPayload {
-    delegationId?: string;
+    delegationId: string;
     eventId: string;
     name: string;
-    sportCategory: string;
     sportCategoryGroup: string;
     subCategory: string;
 }
 
 export const createTeam = async (payload: CreateTeamPayload): Promise<Team> => {
-    const { data } = await apiClient.post('/teams', payload);
-    return data;
+    const body = {
+        delegationId: payload.delegationId,
+        eventId: payload.eventId,
+        name: payload.name,
+        sportCategoryGroup: payload.sportCategoryGroup,
+        subCategory: payload.subCategory,
+    };
+
+    const { data } = await apiClient.post('/teams', body);
+    const result = data?.data || data?.team || data;
+    return {
+        ...result,
+        id: result?.id || result?._id,
+    } as Team;
 };
 
 export const getMyTeams = async (): Promise<Team[]> => {

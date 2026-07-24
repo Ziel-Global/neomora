@@ -83,12 +83,12 @@ const ManagerLogin: React.FC = () => {
           </form>
 
           <div className="mt-6 text-center space-y-3">
-            {/*<p className="text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Don't have a manager account?{' '}
               <Link to="/manager/register" className="text-primary hover:underline font-medium">
                 Register as Manager
               </Link>
-            </p>*/}
+            </p>
             <Link to="/" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
               <ArrowLeft className="h-4 w-4" />
               Back to Home

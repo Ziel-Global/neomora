@@ -1,332 +1,444 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES, TEAM_ROLES } from '@/lib/teamStore';
-import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, ChevronDown } from 'lucide-react';
+import { teamStore, teamMemberStore, Team, TEAM_ROLES } from '@/lib/teamStore';
+import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, Search, CheckCircle2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { getMyTeams, listTeamMembers } from '@/api/teamApi';
-import { createRegistration } from '@/api/registrationApi';
+import { Switch } from '@/components/ui/switch';
+import { getMyTeams, addTeamMember, addTeamMembersBulk, listTeamMembers } from '@/api/teamApi';
+import { getMyDelegations } from '@/api/delegationApi';
+import {
+  getMyRegistrations,
+  getPendingTeamRegistrations,
+  normalizeRegistrationParticipant,
+  removePendingTeamRegistrations,
+  RegisteredParticipantOption,
+} from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
-const COUNTRIES = [
-  'Saudi Arabia', 'United Arab Emirates', 'Egypt', 'Jordan', 'Kuwait',
-  'Qatar', 'Bahrain', 'Oman', 'Morocco', 'Tunisia', 'Algeria', 'Iraq',
-  'USA', 'UK', 'Germany', 'France', 'Japan', 'China', 'Brazil', 'Australia'
-];
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-interface MemberForm {
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone: string;
-  nationality: string;
-  passportNumber: string;
-  passportExpiry: string;
-  dateOfBirth: string;
-  gender: 'Male' | 'Female' | 'Other';
+interface Participant extends RegisteredParticipantOption {}
+
+interface MemberRow {
+  participantId: string;
+  participant: Participant | null;
   role: string;
-  emergencyContact: string;
-  emergencyPhone: string;
+  needsVisa: boolean;
+  needsAccommodation: boolean;
+  needsTransport: boolean;
+  originCity: string;
   dietaryRequirements: string;
   medicalConditions: string;
+  search: string;
+  dropdownOpen: boolean;
 }
 
-const emptyMember: MemberForm = {
-  firstName: '',
-  lastName: '',
-  email: '',
-  phone: '',
-  nationality: '',
-  passportNumber: '',
-  passportExpiry: '',
-  dateOfBirth: '',
-  gender: 'Male',
+const emptyRow = (): MemberRow => ({
+  participantId: '',
+  participant: null,
   role: '',
-  emergencyContact: '',
-  emergencyPhone: '',
+  needsVisa: false,
+  needsAccommodation: false,
+  needsTransport: false,
+  originCity: '',
   dietaryRequirements: '',
   medicalConditions: '',
+  search: '',
+  dropdownOpen: false,
+});
+
+// ─── Participant helpers ──────────────────────────────────────────────────────
+
+const participantName = (p: Participant) =>
+  p.firstName && p.lastName ? `${p.firstName} ${p.lastName}` : (p.name || p.email || p.id);
+
+const participantInitials = (p: Participant) => {
+  const n = participantName(p);
+  return n.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 };
 
-interface TeamMemberDetail {
-  id: string;
-  firstName: string;
-  lastName: string;
-  email: string;
-  phone?: string;
-  nationality?: string;
-  passportNumber?: string;
-  passportExpiry?: string;
-  dateOfBirth?: string;
-  gender?: string;
-  role: string;
-  status?: string;
-  sportCategory?: string;
-  subCategory?: string;
-  emergencyContact?: string;
-  emergencyPhone?: string;
-  dietaryRequirements?: string;
-  medicalConditions?: string;
-}
+const resolveTeamEventId = (team?: any): string =>
+  String(team?.eventId || team?.event_id || team?.event?.id || team?.event?._id || '');
 
-const normalizeTeamMember = (raw: any): TeamMemberDetail | null => {
-  if (!raw) return null;
-  const source = raw.participant || raw.user || raw;
-  const id = raw.id || source.id || source._id || raw.memberId || source.email;
-  const email = source.email || raw.email || '';
-  const firstName = source.firstName || raw.firstName || '';
-  const lastName = source.lastName || raw.lastName || '';
-  if (!id && !email) return null;
+const enrichTeamWithDelegationEvent = (team: any, delegations: any[]): Team => {
+  const eventId = resolveTeamEventId(team);
+  if (eventId) return { ...(team as Team), eventId };
 
-  return {
-    id: String(id),
-    firstName: firstName || 'Unknown',
-    lastName,
-    email,
-    phone: source.phone || raw.phone,
-    nationality: source.nationality || raw.nationality || source.country || raw.country,
-    passportNumber: source.passportNumber || raw.passportNumber || source.passport_number,
-    passportExpiry: source.passportExpiry || raw.passportExpiry || source.passport_expiry,
-    dateOfBirth: source.dateOfBirth || raw.dateOfBirth || source.date_of_birth,
-    gender: source.gender || raw.gender,
-    role: source.role || raw.role || raw.jobTitle || source.jobTitle || 'Member',
-    status: raw.status || source.status,
-    sportCategory: source.sportCategory || raw.sportCategory || source.sport_category,
-    subCategory: source.subCategory || raw.subCategory || source.sub_category,
-    emergencyContact: source.emergencyContact || raw.emergencyContact || source.emergency_contact,
-    emergencyPhone: source.emergencyPhone || raw.emergencyPhone || source.emergency_phone,
-    dietaryRequirements: source.dietaryRequirements || raw.dietaryRequirements || source.dietary_requirements,
-    medicalConditions: source.medicalConditions || raw.medicalConditions || source.medical_conditions,
-  };
+  const delegationId =
+    team?.delegationId ||
+    team?.delegation_id ||
+    team?.delegation?.id ||
+    team?.delegation?._id;
+  const delegation = delegations.find((entry) => (entry?.id || entry?._id) === delegationId);
+  const delegationEventId =
+    delegation?.eventId ||
+    delegation?.event_id ||
+    delegation?.event?.id ||
+    delegation?.event?._id ||
+    '';
+
+  return delegationEventId
+    ? { ...(team as Team), eventId: String(delegationEventId) }
+    : (team as Team);
 };
 
-const formatDetailValue = (value?: string) => (value && value.trim() ? value : 'N/A');
+const getMemberParticipantId = (member: any): string =>
+  String(
+    member?.participantId ||
+    member?.participant_id ||
+    member?.participant?.id ||
+    member?.participant?._id ||
+    '',
+  );
+
+const getMemberEmail = (member: any): string =>
+  String(member?.email || member?.participant?.email || '').toLowerCase();
+
+const loadRegisteredParticipantsForTeam = async (
+  teamId: string,
+  team: Team,
+  delegations: any[],
+): Promise<Participant[]> => {
+  const enrichedTeam = enrichTeamWithDelegationEvent(team, delegations);
+  const teamEventId = resolveTeamEventId(enrichedTeam);
+  const pendingEntries = getPendingTeamRegistrations(teamId);
+  const pendingIds = new Set(pendingEntries.map((entry) => entry.participantId));
+  const pendingEmails = new Set(pendingEntries.map((entry) => entry.email.toLowerCase()));
+
+  let teamMembers: any[] = [];
+  if (teamId.startsWith('team-')) {
+    teamMembers = teamMemberStore.getByTeam(teamId);
+  } else {
+    try {
+      teamMembers = await listTeamMembers(teamId);
+    } catch {
+      teamMembers = [];
+    }
+  }
+
+  const existingParticipantIds = new Set<string>();
+  const existingEmails = new Set<string>();
+  for (const member of teamMembers) {
+    const participantId = getMemberParticipantId(member);
+    if (participantId) existingParticipantIds.add(participantId);
+    const email = getMemberEmail(member);
+    if (email) existingEmails.add(email);
+  }
+
+  const registrations = await getMyRegistrations();
+  const available = new Map<string, Participant>();
+
+  for (const registration of registrations) {
+    const participant = normalizeRegistrationParticipant(registration);
+    if (!participant) continue;
+
+    const regTeamId = String(
+      (registration as any).teamId ||
+      (registration as any).team_id ||
+      (registration as any).team?.id ||
+      (registration as any).team?._id ||
+      participant.teamId ||
+      '',
+    );
+    const isPendingForTeam =
+      pendingIds.has(participant.id) ||
+      (participant.email && pendingEmails.has(participant.email.toLowerCase()));
+    const matchesTeam = regTeamId && regTeamId === teamId;
+    const matchesEvent =
+      teamEventId &&
+      participant.eventId &&
+      participant.eventId === teamEventId;
+
+    if (!isPendingForTeam && !matchesTeam && !matchesEvent) continue;
+    if (existingParticipantIds.has(participant.id)) continue;
+    if (participant.email && existingEmails.has(participant.email.toLowerCase())) continue;
+
+    available.set(participant.id, participant);
+  }
+
+  for (const pending of pendingEntries) {
+    if (existingParticipantIds.has(pending.participantId)) continue;
+    if (pending.email && existingEmails.has(pending.email.toLowerCase())) continue;
+    if (available.has(pending.participantId)) continue;
+
+    available.set(pending.participantId, {
+      id: pending.participantId,
+      registrationId: pending.registrationId,
+      firstName: pending.firstName,
+      lastName: pending.lastName,
+      name: `${pending.firstName || ''} ${pending.lastName || ''}`.trim() || pending.email,
+      email: pending.email,
+    });
+  }
+
+  return Array.from(available.values());
+};
+
+// ─── Component ───────────────────────────────────────────────────────────────
 
 const AddMembersPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { manager } = useManagerSession();
+
   const [teams, setTeams] = useState<Team[]>([]);
+  const [delegations, setDelegations] = useState<any[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
-  const [members, setMembers] = useState<MemberForm[]>([{ ...emptyMember }]);
-  const [currentMembers, setCurrentMembers] = useState<TeamMemberDetail[]>([]);
-  const [selectedMember, setSelectedMember] = useState<TeamMemberDetail | null>(null);
+  const [isLoadingTeams, setIsLoadingTeams] = useState(false);
+
+  const [allParticipants, setAllParticipants] = useState<Participant[]>([]);
+  const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
+
+  const [rows, setRows] = useState<MemberRow[]>([emptyRow()]);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isMembersLoading, setIsMembersLoading] = useState(false);
 
-  const maxDateOfBirth = new Date().toISOString().split('T')[0];
+  const searchRefs = useRef<(HTMLInputElement | null)[]>([]);
 
+  // ── Load teams ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    if (selectedTeamId) {
-      loadCurrentMembers();
-    } else {
-      setCurrentMembers([]);
-    }
-  }, [selectedTeamId]);
-
-  const loadCurrentMembers = async () => {
-    if (!selectedTeamId) {
-      setCurrentMembers([]);
-      return;
-    }
-
-    setIsMembersLoading(true);
-    try {
-      if (selectedTeamId.startsWith('team-')) {
-        const localMembers = teamMemberStore.getByTeam(selectedTeamId);
-        setCurrentMembers(
-          localMembers
-            .map(normalizeTeamMember)
-            .filter(Boolean) as TeamMemberDetail[]
-        );
-        return;
-      }
-
-      const teamMembers = await listTeamMembers(selectedTeamId);
-      setCurrentMembers(
-        (Array.isArray(teamMembers) ? teamMembers : [])
-          .map(normalizeTeamMember)
-          .filter(Boolean) as TeamMemberDetail[]
-      );
-    } catch (e) {
-      console.error('Failed to load current members:', e);
-      toast.error('Failed to load team members');
-      setCurrentMembers([]);
-    } finally {
-      setIsMembersLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (manager) {
-      loadTeams();
-    }
+    if (manager) loadTeams();
   }, [manager, searchParams]);
 
   const loadTeams = async () => {
-    setIsLoading(true);
+    setIsLoadingTeams(true);
     try {
-      const serverTeams = await getMyTeams();
+      const [serverTeams, delegationsData] = await Promise.all([
+        getMyTeams(),
+        getMyDelegations().catch(() => []),
+      ]);
+      setDelegations(Array.isArray(delegationsData) ? delegationsData : []);
+
       const localTeams = teamStore.getByManager(manager?.id || '');
-
-      const merged = serverTeams.map((t: any) => ({
-        ...t,
-        memberCount: t.memberCount || t.member_count
+      const merged = (Array.isArray(serverTeams) ? serverTeams : []).map((t: any) => ({
+        ...enrichTeamWithDelegationEvent(t, delegationsData),
+        memberCount: t.memberCount || t.member_count,
       }));
-
       for (const lt of localTeams) {
-        if (!merged.find(st => st.id === lt.id)) {
-          const localCount = teamMemberStore.getByTeam(lt.id).length;
-          merged.push({ ...lt, memberCount: localCount });
+        if (!merged.find((st: any) => st.id === lt.id)) {
+          merged.push({
+            ...enrichTeamWithDelegationEvent(lt, delegationsData),
+            memberCount: teamMemberStore.getByTeam(lt.id).length,
+          });
         }
       }
-
       setTeams(merged);
-
       const teamIdParam = searchParams.get('teamId');
-      if (teamIdParam && merged.some(t => t.id === teamIdParam)) {
+      if (teamIdParam && merged.some((t: any) => t.id === teamIdParam)) {
         setSelectedTeamId(teamIdParam);
       }
-    } catch (error) {
-      console.error('Failed to load teams:', error);
+    } catch {
       toast.error('Failed to load teams');
     } finally {
-      setIsLoading(false);
+      setIsLoadingTeams(false);
     }
   };
 
-  const selectedTeam = teams.find(t => t.id === selectedTeamId);
-
-  const updateMember = (index: number, field: keyof MemberForm, value: string) => {
-    setMembers(prev => {
-      const updated = [...prev];
-      updated[index] = { ...updated[index], [field]: value };
-      return updated;
-    });
-  };
-
-  const addMemberRow = () => {
-    setMembers(prev => [...prev, { ...emptyMember }]);
-  };
-
-  const removeMemberRow = (index: number) => {
-    if (members.length > 1) {
-      setMembers(prev => prev.filter((_, i) => i !== index));
-    }
-  };
-
-  const handleSaveMembers = async () => {
+  useEffect(() => {
     if (!selectedTeamId) {
-      toast.error('Please select a team first');
+      setAllParticipants([]);
+      setRows([emptyRow()]);
       return;
     }
 
-    // Validate members
-    const validMembers = members.filter(m =>
-      m.firstName && m.lastName && m.email && m.passportNumber && m.role
+    const team = teams.find((entry) => entry.id === selectedTeamId);
+    if (!team) return;
+
+    setIsLoadingParticipants(true);
+    loadRegisteredParticipantsForTeam(selectedTeamId, team, delegations)
+      .then(setAllParticipants)
+      .catch((error) => {
+        console.error('Failed to load registered participants:', error);
+        toast.error('Failed to load registered members');
+        setAllParticipants([]);
+      })
+      .finally(() => setIsLoadingParticipants(false));
+
+    setRows([emptyRow()]);
+  }, [selectedTeamId, teams, delegations]);
+
+  const selectedTeam = teams.find(t => t.id === selectedTeamId);
+
+  // ── Row helpers ─────────────────────────────────────────────────────────────
+
+  const updateRow = <K extends keyof MemberRow>(index: number, key: K, value: MemberRow[K]) => {
+    setRows(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [key]: value };
+      return next;
+    });
+  };
+
+  const selectParticipant = (index: number, p: Participant) => {
+    setRows(prev => {
+      const next = [...prev];
+      const defaultRole =
+        p.role && TEAM_ROLES.includes(p.role as any) ? p.role : next[index].role;
+
+      next[index] = {
+        ...next[index],
+        participantId: p.id,
+        participant: p,
+        search: participantName(p),
+        dropdownOpen: false,
+        role: defaultRole,
+        originCity: next[index].originCity || p.nationality || '',
+        dietaryRequirements: next[index].dietaryRequirements,
+      };
+      return next;
+    });
+  };
+
+  const clearParticipant = (index: number) => {
+    setRows(prev => {
+      const next = [...prev];
+      next[index] = {
+        ...next[index],
+        participantId: '',
+        participant: null,
+        search: '',
+        dropdownOpen: false,
+      };
+      return next;
+    });
+  };
+
+  const addRow = () => setRows(prev => [...prev, emptyRow()]);
+  const removeRow = (index: number) => {
+    if (rows.length > 1) setRows(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // ── Filter participants per row ─────────────────────────────────────────────
+
+  const filteredParticipants = (row: MemberRow, rowIndex: number) => {
+    const selectedElsewhere = new Set(
+      rows
+        .filter((_, index) => index !== rowIndex)
+        .map((entry) => entry.participantId)
+        .filter(Boolean),
     );
 
-    if (validMembers.length === 0) {
-      toast.error('Please fill in at least one member with required fields');
+    const available = allParticipants.filter(
+      (participant) => !selectedElsewhere.has(participant.id),
+    );
+
+    const q = row.search.toLowerCase().trim();
+    if (!q) return available;
+    return available.filter(p => {
+      const name = participantName(p).toLowerCase();
+      const email = (p.email || '').toLowerCase();
+      const passport = (p.passportNumber || '').toLowerCase();
+      return name.includes(q) || email.includes(q) || passport.includes(q);
+    });
+  };
+
+  // ── Save ────────────────────────────────────────────────────────────────────
+
+  const handleSave = async () => {
+    if (!selectedTeamId) { toast.error('Please select a team first'); return; }
+
+    const validRows = rows.filter(r => r.participantId && r.role);
+    if (validRows.length === 0) {
+      toast.error('Please select a participant and role for at least one member');
       return;
     }
 
     setIsSaving(true);
 
     try {
-      let savedCount = 0;
+      const isLocalTeam = selectedTeamId.startsWith('team-');
 
-      for (const m of validMembers) {
-        if (!selectedTeam) continue;
-
-        const eventId = selectedTeam.eventId || (selectedTeam as any).event?.id;
-        if (!eventId) {
-          toast.error(`Team "${selectedTeam.name}" has no event ID. Please update the team.`);
-          return;
-        }
-
-        const isLocalTeam = selectedTeamId.startsWith('team-');
-
-        if (isLocalTeam) {
-          // Save to local store
+      if (isLocalTeam) {
+        let savedCount = 0;
+        for (const r of validRows) {
+          const p = r.participant!;
           teamMemberStore.create({
             teamId: selectedTeamId,
-            firstName: m.firstName,
-            lastName: m.lastName,
-            email: m.email,
-            phone: m.phone,
-            nationality: m.nationality || manager?.country || '',
-            passportNumber: m.passportNumber,
-            passportExpiry: m.passportExpiry,
-            dateOfBirth: m.dateOfBirth,
-            gender: m.gender,
-            sportCategory: typeof selectedTeam.sportCategory === 'string' ? selectedTeam.sportCategory : (selectedTeam.sportCategory as any)?.name,
-            subCategory: selectedTeam.subCategory || '',
-            role: m.role,
-            emergencyContact: m.emergencyContact,
-            emergencyPhone: m.emergencyPhone,
-            dietaryRequirements: m.dietaryRequirements,
-            medicalConditions: m.medicalConditions,
+            firstName: p.firstName || '',
+            lastName: p.lastName || '',
+            email: p.email || '',
+            phone: p.phone || '',
+            nationality: p.nationality || '',
+            passportNumber: p.passportNumber || '',
+            passportExpiry: '',
+            dateOfBirth: '',
+            gender: (p.gender as any) || 'Male',
+            sportCategory:
+              typeof selectedTeam?.sportCategory === 'string'
+                ? selectedTeam.sportCategory
+                : (selectedTeam?.sportCategory as any)?.name || '',
+            subCategory: selectedTeam?.subCategory || '',
+            role: r.role,
+            emergencyContact: '',
+            emergencyPhone: '',
+            dietaryRequirements: r.dietaryRequirements,
+            medicalConditions: r.medicalConditions,
           });
-        } else {
-          // Use the server API
-          const formData = new FormData();
-          const eventId = selectedTeam.eventId || (selectedTeam as any).event?.id;
-          if (!eventId) {
-            toast.error(`Team "${selectedTeam.name}" has no event ID. Please update the team.`);
-            return;
-          }
-
-          formData.append('teamId', selectedTeamId);
-          formData.append('eventId', eventId);
-          formData.append('firstName', m.firstName);
-          formData.append('lastName', m.lastName);
-          formData.append('email', m.email);
-          formData.append('phone', m.phone);
-          formData.append('nationality', m.nationality || manager?.country || '');
-          formData.append('passportNumber', m.passportNumber);
-          formData.append('organization', `${m.nationality || manager?.country || ''} Delegation`);
-          formData.append('jobTitle', m.role);
-          formData.append('participantRole', m.role === 'Athlete' ? 'Athlete' : 'Official');
-          formData.append('gender', m.gender.toLowerCase());
-
-          if (m.dateOfBirth) formData.append('dateOfBirth', m.dateOfBirth);
-          if (m.passportExpiry) formData.append('passportExpiry', m.passportExpiry);
-          if (m.emergencyContact) formData.append('emergencyContact', m.emergencyContact);
-          if (m.emergencyPhone) formData.append('emergencyPhone', m.emergencyPhone);
-          if (m.dietaryRequirements) formData.append('dietaryRequirements', m.dietaryRequirements);
-          if (m.medicalConditions) formData.append('medicalConditions', m.medicalConditions);
-
-          await createRegistration(formData);
+          savedCount++;
         }
-        savedCount++;
+        toast.success(`${savedCount} member(s) added successfully!`);
+      } else {
+        const mapRowToPayload = (r: MemberRow) => ({
+          participantId: r.participantId,
+          role: r.role,
+          needsVisa: r.needsVisa,
+          needsAccommodation: r.needsAccommodation,
+          needsTransport: r.needsTransport,
+          originCity: r.originCity,
+          dietaryRequirements: r.dietaryRequirements,
+          medicalConditions: r.medicalConditions,
+        });
+
+        if (validRows.length === 1) {
+          await addTeamMember(selectedTeamId, mapRowToPayload(validRows[0]));
+        } else {
+          const membersPayload = validRows.map(mapRowToPayload);
+          await addTeamMembersBulk(selectedTeamId, membersPayload);
+        }
+
+        toast.success(`${validRows.length} member(s) added successfully!`);
       }
 
-      toast.success(`${savedCount} member(s) registered successfully!`);
-      setMembers([{ ...emptyMember }]);
-      loadCurrentMembers(); // Refresh the list
+      removePendingTeamRegistrations(
+        selectedTeamId,
+        validRows.map((row) => row.participantId),
+      );
+
+      setRows([emptyRow()]);
+
+      const team = teams.find((entry) => entry.id === selectedTeamId);
+      if (team) {
+        const refreshed = await loadRegisteredParticipantsForTeam(
+          selectedTeamId,
+          team,
+          delegations,
+        );
+        setAllParticipants(refreshed);
+      }
     } catch (error: any) {
-      console.error('Failed to save members:', error);
-      const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
-      toast.error('Failed to save members: ' + detail);
+      const detail =
+        error?.response?.data?.message ||
+        JSON.stringify(error?.response?.data) ||
+        error.message;
+      toast.error('Failed to add members: ' + detail);
     } finally {
       setIsSaving(false);
     }
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <div className="space-y-6">
+
+      {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="sm" onClick={() => navigate('/manager/teams')}>
           <ChevronLeft className="h-4 w-4 mr-1" />
@@ -337,7 +449,7 @@ const AddMembersPage: React.FC = () => {
       <div>
         <h1 className="text-3xl font-bold">Add Team Members</h1>
         <p className="text-muted-foreground mt-1">
-          Register athletes and staff for your teams
+          Select registered members and add them to the team/delegation
         </p>
       </div>
 
@@ -348,7 +460,7 @@ const AddMembersPage: React.FC = () => {
           <CardDescription>Choose which team to add members to</CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {isLoadingTeams ? (
             <div className="flex justify-center p-6">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
@@ -366,7 +478,11 @@ const AddMembersPage: React.FC = () => {
               <SelectContent>
                 {teams.map(team => (
                   <SelectItem key={team.id} value={team.id}>
-                    {team.name} ({typeof team.sportCategory === 'string' ? team.sportCategory : (team.sportCategory as any)?.name})
+                    {team.name} (
+                    {typeof team.sportCategory === 'string'
+                      ? team.sportCategory
+                      : (team.sportCategory as any)?.name}
+                    )
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -374,896 +490,267 @@ const AddMembersPage: React.FC = () => {
           )}
         </CardContent>
       </Card>
-
-      {/* Current team members from API */}
+{/*
       {selectedTeamId && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Current Team Members</CardTitle>
-            <CardDescription>
-             Added members of team: {selectedTeam?.name}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isMembersLoading ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            ) : currentMembers.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                <p>No members in this team yet</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {currentMembers.map((member) => (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => setSelectedMember(member)}
-                    className="w-full flex items-center justify-between gap-3 p-3 border rounded-lg text-left transition-colors hover:bg-muted/50 cursor-pointer"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback>
-                          {(member.firstName[0] || '?').toUpperCase()}
-                          {(member.lastName[0] || '').toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {member.firstName} {member.lastName}
-                        </p>
-                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="outline">{member.role}</Badge>
-                      {member.status && (
-                        <Badge variant="secondary">{member.status}</Badge>
-                      )}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
+        <Card className="border-dashed">
+          <CardContent className="py-4">
+            <p className="font-medium">
+              {isLoadingParticipants
+                ? 'Loading registered members…'
+                : `${allParticipants.length} registered member(s) ready to add`}
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Only members registered on the Register page for this team/event appear here.
+            </p>
           </CardContent>
         </Card>
       )}
-
-      {/* Member Entry Forms */}
+*/}
+      {/* Add Members Form */}
       {selectedTeamId && (
         <Card>
           <CardHeader>
             <div className="flex justify-between items-center">
               <div>
-                <CardTitle className="text-lg">Team Members</CardTitle>
+                <CardTitle className="text-lg">Add Members</CardTitle>
                 <CardDescription>
-                  Adding to: {selectedTeam?.name} • {typeof selectedTeam?.sportCategory === 'string' ? selectedTeam?.sportCategory : (selectedTeam?.sportCategory as any)?.name}
+                  Adding to:{' '}
+                  <span className="font-medium text-foreground">{selectedTeam?.name}</span>
+                  {isLoadingParticipants && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Loading participants…
+                    </span>
+                  )}
                 </CardDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={addMemberRow}>
+              <Button variant="outline" size="sm" onClick={addRow}>
                 <Plus className="h-4 w-4 mr-1" />
                 Add Another
               </Button>
             </div>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {members.map((member, index) => (
-              <div key={index} className="border rounded-lg p-4 space-y-4 relative">
-                <div className="flex justify-between items-center mb-2">
-                  <h4 className="font-medium flex items-center gap-2">
-                    <UserPlus className="h-4 w-4" />
+
+          <CardContent className="space-y-4">
+            {rows.map((row, index) => (
+              <div
+                key={index}
+                className="border rounded-xl p-5 space-y-5 bg-muted/20"
+              >
+                {/* Row header */}
+                <div className="flex justify-between items-center">
+                  <h4 className="font-semibold flex items-center gap-2 text-sm">
+                    <UserPlus className="h-4 w-4 text-primary" />
                     Member {index + 1}
+                    {row.participant && (
+                      <Badge className="text-xs">{participantName(row.participant)}</Badge>
+                    )}
                   </h4>
-                  {members.length > 1 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => removeMemberRow(index)}
-                    >
+                  {rows.length > 1 && (
+                    <Button variant="ghost" size="sm" onClick={() => removeRow(index)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   )}
                 </div>
 
-                {/* Personal Info */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label>First Name *</Label>
-                    <Input
-                      value={member.firstName}
-                      onChange={(e) => updateMember(index, 'firstName', e.target.value)}
-                      placeholder="First name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Last Name *</Label>
-                    <Input
-                      value={member.lastName}
-                      onChange={(e) => updateMember(index, 'lastName', e.target.value)}
-                      placeholder="Last name"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Email *</Label>
-                    <Input
-                      type="email"
-                      value={member.email}
-                      onChange={(e) => updateMember(index, 'email', e.target.value)}
-                      placeholder="email@example.com"
-                    />
-                  </div>
-                </div>
+                {/* ── Participant Search ── */}
+                <div className="space-y-2">
+                  <Label className="font-medium">
+                    Participant <span className="text-destructive">*</span>
+                  </Label>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label>Phone</Label>
-                    <Input
-                      value={member.phone}
-                      onChange={(e) => updateMember(index, 'phone', e.target.value)}
-                      placeholder="+966 XXX XXX XXXX"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Nationality</Label>
-                    <Select
-                      value={member.nationality}
-                      onValueChange={(v) => updateMember(index, 'nationality', v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select country" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {COUNTRIES.map(c => (
-                          <SelectItem key={c} value={c}>{c}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Date of Birth</Label>
-                    <Input
-                      type="date"
-                      max={maxDateOfBirth}
-                      value={member.dateOfBirth}
-                      onChange={(e) => updateMember(index, 'dateOfBirth', e.target.value)}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <Label>Passport Number *</Label>
-                    <Input
-                      value={member.passportNumber}
-                      onChange={(e) => updateMember(index, 'passportNumber', e.target.value.toUpperCase())}
-                      placeholder="A12345678"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Passport Expiry</Label>
-                    <Input
-                      type="date"
-                      value={member.passportExpiry}
-                      onChange={(e) => updateMember(index, 'passportExpiry', e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Gender</Label>
-                    <RadioGroup
-                      value={member.gender}
-                      onValueChange={(v) => updateMember(index, 'gender', v)}
-                      className="flex gap-4 pt-2"
-                    >
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="Male" id={`male-${index}`} />
-                        <Label htmlFor={`male-${index}`} className="font-normal">Male</Label>
+                  {row.participant ? (
+                    /* Selected state */
+                    <div className="flex items-center gap-3 p-3 rounded-lg border bg-primary/5 border-primary/20">
+                      <Avatar className="h-9 w-9">
+                        <AvatarFallback className="text-xs font-semibold bg-primary/10 text-primary">
+                          {participantInitials(row.participant)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-sm">{participantName(row.participant)}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {row.participant.email || ''}
+                          {row.participant.passportNumber
+                            ? ` • ${row.participant.passportNumber}`
+                            : ''}
+                          {row.participant.nationality
+                            ? ` • ${row.participant.nationality}`
+                            : ''}
+                        </p>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <RadioGroupItem value="Female" id={`female-${index}`} />
-                        <Label htmlFor={`female-${index}`} className="font-normal">Female</Label>
+                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 shrink-0"
+                        onClick={() => clearParticipant(index)}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ) : (
+                    /* Search state */
+                    <div className="relative">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Input
+                          ref={el => { searchRefs.current[index] = el; }}
+                          className="pl-9"
+                          placeholder="Search registered member by name, email or passport…"
+                          value={row.search}
+                          onChange={e => {
+                            updateRow(index, 'search', e.target.value);
+                            updateRow(index, 'dropdownOpen', true);
+                          }}
+                          onFocus={() => updateRow(index, 'dropdownOpen', true)}
+                          onBlur={() =>
+                            setTimeout(() => updateRow(index, 'dropdownOpen', false), 150)
+                          }
+                        />
                       </div>
-                    </RadioGroup>
-                  </div>
+
+                      {row.dropdownOpen && (
+                        <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-xl">
+                          {isLoadingParticipants ? (
+                            <div className="flex items-center justify-center py-6">
+                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                            </div>
+                          ) : filteredParticipants(row, index).length === 0 ? (
+                            <div className="py-6 text-center text-sm text-muted-foreground">
+                              No registered members available. Register them first on the Register page.
+                            </div>
+                          ) : (
+                            filteredParticipants(row, index).map(p => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent text-left transition-colors"
+                                onMouseDown={() => selectParticipant(index, p)}
+                              >
+                                <Avatar className="h-8 w-8 shrink-0">
+                                  <AvatarFallback className="text-xs">
+                                    {participantInitials(p)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">
+                                    {participantName(p)}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground truncate">
+                                    {p.email || ''}
+                                    {p.passportNumber ? ` • ${p.passportNumber}` : ''}
+                                    {p.nationality ? ` • ${p.nationality}` : ''}
+                                  </p>
+                                </div>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* ── Role + Origin City ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Role/Position *</Label>
+                    <Label className="font-medium">
+                      Role <span className="text-destructive">*</span>
+                    </Label>
                     <Select
-                      value={member.role}
-                      onValueChange={(v) => updateMember(index, 'role', v)}
+                      value={row.role}
+                      onValueChange={v => updateRow(index, 'role', v)}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select role" />
                       </SelectTrigger>
                       <SelectContent>
                         {TEAM_ROLES.map(role => (
-                          <SelectItem key={role} value={role}>{role}</SelectItem>
+                          <SelectItem key={role} value={role}>
+                            {role}
+                          </SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
+
+                  <div className="space-y-2">
+                    <Label className="font-medium">Origin City</Label>
+                    <Input
+                      value={row.originCity}
+                      onChange={e => updateRow(index, 'originCity', e.target.value)}
+                      placeholder="e.g. Islamabad"
+                    />
+                  </div>
+                </div>
+
+                {/* ── Toggles ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {(
+                    [
+                      { key: 'needsVisa', label: 'Needs Visa' },
+                      { key: 'needsAccommodation', label: 'Needs Accommodation' },
+                      { key: 'needsTransport', label: 'Needs Transport' },
+                    ] as const
+                  ).map(({ key, label }) => (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between rounded-lg border p-3 gap-3"
+                    >
+                      <Label htmlFor={`${key}-${index}`} className="text-sm cursor-pointer">
+                        {label}
+                      </Label>
+                      <Switch
+                        id={`${key}-${index}`}
+                        checked={row[key]}
+                        onCheckedChange={v => updateRow(index, key, v)}
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                {/* ── Dietary + Medical ── */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Dietary Requirements</Label>
                     <Input
-                      value={member.dietaryRequirements}
-                      onChange={(e) => updateMember(index, 'dietaryRequirements', e.target.value)}
-                      placeholder="e.g., Halal, Vegetarian"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Emergency Contact Name</Label>
-                    <Input
-                      value={member.emergencyContact}
-                      onChange={(e) => updateMember(index, 'emergencyContact', e.target.value)}
-                      placeholder="Contact name"
+                      value={row.dietaryRequirements}
+                      onChange={e => updateRow(index, 'dietaryRequirements', e.target.value)}
+                      placeholder="e.g. Halal Protein extensive"
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Emergency Contact Phone</Label>
+                    <Label>Medical Conditions</Label>
                     <Input
-                      value={member.emergencyPhone}
-                      onChange={(e) => updateMember(index, 'emergencyPhone', e.target.value)}
-                      placeholder="+966 XXX XXX XXXX"
+                      value={row.medicalConditions}
+                      onChange={e => updateRow(index, 'medicalConditions', e.target.value)}
+                      placeholder="e.g. None"
                     />
                   </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Medical Conditions (Optional)</Label>
-                  <Textarea
-                    value={member.medicalConditions}
-                    onChange={(e) => updateMember(index, 'medicalConditions', e.target.value)}
-                    placeholder="Any medical conditions or allergies..."
-                    rows={2}
-                  />
                 </div>
               </div>
             ))}
 
+            {/* Actions */}
             <div className="flex justify-end gap-3 pt-4 border-t">
-              <Button variant="outline" onClick={addMemberRow}>
+              <Button variant="outline" onClick={addRow}>
                 <Plus className="h-4 w-4 mr-2" />
                 Add More Members
               </Button>
-              <Button onClick={handleSaveMembers} disabled={isSaving}>
-                <Save className="h-4 w-4 mr-2" />
-                {isSaving ? 'Saving...' : 'Save All Members'}
+              <Button onClick={handleSave} disabled={isSaving}>
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4 mr-2" />
+                )}
+                {isSaving ? 'Saving…' : 'Save All Members'}
               </Button>
             </div>
           </CardContent>
         </Card>
       )}
-
-      <Dialog open={!!selectedMember} onOpenChange={(open) => !open && setSelectedMember(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Member Details</DialogTitle>
-          </DialogHeader>
-          {selectedMember && (
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 pb-2 border-b">
-                <Avatar className="h-12 w-12">
-                  <AvatarFallback>
-                    {(selectedMember.firstName[0] || '?').toUpperCase()}
-                    {(selectedMember.lastName[0] || '').toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <div>
-                  <p className="font-semibold text-lg">
-                    {selectedMember.firstName} {selectedMember.lastName}
-                  </p>
-                  <p className="text-sm text-muted-foreground">{selectedMember.email}</p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4 text-start">
-                <div>
-                  <p className="text-sm text-muted-foreground">Role</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.role)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  {selectedMember.status ? (
-                    <Badge variant="secondary">{selectedMember.status}</Badge>
-                  ) : (
-                    <p className="font-medium">N/A</p>
-                  )}
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Phone</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.phone)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Nationality</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.nationality)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Passport Number</p>
-                  <p className="font-medium font-mono">{formatDetailValue(selectedMember.passportNumber)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Passport Expiry</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.passportExpiry)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Date of Birth</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.dateOfBirth)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Gender</p>
-                  <p className="font-medium">{formatDetailValue(selectedMember.gender)}</p>
-                </div>
-                {selectedMember.sportCategory && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Sport</p>
-                    <p className="font-medium">{formatDetailValue(selectedMember.sportCategory)}</p>
-                  </div>
-                )}
-                {selectedMember.subCategory && (
-                  <div>
-                    <p className="text-sm text-muted-foreground">Sub Category</p>
-                    <p className="font-medium">{formatDetailValue(selectedMember.subCategory)}</p>
-                  </div>
-                )}
-              </div>
-
-              {selectedMember.dietaryRequirements && (
-                <div className="text-start">
-                  <p className="text-sm text-muted-foreground">Dietary Requirements</p>
-                  <p className="font-medium">{selectedMember.dietaryRequirements}</p>
-                </div>
-              )}
-              {selectedMember.medicalConditions && (
-                <div className="text-start">
-                  <p className="text-sm text-muted-foreground">Medical Conditions</p>
-                  <p className="font-medium">{selectedMember.medicalConditions}</p>
-                </div>
-              )}
-              {(selectedMember.emergencyContact || selectedMember.emergencyPhone) && (
-                <div className="text-start">
-                  <p className="text-sm text-muted-foreground">Emergency Contact</p>
-                  <p className="font-medium">
-                    {formatDetailValue(selectedMember.emergencyContact)}
-                    {selectedMember.emergencyPhone ? ` · ${selectedMember.emergencyPhone}` : ''}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
+
 export default AddMembersPage;
-// import React, { useState, useEffect } from 'react';
-// import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-// import { Button } from '@/components/ui/button';
-// import { Input } from '@/components/ui/input';
-// import { Label } from '@/components/ui/label';
-// import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-// import { useManagerSession } from '@/contexts/ManagerSessionContext';
-// import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES, TEAM_ROLES } from '@/lib/teamStore';
-// import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, ChevronDown } from 'lucide-react';
-// import { toast } from 'sonner';
-// import { useSearchParams, useNavigate } from 'react-router-dom';
-// import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-// import { Textarea } from '@/components/ui/textarea';
-// import { getMyTeams, listTeamMembers, addTeamMembersBulk } from '@/api/teamApi';
-// // import { getMyRegistrations } from '@/api/registrationApi';
-// import { Loader2 } from 'lucide-react';
-// import { Badge } from '@/components/ui/badge';
-// import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-
-// const COUNTRIES = [
-//   'Saudi Arabia', 'United Arab Emirates', 'Egypt', 'Jordan', 'Kuwait',
-//   'Qatar', 'Bahrain', 'Oman', 'Morocco', 'Tunisia', 'Algeria', 'Iraq',
-//   'USA', 'UK', 'Germany', 'France', 'Japan', 'China', 'Brazil', 'Australia'
-// ];
-
-// interface MemberForm {
-//   firstName: string;
-//   lastName: string;
-//   email: string;
-//   phone: string;
-//   nationality: string;
-//   passportNumber: string;
-//   passportExpiry: string;
-//   dateOfBirth: string;
-//   gender: 'Male' | 'Female' | 'Other';
-//   role: string;
-//   emergencyContact: string;
-//   emergencyPhone: string;
-//   dietaryRequirements: string;
-//   medicalConditions: string;
-// }
-
-// const emptyMember: MemberForm = {
-//   firstName: '',
-//   lastName: '',
-//   email: '',
-//   phone: '',
-//   nationality: '',
-//   passportNumber: '',
-//   passportExpiry: '',
-//   dateOfBirth: '',
-//   gender: 'Male',
-//   role: '',
-//   emergencyContact: '',
-//   emergencyPhone: '',
-//   dietaryRequirements: '',
-//   medicalConditions: '',
-// };
-
-// const AddMembersPage: React.FC = () => {
-//   const navigate = useNavigate();
-//   const [searchParams] = useSearchParams();
-//   const { manager } = useManagerSession();
-//   const [teams, setTeams] = useState<Team[]>([]);
-//   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
-//   const [members, setMembers] = useState<MemberForm[]>([{ ...emptyMember }]);
-//   const [currentMembers, setCurrentMembers] = useState<any[]>([]);
-//   const [isSaving, setIsSaving] = useState(false);
-//   const [isLoading, setIsLoading] = useState(false);
-//   const [isMembersLoading, setIsMembersLoading] = useState(false);
-
-//   useEffect(() => {
-//     if (selectedTeamId) {
-//       loadCurrentMembers();
-//     } else {
-//       setCurrentMembers([]);
-//     }
-//   }, [selectedTeamId]);
-
-//   const loadCurrentMembers = async () => {
-//     setIsMembersLoading(true);
-//     try {
-//       if (selectedTeamId.startsWith('team-')) {
-//         const members = teamMemberStore.getByTeam(selectedTeamId);
-//         setCurrentMembers(members);
-//       } else {
-//         // For server teams, try to get from registrations first as it's more comprehensive for managers
-//         const [regs, teamMembers] = await Promise.all([
-//           getMyRegistrations().catch(() => []),
-//           listTeamMembers(selectedTeamId).catch(() => [])
-//         ]);
-
-//         // Filter registrations for this team and merge with team members
-//         const teamRegs = regs.filter((r: any) => r.teamId === selectedTeamId || r.team_id === selectedTeamId || r.team?.id === selectedTeamId);
-
-//         // Merge them avoiding duplicates by ID or Email
-//         const merged = [...teamRegs];
-//         for (const tm of teamMembers) {
-//           const participant = (tm as any).participant || tm;
-//           if (!merged.find((r: any) => r.id === tm.id || (r.participant || r).email === participant.email)) {
-//             merged.push(tm);
-//           }
-//         }
-
-//         setCurrentMembers(merged);
-//       }
-//     } catch (e) {
-//       console.error('Failed to load current members:', e);
-//     } finally {
-//       setIsMembersLoading(false);
-//     }
-//   };
-
-//   useEffect(() => {
-//     if (manager) {
-//       loadTeams();
-//     }
-//   }, [manager, searchParams]);
-
-//   const loadTeams = async () => {
-//     setIsLoading(true);
-//     try {
-//       const serverTeams = await getMyTeams();
-//       const localTeams = teamStore.getByManager(manager?.id || '');
-
-//       const merged = serverTeams.map((t: any) => ({
-//         ...t,
-//         memberCount: t.memberCount || t.member_count
-//       }));
-
-//       for (const lt of localTeams) {
-//         if (!merged.find(st => st.id === lt.id)) {
-//           const localCount = teamMemberStore.getByTeam(lt.id).length;
-//           merged.push({ ...lt, memberCount: localCount });
-//         }
-//       }
-
-//       setTeams(merged);
-
-//       const teamIdParam = searchParams.get('teamId');
-//       if (teamIdParam && merged.some(t => t.id === teamIdParam)) {
-//         setSelectedTeamId(teamIdParam);
-//       }
-//     } catch (error) {
-//       console.error('Failed to load teams:', error);
-//       toast.error('Failed to load teams');
-//     } finally {
-//       setIsLoading(false);
-//     }
-//   };
-
-//   const selectedTeam = teams.find(t => t.id === selectedTeamId);
-
-//   const updateMember = (index: number, field: keyof MemberForm, value: string) => {
-//     setMembers(prev => {
-//       const updated = [...prev];
-//       updated[index] = { ...updated[index], [field]: value };
-//       return updated;
-//     });
-//   };
-
-//   const addMemberRow = () => {
-//     setMembers(prev => [...prev, { ...emptyMember }]);
-//   };
-
-//   const removeMemberRow = (index: number) => {
-//     if (members.length > 1) {
-//       setMembers(prev => prev.filter((_, i) => i !== index));
-//     }
-//   };
-
-//   const handleSaveMembers = async () => {
-//     if (!selectedTeamId) {
-//       toast.error('Please select a team first');
-//       return;
-//     }
-
-//     // Validate members
-//     const validMembers = members.filter(m =>
-//       m.firstName && m.lastName && m.email && m.passportNumber && m.role
-//     );
-
-//     if (validMembers.length === 0) {
-//       toast.error('Please fill in at least one member with required fields');
-//       return;
-//     }
-
-//     if (!selectedTeam) {
-//       toast.error('Selected team not found');
-//       return;
-//     }
-
-//     const eventId = selectedTeam.eventId || (selectedTeam as any).event?.id;
-//     if (!eventId) {
-//       toast.error(`Team "${selectedTeam.name}" has no event ID. Please update the team.`);
-//       return;
-//     }
-
-//     setIsSaving(true);
-
-//     try {
-//       const isLocalTeam = selectedTeamId.startsWith('team-');
-//       let savedCount = 0;
-
-//       if (isLocalTeam) {
-//         // Save to local store
-//         for (const m of validMembers) {
-//           teamMemberStore.create({
-//             teamId: selectedTeamId,
-//             firstName: m.firstName,
-//             lastName: m.lastName,
-//             email: m.email,
-//             phone: m.phone,
-//             nationality: m.nationality || manager?.country || '',
-//             passportNumber: m.passportNumber,
-//             passportExpiry: m.passportExpiry,
-//             dateOfBirth: m.dateOfBirth,
-//             gender: m.gender,
-//             sportCategory: typeof selectedTeam.sportCategory === 'string' ? selectedTeam.sportCategory : (selectedTeam.sportCategory as any)?.name,
-//             subCategory: selectedTeam.subCategory || '',
-//             role: m.role,
-//             emergencyContact: m.emergencyContact,
-//             emergencyPhone: m.emergencyPhone,
-//             dietaryRequirements: m.dietaryRequirements,
-//             medicalConditions: m.medicalConditions,
-//           });
-//           savedCount++;
-//         }
-//       } else {
-//         // Use the Team Members API (bulk) instead of registrations
-//         const membersPayload = validMembers.map(m => ({
-//           eventId,
-//           firstName: m.firstName,
-//           lastName: m.lastName,
-//           email: m.email,
-//           phone: m.phone,
-//           nationality: m.nationality || manager?.country || '',
-//           passportNumber: m.passportNumber,
-//           passportExpiry: m.passportExpiry || undefined,
-//           dateOfBirth: m.dateOfBirth || undefined,
-//           gender: m.gender,
-//           role: m.role,
-//           emergencyContact: m.emergencyContact || undefined,
-//           emergencyPhone: m.emergencyPhone || undefined,
-//           dietaryRequirements: m.dietaryRequirements || undefined,
-//           medicalConditions: m.medicalConditions || undefined,
-//         }));
-
-//         await addTeamMembersBulk(selectedTeamId, membersPayload);
-//         savedCount = validMembers.length;
-//       }
-
-//       toast.success(`${savedCount} member(s) registered successfully!`);
-//       setMembers([{ ...emptyMember }]);
-//       loadCurrentMembers(); // Refresh the list
-//     } catch (error: any) {
-//       console.error('Failed to save members:', error);
-//       const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
-//       toast.error('Failed to save members: ' + detail);
-//     } finally {
-//       setIsSaving(false);
-//     }
-//   };
-
-//   return (
-//     <div className="space-y-6">
-//       <div className="flex items-center gap-4">
-//         <Button variant="ghost" size="sm" onClick={() => navigate('/manager/teams')}>
-//           <ChevronLeft className="h-4 w-4 mr-1" />
-//           Back to Teams
-//         </Button>
-//       </div>
-
-//       <div>
-//         <h1 className="text-3xl font-bold">Add Team Members</h1>
-//         <p className="text-muted-foreground mt-1">
-//           Register athletes and staff for your teams
-//         </p>
-//       </div>
-
-//       {/* Team Selection */}
-//       <Card>
-//         <CardHeader>
-//           <CardTitle className="text-lg">Select Team</CardTitle>
-//           <CardDescription>Choose which team to add members to</CardDescription>
-//         </CardHeader>
-//         <CardContent>
-//           {isLoading ? (
-//             <div className="flex justify-center p-6">
-//               <Loader2 className="h-8 w-8 animate-spin text-primary" />
-//             </div>
-//           ) : teams.length === 0 ? (
-//             <div className="text-center py-6">
-//               <Users className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
-//               <p className="text-muted-foreground mb-3">No teams created yet</p>
-//               <Button onClick={() => navigate('/manager/teams')}>Create a Team First</Button>
-//             </div>
-//           ) : (
-//             <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
-//               <SelectTrigger className="max-w-md">
-//                 <SelectValue placeholder="Select a team" />
-//               </SelectTrigger>
-//               <SelectContent>
-//                 {teams.map(team => (
-//                   <SelectItem key={team.id} value={team.id}>
-//                     {team.name} ({typeof team.sportCategory === 'string' ? team.sportCategory : (team.sportCategory as any)?.name})
-//                   </SelectItem>
-//                 ))}
-//               </SelectContent>
-//             </Select>
-//           )}
-//         </CardContent>
-//       </Card>
-
-//       {/* Member Entry Forms */}
-//       {selectedTeamId && (
-//         <Card>
-//           <CardHeader>
-//             <div className="flex justify-between items-center">
-//               <div>
-//                 <CardTitle className="text-lg">Team Members</CardTitle>
-//                 <CardDescription>
-//                   Adding to: {selectedTeam?.name} • {typeof selectedTeam?.sportCategory === 'string' ? selectedTeam?.sportCategory : (selectedTeam?.sportCategory as any)?.name}
-//                 </CardDescription>
-//               </div>
-//               <Button variant="outline" size="sm" onClick={addMemberRow}>
-//                 <Plus className="h-4 w-4 mr-1" />
-//                 Add Another
-//               </Button>
-//             </div>
-//           </CardHeader>
-//           <CardContent className="space-y-6">
-//             {members.map((member, index) => (
-//               <div key={index} className="border rounded-lg p-4 space-y-4 relative">
-//                 <div className="flex justify-between items-center mb-2">
-//                   <h4 className="font-medium flex items-center gap-2">
-//                     <UserPlus className="h-4 w-4" />
-//                     Member {index + 1}
-//                   </h4>
-//                   {members.length > 1 && (
-//                     <Button
-//                       variant="ghost"
-//                       size="sm"
-//                       onClick={() => removeMemberRow(index)}
-//                     >
-//                       <Trash2 className="h-4 w-4 text-destructive" />
-//                     </Button>
-//                   )}
-//                 </div>
-
-//                 {/* Personal Info */}
-//                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-//                   <div className="space-y-2">
-//                     <Label>First Name *</Label>
-//                     <Input
-//                       value={member.firstName}
-//                       onChange={(e) => updateMember(index, 'firstName', e.target.value)}
-//                       placeholder="First name"
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Last Name *</Label>
-//                     <Input
-//                       value={member.lastName}
-//                       onChange={(e) => updateMember(index, 'lastName', e.target.value)}
-//                       placeholder="Last name"
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Email *</Label>
-//                     <Input
-//                       type="email"
-//                       value={member.email}
-//                       onChange={(e) => updateMember(index, 'email', e.target.value)}
-//                       placeholder="email@example.com"
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-//                   <div className="space-y-2">
-//                     <Label>Phone</Label>
-//                     <Input
-//                       value={member.phone}
-//                       onChange={(e) => updateMember(index, 'phone', e.target.value)}
-//                       placeholder="+966 XXX XXX XXXX"
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Nationality</Label>
-//                     <Select
-//                       value={member.nationality}
-//                       onValueChange={(v) => updateMember(index, 'nationality', v)}
-//                     >
-//                       <SelectTrigger>
-//                         <SelectValue placeholder="Select country" />
-//                       </SelectTrigger>
-//                       <SelectContent>
-//                         {COUNTRIES.map(c => (
-//                           <SelectItem key={c} value={c}>{c}</SelectItem>
-//                         ))}
-//                       </SelectContent>
-//                     </Select>
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Date of Birth</Label>
-//                     <Input
-//                       type="date"
-//                       value={member.dateOfBirth}
-//                       onChange={(e) => updateMember(index, 'dateOfBirth', e.target.value)}
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-//                   <div className="space-y-2">
-//                     <Label>Passport Number *</Label>
-//                     <Input
-//                       value={member.passportNumber}
-//                       onChange={(e) => updateMember(index, 'passportNumber', e.target.value.toUpperCase())}
-//                       placeholder="A12345678"
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Passport Expiry</Label>
-//                     <Input
-//                       type="date"
-//                       value={member.passportExpiry}
-//                       onChange={(e) => updateMember(index, 'passportExpiry', e.target.value)}
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Gender</Label>
-//                     <RadioGroup
-//                       value={member.gender}
-//                       onValueChange={(v) => updateMember(index, 'gender', v)}
-//                       className="flex gap-4 pt-2"
-//                     >
-//                       <div className="flex items-center space-x-2">
-//                         <RadioGroupItem value="Male" id={`male-${index}`} />
-//                         <Label htmlFor={`male-${index}`} className="font-normal">Male</Label>
-//                       </div>
-//                       <div className="flex items-center space-x-2">
-//                         <RadioGroupItem value="Female" id={`female-${index}`} />
-//                         <Label htmlFor={`female-${index}`} className="font-normal">Female</Label>
-//                       </div>
-//                     </RadioGroup>
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-//                   <div className="space-y-2">
-//                     <Label>Role/Position *</Label>
-//                     <Select
-//                       value={member.role}
-//                       onValueChange={(v) => updateMember(index, 'role', v)}
-//                     >
-//                       <SelectTrigger>
-//                         <SelectValue placeholder="Select role" />
-//                       </SelectTrigger>
-//                       <SelectContent>
-//                         {TEAM_ROLES.map(role => (
-//                           <SelectItem key={role} value={role}>{role}</SelectItem>
-//                         ))}
-//                       </SelectContent>
-//                     </Select>
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Dietary Requirements</Label>
-//                     <Input
-//                       value={member.dietaryRequirements}
-//                       onChange={(e) => updateMember(index, 'dietaryRequirements', e.target.value)}
-//                       placeholder="e.g., Halal, Vegetarian"
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-//                   <div className="space-y-2">
-//                     <Label>Emergency Contact Name</Label>
-//                     <Input
-//                       value={member.emergencyContact}
-//                       onChange={(e) => updateMember(index, 'emergencyContact', e.target.value)}
-//                       placeholder="Contact name"
-//                     />
-//                   </div>
-//                   <div className="space-y-2">
-//                     <Label>Emergency Contact Phone</Label>
-//                     <Input
-//                       value={member.emergencyPhone}
-//                       onChange={(e) => updateMember(index, 'emergencyPhone', e.target.value)}
-//                       placeholder="+966 XXX XXX XXXX"
-//                     />
-//                   </div>
-//                 </div>
-
-//                 <div className="space-y-2">
-//                   <Label>Medical Conditions (Optional)</Label>
-//                   <Textarea
-//                     value={member.medicalConditions}
-//                     onChange={(e) => updateMember(index, 'medicalConditions', e.target.value)}
-//                     placeholder="Any medical conditions or allergies..."
-//                     rows={2}
-//                   />
-//                 </div>
-//               </div>
-//             ))}
-
-//             <div className="flex justify-end gap-3 pt-4 border-t">
-//               <Button variant="outline" onClick={addMemberRow}>
-//                 <Plus className="h-4 w-4 mr-2" />
-//                 Add More Members
-//               </Button>
-//               <Button onClick={handleSaveMembers} disabled={isSaving}>
-//                 <Save className="h-4 w-4 mr-2" />
-//                 {isSaving ? 'Saving...' : 'Save All Members'}
-//               </Button>
-//             </div>
-//           </CardContent>
-//         </Card>
-//       )}
-//     </div>
-//   );
-// };
-// export default AddMembersPage;

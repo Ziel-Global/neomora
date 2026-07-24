@@ -80,6 +80,207 @@ export const submitFinalRegistration = async (id: string): Promise<Registration>
     return data;
 };
 
+export interface RegisteredParticipantOption {
+    id: string;
+    registrationId: string;
+    firstName?: string;
+    lastName?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    nationality?: string;
+    passportNumber?: string;
+    gender?: string;
+    role?: string;
+    teamId?: string;
+    eventId?: string;
+    status?: string;
+}
+
+const PENDING_TEAM_REGISTRATIONS_KEY = 'ems_pending_registrations_by_team';
+
+export interface PendingTeamRegistration {
+    participantId: string;
+    registrationId: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    registeredAt: string;
+}
+
+export const getRegistrationParticipantId = (registration: any): string => {
+    if (!registration) return '';
+    const participant =
+        registration.participant && typeof registration.participant === 'object'
+            ? registration.participant
+            : null;
+
+    return String(
+        registration.participantId ||
+        registration.participant_id ||
+        participant?.id ||
+        participant?._id ||
+        '',
+    );
+};
+
+export const normalizeRegistrationParticipant = (
+    registration: any,
+): RegisteredParticipantOption | null => {
+    if (!registration) return null;
+
+    const participant =
+        registration.participant && typeof registration.participant === 'object'
+            ? registration.participant
+            : {};
+
+    const participantId = getRegistrationParticipantId(registration);
+    if (!participantId) return null;
+
+    const firstName =
+        registration.firstName ||
+        registration.first_name ||
+        participant.firstName ||
+        participant.first_name ||
+        '';
+    const lastName =
+        registration.lastName ||
+        registration.last_name ||
+        participant.lastName ||
+        participant.last_name ||
+        '';
+    const email = registration.email || participant.email || '';
+
+    return {
+        id: participantId,
+        registrationId: String(registration.id || registration._id || ''),
+        firstName,
+        lastName,
+        name:
+            registration.name ||
+            participant.name ||
+            `${firstName} ${lastName}`.trim() ||
+            email ||
+            participantId,
+        email,
+        phone: registration.phone || participant.phone,
+        nationality:
+            registration.nationality ||
+            registration.country ||
+            participant.nationality ||
+            participant.country,
+        passportNumber:
+            registration.passportNumber ||
+            registration.passport_number ||
+            participant.passportNumber ||
+            participant.passport_number,
+        gender: registration.gender || participant.gender,
+        role:
+            registration.jobTitle ||
+            registration.participantRole ||
+            registration.role ||
+            participant.role,
+        teamId: String(
+            registration.teamId ||
+            registration.team_id ||
+            registration.team?.id ||
+            registration.team?._id ||
+            '',
+        ),
+        eventId: String(
+            registration.eventId ||
+            registration.event_id ||
+            registration.event?.id ||
+            registration.event?._id ||
+            '',
+        ),
+        status: registration.status,
+    };
+};
+
+const readPendingRegistrationMap = (): Record<string, PendingTeamRegistration[]> => {
+    try {
+        return JSON.parse(sessionStorage.getItem(PENDING_TEAM_REGISTRATIONS_KEY) || '{}');
+    } catch {
+        return {};
+    }
+};
+
+const writePendingRegistrationMap = (map: Record<string, PendingTeamRegistration[]>) => {
+    sessionStorage.setItem(PENDING_TEAM_REGISTRATIONS_KEY, JSON.stringify(map));
+};
+
+export const addPendingTeamRegistration = (
+    teamId: string,
+    entry: PendingTeamRegistration,
+): void => {
+    if (!teamId || !entry.participantId) return;
+    const map = readPendingRegistrationMap();
+    const existing = map[teamId] || [];
+    const deduped = existing.filter(
+        (item) =>
+            item.participantId !== entry.participantId &&
+            item.email.toLowerCase() !== entry.email.toLowerCase(),
+    );
+    map[teamId] = [...deduped, entry];
+    writePendingRegistrationMap(map);
+};
+
+export const getPendingTeamRegistrations = (teamId: string): PendingTeamRegistration[] => {
+    if (!teamId) return [];
+    return readPendingRegistrationMap()[teamId] || [];
+};
+
+export const removePendingTeamRegistrations = (
+    teamId: string,
+    participantIds: string[],
+): void => {
+    if (!teamId || participantIds.length === 0) return;
+    const map = readPendingRegistrationMap();
+    const ids = new Set(participantIds);
+    map[teamId] = (map[teamId] || []).filter((item) => !ids.has(item.participantId));
+    writePendingRegistrationMap(map);
+};
+
+export const getRegistrationReferenceId = (registration: unknown): string => {
+    const reg = registration as Record<string, unknown> | null | undefined;
+    if (!reg) return '';
+
+    const nested = reg.data as Record<string, unknown> | undefined;
+    return String(
+        reg.id ||
+        reg._id ||
+        reg.registrationId ||
+        reg.registration_id ||
+        nested?.id ||
+        nested?._id ||
+        '',
+    );
+};
+
+export const getRegistrationDocuments = async (registrationId: string): Promise<any[]> => {
+    const { data } = await apiClient.get(`/registrations/${registrationId}/documents`);
+    return Array.isArray(data) ? data : (data?.data || data?.documents || []);
+};
+
+export interface RegistrationDocumentUpload {
+    file: File;
+    type: string;
+}
+
+export const uploadRegistrationDocuments = async (
+    registrationId: string,
+    documents: RegistrationDocumentUpload[],
+): Promise<void> => {
+    for (const doc of documents) {
+        const formData = new FormData();
+        formData.append(doc.type, doc.file);
+        formData.append('type', doc.type);
+        await apiClient.post(`/registrations/${registrationId}/documents`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+    }
+};
 
 
 // ──────────────────────────────────────────────

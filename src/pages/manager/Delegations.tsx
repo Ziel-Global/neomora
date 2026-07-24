@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,10 +15,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Flag, Users, Send, CheckCircle, Clock, AlertCircle, Plus, Plane, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
-import { getDelegationsDetails, createDelegation, submitDelegation, updateDelegation, deleteDelegation } from '@/api/delegationApi';
+import { getMyDelegations, createDelegation, submitDelegation, updateDelegation, deleteDelegation, extractDelegationId } from '@/api/delegationApi';
 import { getEvents } from '@/api/eventApi';
 import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam } from '@/api/teamApi';
-import { createRegistration, getMyRegistrations } from '@/api/registrationApi';
 import { EMSEvent } from '@/lib/emsStore';
 
 const AIRPORTS = [
@@ -47,6 +47,9 @@ interface BulkTravelPrefs {
 
 const DelegationsPage: React.FC = () => {
   const { manager } = useManagerSession();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const handledCreateFromUrl = useRef(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [delegations, setDelegations] = useState<Delegation[]>([]);
   const [localDraftDelegations, setLocalDraftDelegations] = useState<Delegation[]>([]);
@@ -55,6 +58,7 @@ const DelegationsPage: React.FC = () => {
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [delegationCountry, setDelegationCountry] = useState<string>('');
   const [events, setEvents] = useState<EMSEvent[]>([]);
+  const [createFromInvitationEventId, setCreateFromInvitationEventId] = useState<string | null>(null);
   const [isCountryDialogOpen, setIsCountryDialogOpen] = useState(false);
   const [countryInput, setCountryInput] = useState('');
   const [pendingSubmission, setPendingSubmission] = useState<{ delegationId: string; isDraft: boolean } | null>(null);
@@ -77,6 +81,7 @@ const DelegationsPage: React.FC = () => {
   const [isSubmittingBulk, setIsSubmittingBulk] = useState(false);
   const [bulkProgress, setBulkProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
 
   useEffect(() => {
     if (manager) {
@@ -86,6 +91,69 @@ const DelegationsPage: React.FC = () => {
       refreshData();
     }
   }, [manager]);
+
+  useEffect(() => {
+    if (handledCreateFromUrl.current || isLoading) return;
+
+    const eventId = searchParams.get('eventId');
+    const eventName = searchParams.get('eventName');
+    const shouldCreate = searchParams.get('create') === '1' || searchParams.get('create') === 'true';
+    if (!eventId || !shouldCreate) return;
+
+    handledCreateFromUrl.current = true;
+    setCreateFromInvitationEventId(eventId);
+
+    if (!events.some((event) => String(event.id) === String(eventId))) {
+      const fromStore = eventStore.getById(eventId);
+      if (fromStore) {
+        setEvents((prev) => {
+          if (prev.some((event) => String(event.id) === String(eventId))) return prev;
+          return [...prev, fromStore];
+        });
+      } else if (eventName) {
+        setEvents((prev) => {
+          if (prev.some((event) => String(event.id) === String(eventId))) return prev;
+          return [...prev, {
+            id: eventId,
+            name: eventName,
+            theme: '',
+            startDate: '',
+            endDate: '',
+            city: '',
+            venues: [],
+            status: 'Published',
+            clientGroups: [],
+            eventType: 'individual',
+            sportCategories: [],
+            allowTeamRegistration: false,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as EMSEvent];
+        });
+      }
+    }
+
+    setSelectedEventId(eventId);
+    setIsCreateOpen(true);
+    navigate('/manager/delegations', { replace: true });
+  }, [searchParams, isLoading, events, navigate]);
+
+  const getSelectableEvents = (): EMSEvent[] => {
+    if (!createFromInvitationEventId) return events;
+    const matched = events.filter((event) => String(event.id) === String(createFromInvitationEventId));
+    if (matched.length > 0) return matched;
+    const fromStore = eventStore.getById(createFromInvitationEventId);
+    return fromStore ? [fromStore] : [];
+  };
+
+  const handleCreateOpenChange = (open: boolean) => {
+    setIsCreateOpen(open);
+    if (!open) {
+      setCreateFromInvitationEventId(null);
+      setSelectedEventId('');
+      setSelectedTeamIds([]);
+    }
+  };
 
   const normalizeDelegation = (delegation: any, teamData?: Team[]) => {
     const id = delegation.id || delegation._id;
@@ -115,11 +183,10 @@ const DelegationsPage: React.FC = () => {
     if (manager) {
       setIsLoading(true);
       try {
-        const [delegationData, eventData, teamData, registrations] = await Promise.all([
-          getDelegationsDetails(),
+        const [delegationData, eventData, teamData] = await Promise.all([
+          getMyDelegations(),
           getEvents(),
           getMyTeams(),
-          getMyRegistrations().catch(() => [])
         ]);
         const remoteDelegations = delegationData.map((d: any) => normalizeDelegation(d, teamData));
 
@@ -129,11 +196,6 @@ const DelegationsPage: React.FC = () => {
           const teamWithCountry = teamData.find(t => t.country && t.country !== 'Unknown');
           if (teamWithCountry) {
             resolvedCountry = teamWithCountry.country;
-          } else {
-            const regWithCountry = (registrations as any[]).find(r => r.country && r.country !== 'Unknown');
-            if (regWithCountry) {
-              resolvedCountry = regWithCountry.country;
-            }
           }
         }
 
@@ -154,13 +216,6 @@ const DelegationsPage: React.FC = () => {
         });
         setEvents(eventData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
 
-        const registrationCounts = new Map<string, number>();
-        for (const r of registrations as any[]) {
-          const teamId = r.teamId || r.team_id || r.team?.id;
-          if (!teamId) continue;
-          registrationCounts.set(teamId, (registrationCounts.get(teamId) || 0) + 1);
-        }
-
         const memberCountsByTeam = new Map<string, number>();
         await Promise.all(
           teamData.map(async (t: any) => {
@@ -173,14 +228,12 @@ const DelegationsPage: React.FC = () => {
           })
         );
 
-        // Normalize memberCount for server teams only (from database)
         const mergedTeams = teamData.map((t: any) => {
           const countFromServer = t.memberCount || t.member_count || 0;
-          const countFromRegs = registrationCounts.get(t.id) || 0;
           const countFromMembers = memberCountsByTeam.get(t.id) || 0;
           return {
             ...t,
-            memberCount: Math.max(countFromServer, countFromRegs, countFromMembers)
+            memberCount: Math.max(countFromServer, countFromMembers),
           };
         });
 
@@ -246,24 +299,47 @@ const DelegationsPage: React.FC = () => {
       return;
     }
 
-    // Create local draft delegation only (don't send to server yet)
-    const draftDelegation: Delegation = {
-      id: `draft-${Date.now()}`,
-      managerId: manager.id,
-      country: delegationCountry,
-      eventId: selectedEventId,
-      teamIds: selectedTeamIds,
-      status: 'Draft',
-      totalMembers: 0,
-      submittedAt: undefined,
-    } as any;
+    setIsCreating(true);
+    try {
+      const serverDelegation = await createDelegation({
+        managerId: manager.id,
+        country: delegationCountry.trim(),
+        eventId: selectedEventId,
+        teamIds: selectedTeamIds,
+      });
 
-    setLocalDraftDelegations(prev => [...prev, draftDelegation]);
-    setDelegations(prev => [...prev, draftDelegation]);
-    toast.success('Delegation saved as draft. Click "Submit for Approval" to submit to admin.');
-    setSelectedEventId('');
-    setSelectedTeamIds([]);
-    setIsCreateOpen(false);
+      const delegationId = extractDelegationId(serverDelegation);
+      if (!delegationId) {
+        toast.error('Delegation created but no ID returned from server');
+        return;
+      }
+
+      if (selectedTeamIds.length > 0) {
+        try {
+          await Promise.all(
+            selectedTeamIds.map((teamId) =>
+              updateTeam(teamId, { delegationId, delegation_id: delegationId } as any),
+            ),
+          );
+        } catch (err: any) {
+          console.error('Failed to associate teams with delegation:', err);
+          toast.error(`Delegation created but failed to link teams: ${err?.message || err}`);
+        }
+      }
+
+      toast.success('Delegation created successfully');
+      setSelectedEventId('');
+      setSelectedTeamIds([]);
+      setCreateFromInvitationEventId(null);
+      setIsCreateOpen(false);
+      await refreshData();
+    } catch (error: any) {
+      console.error('Failed to create delegation:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Failed to create delegation';
+      toast.error(msg);
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const openCountryDialog = (delegationId: string, isDraft: boolean, initialCountry?: string) => {
@@ -516,11 +592,11 @@ const DelegationsPage: React.FC = () => {
             Create and submit your country's delegation for events
           </p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          {/* <Button onClick={() => setIsCreateOpen(true)}>
+        <Dialog open={isCreateOpen} onOpenChange={handleCreateOpenChange}>
+          <Button onClick={() => setIsCreateOpen(true)}>
             <Plus className="h-4 w-4 mr-2" />
             New Delegation
-          </Button> */}
+          </Button>
           <DialogContent className="max-w-lg">
             <DialogHeader>
               <DialogTitle>Create Delegation</DialogTitle>
@@ -528,22 +604,28 @@ const DelegationsPage: React.FC = () => {
             <div className="space-y-4 py-4">
               <div className="space-y-2">
                 <Label>Select Event *</Label>
-                <Select
-                  value={selectedEventId}
-                  onValueChange={(val) => {
-                    setSelectedEventId(val);
-                    setSelectedTeamIds([]); // Clear teams when event changes
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose an event" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {events.map(e => (
-                      <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {createFromInvitationEventId ? (
+                  <div className="rounded-md border px-3 py-2 text-sm bg-muted/30">
+                    {getSelectableEvents()[0]?.name || 'Selected event'}
+                  </div>
+                ) : (
+                  <Select
+                    value={selectedEventId}
+                    onValueChange={(val) => {
+                      setSelectedEventId(val);
+                      setSelectedTeamIds([]);
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose an event" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {events.map(e => (
+                        <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -591,8 +673,12 @@ const DelegationsPage: React.FC = () => {
               </div>
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setIsCreateOpen(false)}>Cancel</Button>
-              <Button onClick={handleCreateDelegation}>Create Delegation</Button>
+              <Button variant="outline" onClick={() => handleCreateOpenChange(false)} disabled={isCreating}>
+                Cancel
+              </Button>
+              <Button onClick={handleCreateDelegation} disabled={isCreating}>
+                {isCreating ? 'Creating...' : 'Create Delegation'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

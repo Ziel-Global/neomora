@@ -12,7 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Input } from '@/components/ui/input';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
-import { getMyRegistrations } from '@/api/registrationApi';
 import { Loader2, Eye, Search, FileText, Users, UserPlus, ArrowRight, Calendar, Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -55,22 +54,20 @@ const RegistrationsPage: React.FC = () => {
       setTeams(teamsData);
       setEvents(eventsData);
 
-      // Try to get registrations from global endpoint first
-      let regsData = await getMyRegistrations();
-
-      // If none found or global failed, aggregate from teams
-      if (regsData.length === 0 && teamsData.length > 0) {
-        console.log('No global registrations found, aggregating from teams...');
-        const teamMembersPromises = teamsData.map(team => listTeamMembers(team.id));
-        const membersPerTeam = await Promise.all(teamMembersPromises);
-
-        // Flatten and add teamId context if missing
-        regsData = membersPerTeam.flatMap((teamMembers, index) =>
-          teamMembers.map(m => ({ ...m, teamId: teamsData[index].id }))
-        );
+      if (teamsData.length === 0) {
+        setMembers([]);
+        return;
       }
 
-      setMembers(regsData as any);
+      const membersPerTeam = await Promise.all(
+        teamsData.map(team => listTeamMembers(team.id))
+      );
+
+      const membersData = membersPerTeam.flatMap((teamMembers, index) =>
+        teamMembers.map(member => ({ ...member, teamId: teamsData[index].id }))
+      );
+
+      setMembers(membersData);
     } catch (error: any) {
       console.error('Failed to load registrations data:', error);
       const msg = error?.response?.data?.message || error?.message || 'Unknown error';

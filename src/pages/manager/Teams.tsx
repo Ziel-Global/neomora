@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -7,36 +7,101 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
 import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES } from '@/lib/teamStore';
-import { eventStore } from '@/lib/emsStore';
-import { Plus, Users, Trash2, Edit, Eye } from 'lucide-react';
+import { Plus, Users, Trash2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 import { getMyTeams, createTeam, deleteTeam, listTeamMembers } from '@/api/teamApi';
-import { getMyRegistrations } from '@/api/registrationApi';
-import { getDelegationsDetails, createDelegation } from '@/api/delegationApi';
+import { getMyDelegations } from '@/api/delegationApi';
 import { getEvents } from '@/api/eventApi';
 import { EMSEvent } from '@/lib/emsStore';
 import { Loader2 } from 'lucide-react';
+
+interface EventSportCategoryOption {
+  key: string;
+  sportName: string;
+  group: string;
+  label: string;
+}
+
+const KNOWN_SPORT_GROUPS = new Set(['team-based-games', 'individual-games', 'hybrid-games']);
+
+const inferSportCategoryGroup = (sportName: string): string => {
+  const cat = SPORT_CATEGORIES.find(
+    (c) => c.name.toLowerCase() === sportName.toLowerCase(),
+  );
+  if (!cat) return 'hybrid-games';
+
+  const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
+  const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
+  if (teamGames.includes(cat.id)) return 'team-based-games';
+  if (individualGames.includes(cat.id)) return 'individual-games';
+  return 'hybrid-games';
+};
+
+const normalizeEventSportCategories = (event?: EMSEvent | null): EventSportCategoryOption[] => {
+  const raw = (event as any)?.sportCategories || (event as any)?.sport_categories || [];
+  if (!Array.isArray(raw)) return [];
+
+  const options = new Map<string, EventSportCategoryOption>();
+
+  raw.forEach((category: any, index: number) => {
+    const rawName = String(category.name || category.sportCategory || category.sport_category || '').trim();
+    const rawSubCategory = String(category.subCategory || category.sub_category || '').trim();
+    const rawGroup = String(
+      category.group ||
+      category.sportCategoryGroup ||
+      category.sport_category_group ||
+      '',
+    ).trim();
+
+    // API uses subCategory for sport name (e.g. Football) and sportCategoryGroup for group.
+    let sportName = rawName;
+    let group = rawGroup;
+
+    if (KNOWN_SPORT_GROUPS.has(rawName) && rawSubCategory) {
+      sportName = rawSubCategory;
+      group = rawName;
+    } else if (!group && sportName) {
+      group = inferSportCategoryGroup(sportName);
+    }
+
+    if (!sportName || !group) return;
+
+    const key = `${group}::${sportName}`;
+    if (options.has(key)) return;
+
+    const detailLabel =
+      rawSubCategory && rawSubCategory.toLowerCase() !== sportName.toLowerCase()
+        ? `${sportName} (${rawSubCategory})`
+        : sportName;
+
+    options.set(key, {
+      key,
+      sportName,
+      group,
+      label: detailLabel,
+    });
+  });
+
+  return Array.from(options.values());
+};
 
 const TeamsPage: React.FC = () => {
   const navigate = useNavigate();
   const { manager } = useManagerSession();
   const [teams, setTeams] = useState<Team[]>([]);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [selectedSport, setSelectedSport] = useState('');
+  const [selectedSportOptionKey, setSelectedSportOptionKey] = useState('');
   const [formData, setFormData] = useState({
     name: '',
-    sportCategory: '',
-    subCategory: '',
+    delegationId: '',
     eventId: '',
   });
   const [isLoading, setIsLoading] = useState(false);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [events, setEvents] = useState<EMSEvent[]>([]);
   const [delegations, setDelegations] = useState<any[]>([]);
-
-  // Remove static events
 
   useEffect(() => {
     if (manager) {
@@ -47,12 +112,11 @@ const TeamsPage: React.FC = () => {
   const initialLoad = async () => {
     setIsLoading(true);
     try {
-      const [eventsData, delegationsData] = await Promise.all([
+      const [eventsData] = await Promise.all([
         getEvents(),
-        getDelegationsDetails()
+        refreshDelegations(),
       ]);
       setEvents(eventsData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
-      setDelegations(delegationsData);
       await refreshTeams(teamStore.getByManager(manager?.id || ''));
     } catch (error: any) {
       console.error('Failed to load initial teams data:', error);
@@ -63,20 +127,19 @@ const TeamsPage: React.FC = () => {
     }
   };
 
+  const refreshDelegations = async () => {
+    try {
+      const delegationsData = await getMyDelegations();
+      setDelegations(delegationsData);
+    } catch (error) {
+      console.error('Failed to refresh delegations:', error);
+    }
+  };
+
   const refreshTeams = async (localTeamsOverride?: Team[]) => {
     try {
-      const [serverTeams, registrations] = await Promise.all([
-        getMyTeams(),
-        getMyRegistrations().catch(() => [])
-      ]);
+      const serverTeams = await getMyTeams();
       const localTeams = localTeamsOverride || teamStore.getByManager(manager?.id || '');
-
-      const registrationCounts = new Map<string, number>();
-      for (const r of registrations as any[]) {
-        const teamId = r.teamId || r.team_id || r.team?.id;
-        if (!teamId) continue;
-        registrationCounts.set(teamId, (registrationCounts.get(teamId) || 0) + 1);
-      }
 
       const memberCountsByTeam = new Map<string, number>();
       await Promise.all(
@@ -87,17 +150,16 @@ const TeamsPage: React.FC = () => {
           } catch {
             memberCountsByTeam.set(team.id, 0);
           }
-        })
+        }),
       );
 
       const merged = serverTeams.map((t: any) => {
         const countFromServer = t.memberCount || t.member_count || 0;
-        const countFromRegs = registrationCounts.get(t.id) || 0;
         const countFromMembers = memberCountsByTeam.get(t.id) || 0;
-        
+
         return {
           ...t,
-          memberCount: Math.max(countFromServer, countFromRegs, countFromMembers)
+          memberCount: Math.max(countFromServer, countFromMembers),
         };
       });
 
@@ -114,71 +176,83 @@ const TeamsPage: React.FC = () => {
     }
   };
 
+  const selectedEvent = useMemo(
+    () => events.find(e => e.id === formData.eventId),
+    [events, formData.eventId],
+  );
+
+  const eventSportOptions = useMemo(
+    () => normalizeEventSportCategories(selectedEvent),
+    [selectedEvent],
+  );
+
+  const selectedSportOption = useMemo(
+    () => eventSportOptions.find(option => option.key === selectedSportOptionKey),
+    [eventSportOptions, selectedSportOptionKey],
+  );
+
+  const resolveDelegationEventId = (delegation: any): string =>
+    delegation?.eventId || delegation?.event_id || delegation?.event?.id || delegation?.event?._id || '';
+
+  const getDelegationLabel = (delegation: any): string => {
+    const name = delegation.name || delegation.country || 'Delegation';
+    const eventId = resolveDelegationEventId(delegation);
+    const eventName = events.find(e => e.id === eventId)?.name;
+    return eventName ? `${name} (${eventName})` : name;
+  };
+
+  const resetCreateForm = () => {
+    setFormData({ name: '', delegationId: '', eventId: '' });
+    setSelectedSportOptionKey('');
+  };
+
+  const handleDelegationChange = (delegationId: string) => {
+    const delegation = delegations.find(d => (d.id || d._id) === delegationId);
+    const eventId = delegation ? resolveDelegationEventId(delegation) : '';
+    setSelectedSportOptionKey('');
+    setFormData(prev => ({
+      ...prev,
+      delegationId,
+      eventId,
+    }));
+  };
+
   const handleCreateTeam = async () => {
     if (!manager) return;
 
-    if (!formData.name || !formData.sportCategory || !formData.eventId) {
-      toast.error('Please fill in all required fields (Name, Event, and Sport)');
+    if (!formData.delegationId) {
+      toast.error('Please select a delegation');
       return;
     }
 
-    // Find the delegation for the selected event (Optional - backend should handle creation if missing)
-    const targetDelegation = delegations.find(d => (d.eventId || d.event_id || d.event?.id) === formData.eventId);
+    if (!formData.name.trim() || !formData.eventId) {
+      toast.error('Please fill in all required fields');
+      return;
+    }
 
-    // Map sport category to backend's allowed enum values
-    const mapCategory = (catId: string) => {
-      const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
-      const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
-      // combat can be considered individual or hybrid based on logic
-      if (teamGames.includes(catId)) return 'team-based-games';
-      if (individualGames.includes(catId)) return 'individual-games';
-      return 'hybrid-games';
-    };
+    if (!selectedSportOption) {
+      toast.error('Please select a sport category configured for this event');
+      return;
+    }
 
     setIsActionLoading(true);
     try {
-      const selectedEvent = events.find(e => e.id === formData.eventId);
-      const eventSportCat = selectedEvent?.sportCategories?.find(
-        (c: any) => c.subCategory?.toLowerCase() === formData.sportCategory.toLowerCase()
-      );
-
-      const payload: any = {
+      await createTeam({
+        delegationId: formData.delegationId,
         eventId: formData.eventId,
-        name: formData.name,
-        sportCategory: formData.sportCategory,
-        // Backend expects sportCategoryGroup to match event's sport_category "name"
-        sportCategoryGroup: eventSportCat?.name || mapCategory(selectedSport),
-        // Backend expects subCategory to match event's sport_category "subCategory"
-        subCategory: formData.sportCategory
-      };
-
-      if (targetDelegation) {
-        payload.delegationId = targetDelegation.id;
-      } else {
-        const existingCountry = teams.find(t => t.country && t.country !== 'Unknown')?.country;
-        const countryToUse = existingCountry || manager.country || 'Unknown';
-
-        const createdDelegation = await createDelegation({
-          country: countryToUse,
-          eventId: formData.eventId,
-          managerId: manager.id,
-          teamIds: [],
-        });
-
-        payload.delegationId = createdDelegation.id;
-      }
-
-      await createTeam(payload);
+        name: formData.name.trim(),
+        sportCategoryGroup: selectedSportOption.group,
+        subCategory: selectedSportOption.sportName,
+      });
       toast.success('Team created successfully!');
 
-      setFormData({ name: '', sportCategory: '', subCategory: '', eventId: '' });
-      setSelectedSport('');
+      resetCreateForm();
       setIsCreateOpen(false);
       refreshTeams();
     } catch (error: any) {
       console.error('Failed to create team:', error);
       const msg = error?.response?.data?.message || error?.message || 'Failed to create team';
-      toast.error(msg);
+      toast.error(Array.isArray(msg) ? msg.join(', ') : msg);
     } finally {
       setIsActionLoading(false);
     }
@@ -211,18 +285,26 @@ const TeamsPage: React.FC = () => {
     }
   };
 
-  const selectedCategory = SPORT_CATEGORIES.find(c => c.id === selectedSport);
-
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-start">
         <div>
           <h1 className="text-3xl font-bold">My Teams</h1>
           <p className="text-muted-foreground mt-1">
-            Create and manage teams for your delegation
+            Create teams under your delegations
           </p>
         </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+        <Dialog
+          open={isCreateOpen}
+          onOpenChange={(open) => {
+            setIsCreateOpen(open);
+            if (open) {
+              refreshDelegations();
+            } else {
+              resetCreateForm();
+            }
+          }}
+        >
           <DialogTrigger asChild>
             <Button>
               <Plus className="h-4 w-4 mr-2" />
@@ -235,6 +317,32 @@ const TeamsPage: React.FC = () => {
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
+                <Label>Delegation *</Label>
+                {delegations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No delegations yet. Create one from the Delegations page first.
+                  </p>
+                ) : (
+                  <Select
+                    value={formData.delegationId}
+                    onValueChange={handleDelegationChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select delegation" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {delegations.map(d => {
+                        const id = d.id || d._id;
+                        return (
+                          <SelectItem key={id} value={id}>{getDelegationLabel(d)}</SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              <div className="space-y-2">
                 <Label>Team Name *</Label>
                 <Input
                   placeholder="e.g., Saudi Athletics Team"
@@ -244,10 +352,14 @@ const TeamsPage: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <Label>Event (Optional)</Label>
+                <Label>Event *</Label>
                 <Select
                   value={formData.eventId}
-                  onValueChange={(v) => setFormData(prev => ({ ...prev, eventId: v }))}
+                  onValueChange={(v) => {
+                    setSelectedSportOptionKey('');
+                    setFormData(prev => ({ ...prev, eventId: v }));
+                  }}
+                  disabled={!!formData.delegationId}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select event" />
@@ -258,55 +370,46 @@ const TeamsPage: React.FC = () => {
                     ))}
                   </SelectContent>
                 </Select>
+                {formData.delegationId && (
+                  <p className="text-xs text-muted-foreground">
+                    Event is set from the selected delegation
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
                 <Label>Sport Category *</Label>
-                <Select
-                  value={selectedSport}
-                  onValueChange={(v) => {
-                    setSelectedSport(v);
-                    const cat = SPORT_CATEGORIES.find(c => c.id === v);
-                    setFormData(prev => ({
-                      ...prev,
-                      sportCategory: cat?.name || '',
-                      subCategory: ''
-                    }));
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select sport" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SPORT_CATEGORIES.map(cat => (
-                      <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {selectedCategory && selectedCategory.subCategories.length > 0 && (
-                <div className="space-y-2">
-                  <Label>Sub-Category</Label>
+                {!formData.eventId ? (
+                  <p className="text-sm text-muted-foreground">Select a delegation or event first</p>
+                ) : eventSportOptions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No sport categories configured for this event. Ask admin to add them on the event.
+                  </p>
+                ) : (
                   <Select
-                    value={formData.subCategory}
-                    onValueChange={(v) => setFormData(prev => ({ ...prev, subCategory: v }))}
+                    value={selectedSportOptionKey}
+                    onValueChange={setSelectedSportOptionKey}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Select sub-category" />
+                      <SelectValue placeholder="Select sport category" />
                     </SelectTrigger>
                     <SelectContent>
-                      {selectedCategory.subCategories.map(sub => (
-                        <SelectItem key={sub} value={sub}>{sub}</SelectItem>
+                      {eventSportOptions.map(option => (
+                        <SelectItem key={option.key} value={option.key}>
+                          {option.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-              )}
+                )}
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isActionLoading}>Cancel</Button>
-              <Button onClick={handleCreateTeam} disabled={isActionLoading}>
+              <Button
+                onClick={handleCreateTeam}
+                disabled={isActionLoading || delegations.length === 0 || eventSportOptions.length === 0}
+              >
                 {isActionLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create Team
               </Button>
@@ -324,7 +427,7 @@ const TeamsPage: React.FC = () => {
           <CardContent className="py-12 text-center">
             <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
             <h3 className="font-semibold mb-2">No teams yet</h3>
-            <p className="text-muted-foreground mb-4">Create your first team to start adding members</p>
+            <p className="text-muted-foreground mb-4">Create a delegation first, then add your first team</p>
             <Button onClick={() => setIsCreateOpen(true)}>
               <Plus className="h-4 w-4 mr-2" />
               Create Team
@@ -357,7 +460,7 @@ const TeamsPage: React.FC = () => {
                     size="sm"
                     variant="outline"
                     className="flex-1"
-                    onClick={() => navigate(`/manager/add-members?teamId=${team.id}`)}
+                    onClick={() => navigate(`/manager/register-list?teamId=${team.id}`)}
                   >
                     <Plus className="h-4 w-4 mr-1" />
                     Add Members

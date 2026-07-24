@@ -1472,16 +1472,17 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { eventStore, invitationStore, participantStore, registrationStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
+import { eventStore, invitationStore, participantStore, registrationStore, templateStore, campaignStore, EMSInvitation, EMSEvent, EMSInvitationTemplate } from '@/lib/emsStore';
 import { teamMemberStore, teamStore, delegationStore } from '@/lib/teamStore';
-import { getDelegationsDetails } from '@/api/delegationApi';
+import { getMyDelegations } from '@/api/delegationApi';
 import { getMyTeams } from '@/api/teamApi';
-import { getMyRegistrations } from '@/api/registrationApi';
 import { getEvents } from '@/api/eventApi';
-import { getMyInvitations } from '@/api/invitationApi';
+import { getMyInvitations, getInvitationsForDelegations, normalizeInvitation } from '@/api/invitationApi';
+import { getCampaignsForManager, getCampaignDelegationIds, getCampaignManagerRoleIds, isSentCampaignStatus, Campaign } from '@/api/campaignApi';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
-import { Mail, Check, X, Users, Calendar, MapPin, CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
+import { Mail, Check, X, Users, Calendar, MapPin, CheckCircle, Clock, AlertCircle, Loader2, Crown, Eye, Flag } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
 
@@ -1490,6 +1491,8 @@ interface DelegationInvitation {
   event: EMSEvent;
   participantName: string;
   participantEmail: string;
+  delegationName: string;
+  rawSource?: any;
 }
 
 interface DelegationNotice {
@@ -1501,6 +1504,248 @@ interface DelegationNotice {
   rejectionReason?: string;
 }
 
+const toPreviewTemplate = (raw: unknown): EMSInvitationTemplate | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const template = raw as Record<string, unknown>;
+  const id = template.id || template._id;
+  if (!id) return null;
+  return {
+    id: String(id),
+    name: String(template.name || ''),
+    subject: String(template.subject || ''),
+    body: String(template.body || template.content || ''),
+    language: String(template.language || 'en'),
+    variables: Array.isArray(template.variables) ? template.variables.map(String) : [],
+    createdAt: String(template.createdAt || template.created_at || new Date().toISOString()),
+  };
+};
+
+const syncTemplateToStore = (raw: unknown) => {
+  const template = toPreviewTemplate(raw);
+  if (!template) return;
+  const templates = templateStore.getAll();
+  const index = templates.findIndex(entry => entry.id === template.id);
+  if (index >= 0) {
+    templates[index] = { ...templates[index], ...template };
+  } else {
+    templates.push(template);
+  }
+  localStorage.setItem('ems_invitation_templates', JSON.stringify(templates));
+};
+
+const resolveDelegationName = (
+  delegationId: string | undefined,
+  serverDelegations: any[],
+  fallbackCountry?: string,
+  embeddedDelegation?: any,
+): string => {
+  const embeddedLabel =
+    embeddedDelegation?.name ||
+    embeddedDelegation?.country ||
+    embeddedDelegation?.delegationName;
+  if (embeddedLabel) {
+    return String(embeddedLabel).toLowerCase().includes('delegation')
+      ? String(embeddedLabel)
+      : `${embeddedLabel} Delegation`;
+  }
+
+  if (delegationId) {
+    const serverDelegation = serverDelegations.find(
+      (entry) => String(entry.id || entry._id) === String(delegationId),
+    );
+    const localDelegation = delegationStore.getById(delegationId);
+    const label =
+      serverDelegation?.name ||
+      serverDelegation?.delegationName ||
+      serverDelegation?.country ||
+      localDelegation?.country;
+    if (label) {
+      return String(label).toLowerCase().includes('delegation') ? String(label) : `${label} Delegation`;
+    }
+  }
+  return '';
+};
+
+const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
+  const name = template.name.toLowerCase();
+  const subject = template.subject.toLowerCase();
+  return name.includes('vip') || name.includes('exclusive') ||
+    subject.includes('vip') || subject.includes('exclusive');
+};
+
+const formatEventDates = (event: EMSEvent): string => {
+  if (!event?.startDate) return 'N/A';
+  const startLabel = new Date(event.startDate).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  if (!event.endDate || event.endDate === event.startDate) return startLabel;
+  const endLabel = new Date(event.endDate).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+  return `${startLabel} - ${endLabel}`;
+};
+
+const getInvitationTemplate = (
+  invitation: EMSInvitation,
+  rawSource?: any,
+  campaigns: Campaign[] = [],
+): EMSInvitationTemplate | null => {
+  const fromInvitation = toPreviewTemplate(rawSource?.template);
+  if (fromInvitation) return fromInvitation;
+
+  const campaign =
+    rawSource?.campaign ||
+    getCampaignForInvitation(invitation, campaigns, rawSource);
+  const fromCampaign = toPreviewTemplate(campaign?.template);
+  if (fromCampaign) return fromCampaign;
+
+  if (invitation.templateId) {
+    const fromStore = templateStore.getById(invitation.templateId);
+    if (fromStore) return fromStore;
+  }
+
+  if (invitation.campaignId) {
+    const storedCampaign = campaignStore.getById(invitation.campaignId) as Campaign | undefined;
+    const fromStoredCampaign = toPreviewTemplate(storedCampaign?.template);
+    if (fromStoredCampaign) return fromStoredCampaign;
+    if (storedCampaign?.templateId) {
+      return templateStore.getById(storedCampaign.templateId) || null;
+    }
+  }
+
+  return null;
+};
+
+const getCampaignForInvitation = (
+  invitation: EMSInvitation,
+  campaigns: Campaign[] = [],
+  rawSource?: any,
+): Campaign | null => {
+  const embedded = rawSource?.campaign;
+  const campaignId =
+    invitation.campaignId ||
+    embedded?.id ||
+    embedded?._id ||
+    rawSource?.campaignId ||
+    rawSource?.campaign_id;
+
+  if (embedded && typeof embedded === 'object') {
+    if (embedded.name || embedded.subject) return embedded as Campaign;
+    if (campaignId) {
+      const fromList = campaigns.find(c => String(c.id) === String(campaignId));
+      if (fromList) return fromList;
+    }
+  }
+
+  if (!campaignId) return null;
+  return campaigns.find(c => String(c.id) === String(campaignId))
+    || (campaignStore.getById(campaignId) as Campaign | undefined)
+    || null;
+};
+
+const dedupeInvitations = (items: DelegationInvitation[]): DelegationInvitation[] => {
+  const seen = new Set<string>();
+  return items.filter(item => {
+    const key = `${item.invitation.campaignId || item.invitation.id}-${item.event.id}-${item.invitation.delegationId || item.delegationName}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const buildEventFromRecord = (eventId: string, embedded?: any): EMSEvent | null => {
+  if (!embedded || typeof embedded !== 'object') return null;
+  const id = String(eventId || embedded.id || embedded._id || '');
+  if (!id) return null;
+  return {
+    id,
+    name: embedded.name || 'Event',
+    theme: embedded.theme || '',
+    startDate: embedded.startDate || embedded.start_date || '',
+    endDate: embedded.endDate || embedded.end_date || '',
+    city: embedded.city || '',
+    venues: embedded.venues || [],
+    status: embedded.status || 'Published',
+    clientGroups: embedded.clientGroups || embedded.client_groups || [],
+    eventType: embedded.eventType || embedded.event_type || 'individual',
+    sportCategories: embedded.sportCategories || embedded.sport_categories || [],
+    allowTeamRegistration: embedded.allowTeamRegistration || embedded.allow_team_registration || false,
+    createdAt: embedded.createdAt || embedded.created_at || new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+};
+
+const resolveInvitationEvent = (
+  normalized: any,
+  serverEvents: any[],
+): EMSEvent | null => {
+  const eventId = String(
+    normalized.eventId ||
+    normalized.event_id ||
+    normalized.event?.id ||
+    normalized.event?._id ||
+    normalized.campaign?.eventId ||
+    normalized.campaign?.event?.id ||
+    '',
+  );
+
+  const embedded = normalized.event || normalized.campaign?.event;
+  const fromEmbedded = buildEventFromRecord(eventId, embedded);
+  if (fromEmbedded) return fromEmbedded;
+
+  if (eventId) {
+    const fromStore = eventStore.getById(eventId);
+    if (fromStore) return fromStore;
+
+    const fromServer = serverEvents.find(
+      (entry) => String(entry.id || entry._id) === eventId,
+    );
+    if (fromServer) {
+      return buildEventFromRecord(eventId, fromServer);
+    }
+  }
+
+  if (normalized.campaign?.name || normalized.campaign?.event?.name) {
+    return {
+      id: eventId || String(normalized.id || normalized.campaign?.id || 'event'),
+      name: normalized.campaign?.event?.name || normalized.campaign?.name || 'Event',
+      theme: '',
+      startDate: normalized.campaign?.event?.startDate || normalized.campaign?.event?.start_date || '',
+      endDate: normalized.campaign?.event?.endDate || normalized.campaign?.event?.end_date || '',
+      city: normalized.campaign?.event?.city || '',
+      venues: [],
+      status: 'Published',
+      clientGroups: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  return null;
+};
+
+const normalizedToStoreInvitation = (normalized: any): EMSInvitation => ({
+  id: String(normalized.id || ''),
+  participantId: normalized.participantId || normalized.participant_id || '',
+  participantEmail: normalized.participantEmail || normalized.participant_email || '',
+  managerId: normalized.managerId || normalized.manager_id || '',
+  managerEmail: normalized.managerEmail || normalized.manager_email || '',
+  delegationId: normalized.delegationId || normalized.delegation_id || '',
+  recipientType: normalized.recipientType || normalized.recipient_type || 'manager',
+  eventId: normalized.eventId || normalized.event_id || normalized.event?.id || normalized.campaign?.eventId || '',
+  status: normalized.status || 'Pending',
+  rsvpDeadline: normalized.rsvpDeadline || normalized.rsvp_deadline || normalized.campaign?.rsvpDeadline || '',
+  token: normalized.token || String(normalized.id || ''),
+  campaignId: normalized.campaignId || normalized.campaign_id || normalized.campaign?.id || '',
+  templateId: normalized.templateId || normalized.template_id || normalized.template?.id || normalized.campaign?.templateId || '',
+  createdAt: normalized.createdAt || normalized.created_at || new Date().toISOString(),
+  updatedAt: normalized.updatedAt || normalized.updated_at || new Date().toISOString(),
+});
+
 const ManagerInvitationsPage: React.FC = () => {
   const { manager } = useManagerSession();
   const navigate = useNavigate();
@@ -1510,6 +1755,13 @@ const ManagerInvitationsPage: React.FC = () => {
   const [isAcceptDialogOpen, setIsAcceptDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [managerCampaigns, setManagerCampaigns] = useState<Campaign[]>([]);
+  const [managerDelegations, setManagerDelegations] = useState<any[]>([]);
+  const [registeredEventIds, setRegisteredEventIds] = useState<Set<string>>(new Set());
+  const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
+  const [previewInvitation, setPreviewInvitation] = useState<EMSInvitation | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [invitationSources, setInvitationSources] = useState<Record<string, any>>({});
 
   useEffect(() => {
     if (manager) {
@@ -1544,21 +1796,115 @@ const ManagerInvitationsPage: React.FC = () => {
       // (ems_manager_token), not just ems_participant_token, or it will
       // always return [] when called from this page — see the updated
       // invitationApi.ts.
-      const [serverDelegations, serverTeams, serverRegistrations, serverEvents, serverInvitations] = await Promise.all([
-        getDelegationsDetails().catch(() => []),
+      const [serverDelegations, serverTeams, serverEvents, serverInvitations] = await Promise.all([
+        getMyDelegations().catch(() => []),
         getMyTeams().catch(() => []),
-        getMyRegistrations().catch(() => []),
         getEvents().catch(() => []),
         getMyInvitations().catch(() => []),
       ]);
 
+      // Build the set of delegation IDs owned by this manager
+      const managerDelegationIds = new Set<string>();
+      for (const del of serverDelegations) {
+        const delId = del.id || del._id;
+        if (delId) managerDelegationIds.add(String(delId));
+      }
+      for (const del of delegationStore.getByManager(manager.id)) {
+        if (del.id) managerDelegationIds.add(String(del.id));
+      }
+
+      const delegationCampaigns = await getCampaignsForManager(Array.from(managerDelegationIds), manager.id).catch(() => []);
+      setManagerCampaigns(delegationCampaigns);
+      setManagerDelegations(Array.isArray(serverDelegations) ? serverDelegations : []);
+
+      for (const campaign of delegationCampaigns) {
+        syncTemplateToStore(campaign.template);
+        const existingCampaign = campaignStore.getById(campaign.id);
+        const campaignPayload = {
+          name: campaign.name,
+          subject: campaign.subject || '',
+          content: campaign.content || '',
+          status: campaign.status || 'Draft',
+          eventId: campaign.eventId || '',
+          templateId: campaign.templateId || campaign.template?.id || '',
+          targetRoles: campaign.targetRoles || [],
+          targetNationalities: campaign.targetNationalities || [],
+          targetDelegationIds: getCampaignDelegationIds(campaign),
+          rsvpDeadline: campaign.rsvpDeadline || '',
+          audienceIds: campaign.audienceIds || [],
+        };
+        if (existingCampaign) {
+          campaignStore.update(campaign.id, campaignPayload);
+        } else {
+          campaignStore.createWithId(campaign.id, campaignPayload);
+        }
+      }
+
+      const registeredEvents = new Set<string>();
+      for (const del of serverDelegations) {
+        const eventId = String(del.eventId || del.event_id || del.event?.id || del.event?._id || '');
+        const status = String(del.status || '').toLowerCase();
+        if (eventId && status && status !== 'draft') {
+          registeredEvents.add(eventId);
+        }
+      }
+      setRegisteredEventIds(registeredEvents);
+
+      const delegationScopedInvitations = await getInvitationsForDelegations(Array.from(managerDelegationIds)).catch(() => []);
+      const serverInvitationsMerged = [
+        ...(Array.isArray(serverInvitations) ? serverInvitations : []),
+        ...delegationScopedInvitations,
+      ];
+
+      const sourceMap: Record<string, any> = {};
+      for (const rawInv of serverInvitationsMerged as any[]) {
+        const normalized = normalizeInvitation(rawInv);
+        if (!normalized.id) continue;
+        sourceMap[normalized.id] = normalized;
+        syncTemplateToStore(normalized.template);
+        syncTemplateToStore(normalized.campaign?.template);
+      }
+
       // Synchronize remote invitations into the local invitationStore BEFORE
       // building the delegation-matching list below, so freshly-fetched
       // invitations are included in this render pass.
-      if (Array.isArray(serverInvitations)) {
-        for (const inv of serverInvitations as any[]) {
+      if (serverInvitationsMerged.length > 0) {
+        for (const inv of serverInvitationsMerged as any[]) {
           const invId = inv.id || inv._id;
           if (!invId) continue;
+
+          const embeddedEvent = inv.event || inv.campaign?.event;
+          const embeddedEventId = inv.eventId || inv.event_id || embeddedEvent?.id || embeddedEvent?._id;
+          if (embeddedEvent && embeddedEventId) {
+            const eventId = String(embeddedEventId);
+            const existingEvent = eventStore.getById(eventId);
+            const eventData = {
+              id: eventId,
+              name: embeddedEvent.name || 'Event',
+              theme: embeddedEvent.theme || '',
+              startDate: embeddedEvent.startDate || embeddedEvent.start_date || '',
+              endDate: embeddedEvent.endDate || embeddedEvent.end_date || '',
+              city: embeddedEvent.city || '',
+              venues: embeddedEvent.venues || [],
+              status: embeddedEvent.status || 'Published',
+              clientGroups: embeddedEvent.clientGroups || embeddedEvent.client_groups || [],
+              eventType: embeddedEvent.eventType || embeddedEvent.event_type || 'individual',
+              sportCategories: embeddedEvent.sportCategories || embeddedEvent.sport_categories || [],
+              allowTeamRegistration: embeddedEvent.allowTeamRegistration || embeddedEvent.allow_team_registration || false,
+              createdAt: embeddedEvent.createdAt || embeddedEvent.created_at || new Date().toISOString(),
+              updatedAt: new Date().toISOString(),
+            } as EMSEvent;
+
+            if (existingEvent) {
+              eventStore.update(eventId, eventData);
+            } else {
+              const events = eventStore.getAll();
+              events.push(eventData);
+              localStorage.setItem('ems_events', JSON.stringify(events));
+            }
+          }
+
+          const normalizedInv = sourceMap[String(invId)] || normalizeInvitation(inv);
 
           invitationStore.upsert({
             id: invId,
@@ -1566,77 +1912,157 @@ const ManagerInvitationsPage: React.FC = () => {
             participantEmail: inv.participantEmail || inv.participant_email || inv.participant?.email || '',
             managerId: inv.managerId || inv.manager_id || inv.manager?.id || inv.manager?._id || '',
             managerEmail: inv.managerEmail || inv.manager_email || inv.manager?.email || '',
-            delegationId: inv.delegationId || inv.delegation_id || '',
-            recipientType: inv.recipientType || inv.recipient_type || ((inv.managerId || inv.manager_id || inv.manager?.id) ? 'manager' : 'participant'),
+            delegationId:
+              normalizedInv.delegationId ||
+              inv.delegationId ||
+              inv.delegation_id ||
+              inv.delegation?.id ||
+              inv.delegation?._id ||
+              inv.campaign?.targetDelegationIds?.[0] ||
+              inv.campaign?.targetDelegationId ||
+              '',
+            recipientType: inv.recipientType || inv.recipient_type || ((inv.managerId || inv.manager_id || inv.manager?.id || inv.delegationId) ? 'manager' : 'participant'),
             eventId: inv.eventId || inv.event_id || inv.event?.id || inv.event?._id || '',
             status: inv.status || 'Pending',
-            rsvpDeadline: inv.rsvpDeadline || inv.rsvp_deadline || '',
+            rsvpDeadline: normalizedInv.rsvpDeadline || inv.rsvpDeadline || inv.rsvp_deadline || '',
             token: inv.token || '',
-            campaignId: inv.campaignId || inv.campaign_id || '',
-            templateId: inv.templateId || inv.template_id || '',
+            campaignId: normalizedInv.campaignId || inv.campaignId || inv.campaign_id || '',
+            templateId: normalizedInv.templateId || inv.templateId || inv.template_id || '',
             createdAt: inv.createdAt || inv.created_at || new Date().toISOString(),
             updatedAt: inv.updatedAt || inv.updated_at || new Date().toISOString(),
           } as any);
         }
       }
 
-      // Get all invitations for participants from the manager's country/delegation
-      const allInvitations = invitationStore.getAll();
-      const allParticipants = participantStore.getAll();
+      const idsMatch = (left?: string, right?: string) =>
+        !!left && !!right && String(left) === String(right);
 
-      // Also check team members that have been synced
-      const teamMembers = teamMemberStore.getByManager(manager.id);
-      const memberEmails = teamMembers.map(m => m.email.toLowerCase());
+      // Backend stores target_delegation_ids on campaigns but may not create
+      // separate manager invitation rows — derive manager invitations from sent campaigns.
+      for (const campaign of delegationCampaigns) {
+        const campaignDelegationIds = getCampaignDelegationIds(campaign);
+        const matchingDelegationId = campaignDelegationIds.find(id => managerDelegationIds.has(String(id)));
+        const matchesByManagerRole = getCampaignManagerRoleIds(campaign).includes(String(manager.id));
+        if (!matchingDelegationId && !matchesByManagerRole) continue;
 
-      const delegationInvitations: DelegationInvitation[] = [];
+        const resolvedDelegationId = matchingDelegationId || campaignDelegationIds[0] || '';
 
-      for (const inv of allInvitations) {
-        const event = eventStore.getById(inv.eventId);
-        if (!event) continue;
+        const syntheticId = `mgr-camp-${campaign.id}-${resolvedDelegationId || manager.id}`;
+        const serverDelegation = serverDelegations.find(d => idsMatch(d.id || d._id, resolvedDelegationId));
+        const delegationLabel = serverDelegation?.country
+          ? `${serverDelegation.country} Delegation`
+          : `${manager.country} Delegation`;
 
-        if (inv.recipientType === 'manager' || inv.managerId) {
-          const matchesManager =
-            inv.managerId === manager.id ||
-            (!!inv.managerEmail && inv.managerEmail.toLowerCase() === manager.email.toLowerCase());
+        const campaignEventId = String(campaign.eventId || campaign.event?.id || '');
+        const serverEvent = serverEvents.find((ev: any) => idsMatch(ev.id || ev._id, campaignEventId));
+        const embeddedEvent = campaign.event || serverEvent;
 
-          if (matchesManager) {
-            const localDelegation = inv.delegationId ? delegationStore.getById(inv.delegationId) : undefined;
-            const delegationLabel = inv.notes || (localDelegation?.country
-              ? `${localDelegation.country} Delegation`
-              : `${manager.country} Delegation`);
-
-            delegationInvitations.push({
-              invitation: inv,
-              event,
-              participantName: delegationLabel,
-              participantEmail: inv.managerEmail || manager.email,
-            });
-            continue;
+        if (embeddedEvent && campaignEventId) {
+          const existingEvent = eventStore.getById(campaignEventId);
+          const eventData = {
+            id: campaignEventId,
+            name: embeddedEvent.name || 'Event',
+            theme: embeddedEvent.theme || '',
+            startDate: embeddedEvent.startDate || embeddedEvent.start_date || '',
+            endDate: embeddedEvent.endDate || embeddedEvent.end_date || '',
+            city: embeddedEvent.city || '',
+            venues: embeddedEvent.venues || [],
+            status: embeddedEvent.status || 'Published',
+            clientGroups: embeddedEvent.clientGroups || embeddedEvent.client_groups || [],
+            eventType: embeddedEvent.eventType || embeddedEvent.event_type || 'individual',
+            sportCategories: embeddedEvent.sportCategories || embeddedEvent.sport_categories || [],
+            allowTeamRegistration: embeddedEvent.allowTeamRegistration || embeddedEvent.allow_team_registration || false,
+            createdAt: embeddedEvent.createdAt || embeddedEvent.created_at || new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          } as EMSEvent;
+          if (existingEvent) {
+            eventStore.update(campaignEventId, eventData);
+          } else {
+            const events = eventStore.getAll();
+            events.push(eventData);
+            localStorage.setItem('ems_events', JSON.stringify(events));
           }
         }
 
-        const participant = allParticipants.find(p => p.id === inv.participantId);
+        invitationStore.upsert({
+          id: syntheticId,
+          campaignId: campaign.id,
+          eventId: campaignEventId,
+          templateId: campaign.templateId || campaign.template?.id || '',
+          managerId: manager.id,
+          managerEmail: manager.email,
+          delegationId: resolvedDelegationId,
+          recipientType: 'manager',
+          participantId: '',
+          status: isSentCampaignStatus(campaign.status) ? 'Delivered' : 'Pending',
+          rsvpDeadline: campaign.rsvpDeadline || '',
+          token: syntheticId,
+          notes: delegationLabel,
+          sentAt: campaign.sentAt || null,
+          deliveredAt: isSentCampaignStatus(campaign.status) ? (campaign.sentAt || new Date().toISOString()) : null,
+          openedAt: null,
+          respondedAt: null,
+          guestCount: 0,
+          createdAt: campaign.createdAt || new Date().toISOString(),
+          updatedAt: campaign.updatedAt || new Date().toISOString(),
+        } as any);
 
-        if (participant) {
-          // Check if participant is from manager's country, matching organization, or is a team member
-          const isFromCountry = participant.nationality && manager.country &&
-            participant.nationality.toLowerCase() === manager.country.toLowerCase();
+        sourceMap[syntheticId] = {
+          id: syntheticId,
+          campaignId: campaign.id,
+          eventId: campaignEventId,
+          delegationId: resolvedDelegationId,
+          template: campaign.template,
+          templateId: campaign.templateId || campaign.template?.id || '',
+          campaign,
+          event: embeddedEvent,
+          rsvpDeadline: campaign.rsvpDeadline || '',
+        };
+        syncTemplateToStore(campaign.template);
+      }
 
-          const isFromOrganization = participant.organization && manager.country && (
-            participant.organization.toLowerCase() === manager.country.toLowerCase() ||
-            participant.organization.toLowerCase() === `${manager.country.toLowerCase()} delegation`
-          );
+      setInvitationSources(sourceMap);
 
-          const isTeamMember = memberEmails.includes(participant.email.toLowerCase());
+      const delegationInvitations: DelegationInvitation[] = [];
+      const seenInvitationKeys = new Set<string>();
 
-          if (isFromCountry || isFromOrganization || isTeamMember) {
-            delegationInvitations.push({
-              invitation: inv,
-              event,
-              participantName: `${participant.firstName} ${participant.lastName}`,
-              participantEmail: participant.email,
-            });
-          }
+      const appendInvitationRow = (normalized: any) => {
+        const invitationId = String(normalized?.id || '');
+        if (!invitationId || seenInvitationKeys.has(invitationId)) return;
+
+        const event = resolveInvitationEvent(normalized, serverEvents);
+        if (!event) return;
+
+        seenInvitationKeys.add(invitationId);
+        const storeInvitation =
+          invitationStore.getById(invitationId) || normalizedToStoreInvitation(normalized);
+        const delegationName = resolveDelegationName(
+          normalized.delegationId || storeInvitation.delegationId,
+          serverDelegations,
+          undefined,
+          normalized.delegation || normalized.campaign?.targetDelegation,
+        );
+
+        delegationInvitations.push({
+          invitation: storeInvitation,
+          event,
+          participantName: delegationName,
+          participantEmail: storeInvitation.managerEmail || manager.email,
+          delegationName,
+          rawSource: normalized,
+        });
+      };
+
+      // Primary source: API response (manager invitations endpoint already scopes data)
+      for (const rawInv of serverInvitationsMerged as any[]) {
+        const normalized = sourceMap[String(rawInv.id || rawInv._id)] || normalizeInvitation(rawInv);
+        appendInvitationRow(normalized);
+      }
+
+      // Synthetic rows from delegation-targeted campaigns
+      for (const [sourceId, normalized] of Object.entries(sourceMap)) {
+        if (sourceId.startsWith('mgr-camp-')) {
+          appendInvitationRow({ ...normalized, id: sourceId });
         }
       }
 
@@ -1676,34 +2102,6 @@ const ManagerInvitationsPage: React.FC = () => {
         }
         if (updated) {
           localStorage.setItem('ems_events', JSON.stringify(currentEvents));
-        }
-      }
-
-      // Synchronize remote registrations to the local registrationStore
-      if (Array.isArray(serverRegistrations)) {
-        for (const reg of serverRegistrations) {
-          const regId = reg.id || reg._id;
-          if (!regId) continue;
-
-          registrationStore.upsert({
-            id: regId,
-            registrationId: reg.registrationId || reg.registration_id || '',
-            eventId: reg.eventId || reg.event_id || '',
-            participantId: reg.participantId || reg.participant_id || '',
-            status: reg.status || 'Submitted',
-            formData: reg.formData || { needsVisa: false, needsAccommodation: false, needsTransport: false, agreeTerms: true },
-            documents: reg.documents || [],
-            submittedAt: reg.submittedAt || reg.submitted_at || null,
-            reviewedAt: reg.reviewedAt || reg.reviewed_at || null,
-            reviewedBy: reg.reviewedBy || reg.reviewed_by || '',
-            rejectionReason: reg.rejectionReason || reg.rejection_reason || '',
-            delegationId: reg.delegationId || reg.delegation_id || '',
-            teamId: reg.teamId || reg.team_id || '',
-            country: reg.country || '',
-            participant: reg.participant || null,
-            team: reg.team || null,
-            delegation: reg.delegation || null,
-          } as any);
         }
       }
 
@@ -1935,6 +2333,59 @@ const ManagerInvitationsPage: React.FC = () => {
     }
   };
 
+  const handlePreview = (inv: DelegationInvitation) => {
+    const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
+    const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
+    if (!template) {
+      toast.error('Template not available for this invitation');
+      return;
+    }
+    setPreviewTemplate(template);
+    setPreviewInvitation(inv.invitation);
+    setPreviewOpen(true);
+  };
+
+  const resolveDelegationEventId = (delegation: any): string =>
+    String(delegation?.eventId || delegation?.event_id || delegation?.event?.id || delegation?.event?._id || '');
+
+  const hasManagerDelegationForEvent = (eventId: string): boolean =>
+    managerDelegations.some((delegation) => resolveDelegationEventId(delegation) === String(eventId));
+
+  const invitationNeedsDelegation = (inv: DelegationInvitation): boolean => {
+    if (hasManagerDelegationForEvent(inv.event.id)) return false;
+
+    const delegationId = inv.invitation.delegationId;
+    if (delegationId) {
+      const ownsDelegation = managerDelegations.some(
+        (delegation) => String(delegation.id || delegation._id) === String(delegationId),
+      );
+      if (ownsDelegation) return false;
+    }
+
+    return true;
+  };
+
+  const handleRegister = (inv: DelegationInvitation) => {
+    if (['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status)) {
+      invitationStore.respond(inv.invitation.id, 'Accepted');
+    }
+
+    const params = new URLSearchParams();
+    if (inv.event.id) params.set('eventId', inv.event.id);
+    if (inv.invitation.id) params.set('invitationId', inv.invitation.id);
+    if (inv.invitation.delegationId) params.set('delegationId', inv.invitation.delegationId);
+    navigate(`/manager/delegations?${params.toString()}`);
+  };
+
+  const handleCreateDelegationForInvitation = (inv: DelegationInvitation) => {
+    const params = new URLSearchParams();
+    params.set('eventId', inv.event.id);
+    params.set('eventName', inv.event.name);
+    params.set('create', '1');
+    if (inv.invitation.id) params.set('invitationId', inv.invitation.id);
+    navigate(`/manager/delegations?${params.toString()}`);
+  };
+
   const handleAcceptInvitation = (inv: DelegationInvitation) => {
     setSelectedInvitation(inv);
     setIsAcceptDialogOpen(true);
@@ -1984,6 +2435,7 @@ const ManagerInvitationsPage: React.FC = () => {
   ).length;
 
   const acceptedCount = invitations.filter(inv => inv.invitation.status === 'Accepted').length;
+  const displayInvitations = dedupeInvitations(invitations);
 
   return (
     <div className="space-y-6">
@@ -2065,7 +2517,7 @@ const ManagerInvitationsPage: React.FC = () => {
             Invitations ({invitations.length})
           </CardTitle>
           <CardDescription>
-            Accept invitations on behalf of your delegation members, then proceed to register them
+            Preview your invitation, then register your delegation for the event
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -2074,7 +2526,7 @@ const ManagerInvitationsPage: React.FC = () => {
               <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-primary" />
               <p className="text-muted-foreground">Loading invitations...</p>
             </div>
-          ) : invitations.length === 0 ? (
+          ) : displayInvitations.length === 0 ? (
             <div className="text-center py-12">
               <Mail className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
               <p className="text-muted-foreground">No invitations for your delegation yet</p>
@@ -2084,70 +2536,87 @@ const ManagerInvitationsPage: React.FC = () => {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Participant</TableHead>
                     <TableHead>Event</TableHead>
-                    <TableHead>Deadline</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead>RSVP Deadline</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {invitations.map(inv => (
-                    <TableRow key={inv.invitation.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{inv.participantName}</p>
-                          <p className="text-sm text-muted-foreground">{inv.participantEmail}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{inv.event.name}</p>
-                          <p className="text-sm text-muted-foreground flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />{inv.event.city}
-                          </p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-1 text-sm">
-                          <Calendar className="h-3 w-3 text-muted-foreground" />
-                          {new Date(inv.invitation.rsvpDeadline).toLocaleDateString()}
-                        </div>
-                      </TableCell>
-                      <TableCell>{getStatusBadge(inv.invitation.status)}</TableCell>
-                      <TableCell>
-                        {['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status) ? (
-                          <div className="flex gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => handleAcceptInvitation(inv)}
-                            >
-                              <Check className="h-4 w-4 mr-1" />
-                              Accept
-                            </Button>
+                  {displayInvitations.map((inv) => {
+                    const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
+                    const campaign = getCampaignForInvitation(inv.invitation, managerCampaigns, rawSource);
+                    const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
+                    const isVIP = template ? isVIPTemplate(template) : false;
+
+                    return (
+                      <TableRow key={`${inv.invitation.id}-${inv.delegationName}`}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{inv.event.name}</p>
+                            {isVIP && (
+                              <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
+                                <Crown className="h-3 w-3 mr-1" /> VIP
+                              </Badge>
+                            )}
+                          </div>
+                          {inv.delegationName && (
+                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs mt-1">
+                              Delegation: {inv.delegationName}
+                            </Badge>
+                          )}
+                          {campaign && (campaign.name || campaign.subject) && (
+                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs mt-1 ml-1">
+                              Campaign: {campaign.name || campaign.subject}
+                            </Badge>
+                          )}
+                          {template && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Template: {template.name}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <MapPin className="h-3 w-3" />
+                            {inv.event.city || manager?.country || 'N/A'}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1 text-sm">
+                            <Calendar className="h-3 w-3 text-muted-foreground" />
+                            {formatEventDates(inv.event)}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <span className="text-sm">
+                            {inv.invitation.rsvpDeadline
+                              ? new Date(inv.invitation.rsvpDeadline).toLocaleDateString()
+                              : campaign?.rsvpDeadline
+                                ? new Date(campaign.rsvpDeadline).toLocaleDateString()
+                                : 'N/A'}
+                          </span>
+                        </TableCell>
+                        <TableCell className="flex items-center gap-2">
+                          <Eye
+                            onClick={() => handlePreview(inv)}
+                            className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-foreground"
+                          />
+                          {invitationNeedsDelegation(inv) && (
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() => {
-                                invitationStore.respond(inv.invitation.id, 'Declined');
-                                loadInvitations();
-                                toast.info('Invitation declined');
-                              }}
+                              onClick={() => handleCreateDelegationForInvitation(inv)}
                             >
-                              <X className="h-4 w-4" />
+                              <Flag className="h-3 w-3 mr-1" />
+                              Create Delegation
                             </Button>
-                          </div>
-                        ) : inv.invitation.status === 'Accepted' ? (
-                          <span className="text-sm text-status-success flex items-center gap-1">
-                            <CheckCircle className="h-4 w-4" />
-                            Synced to Registrations
-                          </span>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -2267,6 +2736,19 @@ const ManagerInvitationsPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <InvitationPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        template={previewTemplate}
+        event={previewInvitation ? invitations.find(i => i.invitation.id === previewInvitation.id)?.event || null : null}
+        participant={{
+          firstName: manager?.name?.split(' ')[0] || manager?.country || 'Manager',
+          lastName: manager?.name?.split(' ').slice(1).join(' ') || 'Delegation',
+          email: manager?.email || '',
+        }}
+        rsvpDeadline={previewInvitation?.rsvpDeadline}
+      />
     </div>
   );
 };

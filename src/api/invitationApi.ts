@@ -173,12 +173,54 @@ export const normalizeInvitation = (raw: any): Invitation => {
             ...campaignRaw,
             event: campaignRaw.event || event,
             template: normalizeEmbeddedTemplate(campaignRaw.template) || template,
+            targetDelegationIds: Array.isArray(campaignRaw.targetDelegationIds)
+                ? campaignRaw.targetDelegationIds
+                : campaignRaw.targetDelegationId
+                    ? [campaignRaw.targetDelegationId]
+                    : Array.isArray(campaignRaw.target_delegation_ids)
+                        ? campaignRaw.target_delegation_ids
+                        : campaignRaw.target_delegation_id
+                            ? [campaignRaw.target_delegation_id]
+                            : [],
+            targetManagerIds: Array.isArray(campaignRaw.targetManagerIds)
+                ? campaignRaw.targetManagerIds
+                : campaignRaw.targetManagerId
+                    ? [campaignRaw.targetManagerId]
+                    : [],
         }
         : undefined;
+
+    const managerId =
+        raw?.managerId ||
+        raw?.manager_id ||
+        raw?.manager?.id ||
+        raw?.manager?._id ||
+        campaign?.targetManagerIds?.[0] ||
+        '';
+    const delegationId =
+        raw?.delegationId ||
+        raw?.delegation_id ||
+        raw?.delegation?.id ||
+        raw?.delegation?._id ||
+        campaign?.targetDelegationIds?.[0] ||
+        '';
+    const managerEmail =
+        raw?.managerEmail ||
+        raw?.manager_email ||
+        raw?.manager?.email ||
+        '';
+    const recipientType =
+        raw?.recipientType ||
+        raw?.recipient_type ||
+        (managerId || delegationId ? 'manager' : 'participant');
 
     return {
         ...raw,
         id: String(raw?.id || raw?._id || ''),
+        managerId,
+        managerEmail,
+        delegationId,
+        recipientType,
         eventId:
             raw?.eventId ||
             raw?.event_id ||
@@ -249,23 +291,26 @@ export const getMyInvitations = async (): Promise<Invitation[]> => {
         '/participant/invitations',
     ];
     const managerEndpoints = [
+        '/manager/invitations',
+        '/manager/campaigns/invitations',
+        '/invitations/manager/me',
         '/invitations/me',
         '/participant/invitations',
         '/invitations/my',
         '/participant/campaigns/invitations',
     ];
 
-    const token =
-        localStorage.getItem('ems_participant_token') ||
-        localStorage.getItem('ems_manager_token');
+    const managerToken = localStorage.getItem('ems_manager_token');
+    const participantToken = localStorage.getItem('ems_participant_token');
+    const token = participantToken || managerToken;
     if (!token) {
         return [];
     }
 
-    const isParticipantOnly = hasParticipantToken() && !localStorage.getItem('ems_manager_token');
+    const isManagerSession = !!managerToken && !participantToken;
     const endpoints = orderEndpoints(
         'invitationsEndpoint',
-        isParticipantOnly ? participantEndpoints : managerEndpoints,
+        isManagerSession ? managerEndpoints : participantEndpoints.concat(managerEndpoints.filter(e => !participantEndpoints.includes(e))),
     );
 
     for (const endpoint of endpoints) {
@@ -277,12 +322,55 @@ export const getMyInvitations = async (): Promise<Invitation[]> => {
                 setCachedEndpoint('invitationsEndpoint', endpoint);
                 return result;
             }
+            // Manager endpoints may legitimately return an empty array — keep trying.
+            if (isManagerSession && /\/manager\//.test(endpoint) && Array.isArray(data?.data ?? data)) {
+                setCachedEndpoint('invitationsEndpoint', endpoint);
+            }
         } catch (err: any) {
             markEndpointBlocked(endpoint, err?.response?.status);
         }
     }
 
+    const cachedEndpoint = getCachedEndpoint('invitationsEndpoint');
+    if (cachedEndpoint && isManagerSession) {
+        try {
+            const { data } = await myInvitationsClient.get(cachedEndpoint);
+            const parsed = normalizeInvitationList(data);
+            if (parsed.length > 0) return parsed;
+        } catch {
+            // ignore
+        }
+    }
+
     return [];
+};
+
+export const getInvitationsForDelegations = async (delegationIds: string[]): Promise<Invitation[]> => {
+    const ids = [...new Set(delegationIds.filter(Boolean).map(String))];
+    if (ids.length === 0) return [];
+
+    const merged = new Map<string, Invitation>();
+    const endpointsFor = (delegationId: string) => [
+        `/delegations/${delegationId}/invitations`,
+        `/me/delegations/${delegationId}/invitations`,
+    ];
+
+    for (const delegationId of ids) {
+        for (const endpoint of endpointsFor(delegationId)) {
+            if (isEndpointBlocked(endpoint)) continue;
+            try {
+                const { data } = await myInvitationsClient.get(endpoint);
+                const result = normalizeInvitationList(data);
+                for (const inv of result) {
+                    merged.set(inv.id, inv);
+                }
+            } catch (err: any) {
+                markEndpointBlocked(endpoint, err?.response?.status);
+            }
+        }
+    }
+
+    return Array.from(merged.values());
 };
 
 // Fetch all invitations (admin)

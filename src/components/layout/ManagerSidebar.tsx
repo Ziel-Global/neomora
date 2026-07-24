@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from '@/components/NavLink';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Sidebar,
   SidebarContent,
@@ -20,11 +20,9 @@ import {
   Users,
   UserPlus,
   ClipboardList,
-  Settings,
   LogOut,
   Flag,
   Mail,
-  FileText,
   UserCheck,
   Plane,
   Hotel,
@@ -38,8 +36,9 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 const menuItems = [
   { title: 'Dashboard', url: '/manager/dashboard', icon: LayoutDashboard },
   { title: 'Invitations', url: '/manager/invitations', icon: Mail },
-  { title: 'Register', url: '/manager/register-list', icon: UserCheck },
   { title: 'My Teams', url: '/manager/teams', icon: Users },
+  { title: 'Register', url: '/manager/register-list', icon: UserCheck },
+
   { title: 'Add Members', url: '/manager/add-members', icon: UserPlus },
   { title: 'Visa', url: '/manager/visa', icon: Globe },
   { title: 'Travel', url: '/manager/travel', icon: Plane },
@@ -52,7 +51,6 @@ const menuItems = [
 
 export const ManagerSidebar: React.FC = () => {
   const { state } = useSidebar();
-  const location = useLocation();
   const { manager, logout } = useManagerSession();
   const navigate = useNavigate();
   const collapsed = state === 'collapsed';

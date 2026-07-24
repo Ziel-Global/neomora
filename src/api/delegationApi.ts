@@ -13,6 +13,25 @@ export const createDelegation = async (payload: CreateDelegationPayload): Promis
     return data;
 };
 
+export const getMyDelegations = async (): Promise<Delegation[]> => {
+    const endpoints = ['/me/delegations', '/delegations/me', '/delegations'];
+    for (const endpoint of endpoints) {
+        try {
+            const { data } = await apiClient.get(endpoint);
+            const result = Array.isArray(data) ? data : (data?.data || data?.delegations || []);
+            if (Array.isArray(result)) {
+                return result.map((del: any) => ({
+                    ...del,
+                    id: del.id || del._id,
+                }));
+            }
+        } catch (err: any) {
+            if (err?.response?.status !== 404) console.error(`Error fetching from ${endpoint}:`, err);
+        }
+    }
+    return [];
+};
+
 export const getDelegationsDetails = async (): Promise<Delegation[]> => {
     const endpoints = ['/me/delegations', '/delegations/me', '/delegations'];
     let delegations: any[] = [];
@@ -185,6 +204,7 @@ export const getAllDelegations = async (): Promise<any[]> => {
                 id: remoteId,
                 delegationId: remote.delegationId || remote.delegation_id || remoteId,
                 managerId: remote.managerId || remote.manager_id || remote.manager?.id || remote.user?.id || null,
+                managerEmail: remote.managerEmail || remote.manager_email || remote.manager?.email || remote.user?.email || null,
                 country: remote.country || remote.delegation?.country || 'Unknown',
                 eventId: remote.eventId || remote.event_id || remote.event?.id || remote.event?._id || null,
                 teamIds,
@@ -284,6 +304,15 @@ export const getAllDelegations = async (): Promise<any[]> => {
                     existing.members.push(memberObj);
                     existing.totalMembers = existing.members.length;
                 }
+
+                const regManagerId = reg.managerId || reg.manager_id || reg.team?.managerId || reg.team?.manager_id;
+                const regManagerEmail = reg.managerEmail || reg.manager_email || reg.team?.managerEmail || reg.team?.manager?.email;
+                if (!existing.managerId && regManagerId) {
+                    existing.managerId = regManagerId;
+                }
+                if (!existing.managerEmail && regManagerEmail) {
+                    existing.managerEmail = regManagerEmail;
+                }
             }
         } catch (regErr: any) {
             console.warn('[API] Failed to fetch registrations for enrichment:', regErr?.message);
@@ -322,4 +351,23 @@ export const updateDelegationStatus = async (id: string, status: 'Approved' | 'R
 
 export const deleteDelegation = async (id: string): Promise<void> => {
     await apiClient.delete(`/delegations/${id}`);
+};
+
+export const extractDelegationId = (delegation: unknown): string => {
+    const record = delegation as Record<string, unknown> | null | undefined;
+    if (!record) return '';
+
+    const nested =
+        record.data && typeof record.data === 'object'
+            ? (record.data as Record<string, unknown>)
+            : null;
+    const source = nested || record;
+
+    return String(
+        source.id ||
+        source._id ||
+        source.delegationId ||
+        source.delegation_id ||
+        '',
+    );
 };

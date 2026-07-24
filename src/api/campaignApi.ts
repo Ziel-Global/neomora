@@ -8,19 +8,6 @@ import {
     setCachedEndpoint,
 } from './endpointCache';
 
-const participantCampaignClient = axios.create({
-    baseURL: import.meta.env.VITE_API_BASE_URL,
-    headers: { 'Content-Type': 'application/json' },
-});
-
-participantCampaignClient.interceptors.request.use((config) => {
-    const token = localStorage.getItem('ems_participant_token');
-    if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-});
-
 export interface Campaign {
     id: string;
     name: string;
@@ -37,7 +24,6 @@ export interface Campaign {
     targetManagerIds?: string[] | null;
     rsvpDeadline?: string;
     audienceIds?: string[];
-    // invitationIds?: string[];
     targetParticipantIds?: string[];
     audienceSize?: number | null;
     stats?: {
@@ -63,6 +49,32 @@ export interface Campaign {
     updatedAt: string;
 }
 
+const managerCampaignClient = axios.create({
+    baseURL: import.meta.env.VITE_API_BASE_URL,
+    headers: { 'Content-Type': 'application/json' },
+});
+
+managerCampaignClient.interceptors.request.use((config) => {
+    const token = localStorage.getItem('ems_manager_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
+const participantCampaignClient = axios.create({
+    baseURL: import.meta.env.VITE_API_BASE_URL,
+    headers: { 'Content-Type': 'application/json' },
+});
+
+participantCampaignClient.interceptors.request.use((config) => {
+    const token = localStorage.getItem('ems_participant_token');
+    if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+});
+
 export interface CreateCampaignPayload {
     name: string;
     subject: string;
@@ -81,9 +93,83 @@ export interface CreateCampaignPayload {
     roleFilters?: string[];
 }
 
+const normalizeDelegationIds = (raw: any): string[] => {
+    const normalizeValue = (value: unknown): string[] => {
+        if (Array.isArray(value)) {
+            return value.map(String).filter(Boolean);
+        }
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) return [];
+            if (trimmed.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(trimmed);
+                    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean) : [trimmed];
+                } catch {
+                    return [trimmed];
+                }
+            }
+            return [trimmed];
+        }
+        return [];
+    };
+
+    if (raw?.targetDelegationIds !== undefined) {
+        const ids = normalizeValue(raw.targetDelegationIds);
+        if (ids.length > 0) return ids;
+    }
+    if (raw?.target_delegation_ids !== undefined) {
+        const ids = normalizeValue(raw.target_delegation_ids);
+        if (ids.length > 0) return ids;
+    }
+    const singular = raw?.targetDelegationId || raw?.target_delegation_id;
+    return singular ? [String(singular)] : [];
+};
+
+const normalizeManagerIds = (raw: any): string[] => {
+    if (Array.isArray(raw?.targetManagerIds)) {
+        return raw.targetManagerIds.map(String).filter(Boolean);
+    }
+    if (Array.isArray(raw?.target_manager_ids)) {
+        return raw.target_manager_ids.map(String).filter(Boolean);
+    }
+    const singular = raw?.targetManagerId || raw?.target_manager_id;
+    return singular ? [String(singular)] : [];
+};
+
+export const getCampaignDelegationIds = (campaign: Campaign | any): string[] =>
+    normalizeDelegationIds(campaign);
+
+export const campaignTargetsDelegation = (campaign: Campaign, delegationIds: string[]): boolean => {
+    const targets = getCampaignDelegationIds(campaign);
+    if (!targets.length || !delegationIds.length) return false;
+    const delegationSet = new Set(delegationIds.map(String));
+    return targets.some(id => delegationSet.has(String(id)));
+};
+
+export const getCampaignManagerRoleIds = (campaign: Campaign | any): string[] => {
+    const roles = [
+        ...(Array.isArray(campaign?.targetRoles) ? campaign.targetRoles : []),
+        ...(Array.isArray(campaign?.roleFilters) ? campaign.roleFilters : []),
+        ...(Array.isArray(campaign?.target_roles) ? campaign.target_roles : []),
+        ...(Array.isArray(campaign?.targetManagerIds) ? campaign.targetManagerIds : []),
+        ...(Array.isArray(campaign?.target_manager_ids) ? campaign.target_manager_ids : []),
+    ].map(String).filter(Boolean);
+    return [...new Set(roles)];
+};
+
+export const campaignTargetsManager = (campaign: Campaign, managerIds: string[]): boolean => {
+    if (!managerIds.length) return false;
+    const roleIds = getCampaignManagerRoleIds(campaign);
+    const managerSet = new Set(managerIds.map(String));
+    return roleIds.some(id => managerSet.has(String(id)));
+};
+
 const buildCampaignRequestPayload = (payload: CreateCampaignPayload | Partial<CreateCampaignPayload>) => {
     const participantIds = payload.targetParticipantIds ?? payload.audienceIds;
     const roleFilters = payload.roleFilters ?? payload.targetRoles;
+    const targetDelegationIds = payload.targetDelegationIds ?? normalizeDelegationIds(payload);
+    const targetManagerIds = payload.targetManagerIds ?? normalizeManagerIds(payload);
 
     return {
         ...payload,
@@ -95,7 +181,10 @@ const buildCampaignRequestPayload = (payload: CreateCampaignPayload | Partial<Cr
         ...(roleFilters?.length ? {
             roleFilters,
             targetRoles: roleFilters,
+            target_roles: roleFilters,
         } : {}),
+        ...(targetDelegationIds.length ? { targetDelegationIds } : {}),
+        ...(targetManagerIds.length ? { targetManagerIds } : {}),
     };
 };
 
@@ -123,7 +212,9 @@ const normalizeCampaign = (raw: any): Campaign => {
         ? raw.targetRoles
         : Array.isArray(raw?.roleFilters)
             ? raw.roleFilters
-            : [];
+            : Array.isArray(raw?.target_roles)
+                ? raw.target_roles
+                : [];
 
     const effectiveAudienceIds = [...new Set([...audienceIds, ...targetRoles].map(String))];
 
@@ -131,13 +222,20 @@ const normalizeCampaign = (raw: any): Campaign => {
 
     return {
         ...raw,
-        eventId: raw?.eventId || raw?.event?.id || '',
-        templateId: raw?.templateId || raw?.template?.id || '',
+        id: String(raw?.id || raw?._id || ''),
+        name: raw?.name || '',
+        subject: raw?.subject || '',
+        content: raw?.content || raw?.body || '',
+        status: raw?.status || 'Draft',
+        scheduledAt: raw?.scheduledAt || raw?.scheduled_at || undefined,
+        sentAt: raw?.sentAt || raw?.sent_at || undefined,
+        eventId: raw?.eventId || raw?.event_id || raw?.event?.id || '',
+        templateId: raw?.templateId || raw?.template_id || raw?.template?.id || '',
         targetRoles,
         targetNationalities: Array.isArray(raw?.targetNationalities) ? raw.targetNationalities : [],
-        targetDelegationIds: Array.isArray(raw?.targetDelegationIds) ? raw.targetDelegationIds : [],
-        targetManagerIds: Array.isArray(raw?.targetManagerIds) ? raw.targetManagerIds : [],
-        rsvpDeadline: raw?.rsvpDeadline || '',
+        targetDelegationIds: normalizeDelegationIds(raw),
+        targetManagerIds: normalizeManagerIds(raw),
+        rsvpDeadline: raw?.rsvpDeadline || raw?.rsvp_deadline || '',
         audienceIds: effectiveAudienceIds,
         targetParticipantIds: effectiveAudienceIds,
         audienceSize: stats.audienceSize ?? raw?.audienceSize ?? effectiveAudienceIds.length,
@@ -282,6 +380,91 @@ export const getCampaignsForParticipant = async (participantIds: string[]): Prom
     }
 
     return [];
+};
+
+const isManagerScopedCampaignEndpoint = (endpoint: string): boolean =>
+    /\/manager\/|\/me\b|\/my\b/.test(endpoint);
+
+const fetchManagerCampaignList = async (endpoint: string): Promise<Campaign[]> => {
+    if (isEndpointBlocked(endpoint)) return [];
+    const client = /\/manager\//.test(endpoint) ? managerCampaignClient : apiClient;
+    try {
+        const { data } = await client.get(endpoint);
+        const list = unwrapList(data).map(normalizeCampaign);
+        if (list.length > 0) {
+            return list;
+        }
+        return campaignsFromInvitationPayload(data);
+    } catch (err: any) {
+        markEndpointBlocked(endpoint, err?.response?.status);
+        return [];
+    }
+};
+
+const getManagerCampaignEndpoints = (): string[] => [
+    '/manager/campaigns',
+    '/manager/campaigns/invitations',
+    '/me/campaigns',
+    '/campaigns/me',
+    '/campaigns/my',
+    '/participant/campaigns/invitations',
+    '/participant/campaigns',
+];
+
+export const getCampaignsForManager = async (delegationIds: string[], managerId?: string): Promise<Campaign[]> => {
+    const ids = [...new Set(delegationIds.filter(Boolean).map(String))];
+    const managerIds = managerId ? [String(managerId)] : [];
+    if (ids.length === 0 && managerIds.length === 0) return [];
+
+    const matchesManagerScope = (campaign: Campaign) =>
+        campaignTargetsDelegation(campaign, ids) ||
+        campaignTargetsManager(campaign, managerIds);
+
+    let bestTargeted: Campaign[] = [];
+
+    for (const endpoint of getManagerCampaignEndpoints()) {
+        const list = await fetchManagerCampaignList(endpoint);
+        if (list.length === 0) continue;
+
+        const sent = list.filter(c => isSentCampaignStatus(c.status));
+        const targeted = sent.filter(c => matchesManagerScope(c));
+        if (targeted.length > bestTargeted.length) {
+            bestTargeted = targeted;
+        }
+        if (targeted.length > 0 && isManagerScopedCampaignEndpoint(endpoint)) {
+            return targeted;
+        }
+    }
+
+    if (bestTargeted.length > 0) return bestTargeted;
+
+    const fromDelegations: Campaign[] = [];
+    const seenCampaignIds = new Set<string>();
+
+    for (const delegationId of ids) {
+        const delegationEndpoints = [
+            `/delegations/${delegationId}/campaigns`,
+            `/me/delegations/${delegationId}/campaigns`,
+            `/delegations/${delegationId}/invitations`,
+        ];
+
+        for (const endpoint of delegationEndpoints) {
+            const list = await fetchManagerCampaignList(endpoint);
+            if (list.length === 0) continue;
+
+            const sent = list.filter(c => isSentCampaignStatus(c.status));
+            for (const campaign of sent) {
+                if (!matchesManagerScope(campaign) && !getCampaignDelegationIds(campaign).includes(delegationId)) {
+                    continue;
+                }
+                if (seenCampaignIds.has(campaign.id)) continue;
+                seenCampaignIds.add(campaign.id);
+                fromDelegations.push(campaign);
+            }
+        }
+    }
+
+    return fromDelegations;
 };
 
 export const getCampaignById = async (id: string): Promise<Campaign> => {

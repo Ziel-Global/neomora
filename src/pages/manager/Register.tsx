@@ -1,1006 +1,820 @@
-// import React, { useState, useEffect } from 'react';
-// import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-// import { Button } from '@/components/ui/button';
-// import { Badge } from '@/components/ui/badge';
-// import { useManagerSession } from '@/contexts/ManagerSessionContext';
-// import { eventStore, invitationStore, participantStore, registrationStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
-// import { delegationStore, teamMemberStore, teamStore, Team, TeamMember } from '@/lib/teamStore';
-// import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-// import { UserPlus, CheckCircle, Clock, Plane, FileCheck } from 'lucide-react';
-// import { useNavigate } from 'react-router-dom';
-// import { getDelegationsDetails } from '@/api/delegationApi';
-// import { getMyTeams, listTeamMembers } from '@/api/teamApi';
-// import { getMyRegistrations } from '@/api/registrationApi';
-
-// interface ReadyToRegister {
-//   member: TeamMember;
-//   event: EMSEvent;
-//   invitation?: EMSInvitation;
-//   hasTravelPrefs: boolean;
-// }
-
-// const normalizeStatus = (status?: string) => status?.toString().trim().toLowerCase();
-
-// const getDelegationTeamIds = (delegation: any): string[] => {
-//   const teamIds = delegation?.teamIds || delegation?.team_ids || [];
-//   const teamObjects = (delegation?.teams || []).map((team: any) => team?.id || team?._id).filter(Boolean);
-
-//   return Array.from(new Set([...teamIds, ...teamObjects].filter(Boolean)));
-// };
-
-// const ManagerRegisterPage: React.FC = () => {
-//   const { manager } = useManagerSession();
-//   const navigate = useNavigate();
-//   const [readyMembers, setReadyMembers] = useState<ReadyToRegister[]>([]);
-//   const [approvedTeams, setApprovedTeams] = useState<Team[]>([]);
-//   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-//   const [serverTeamMembers, setServerTeamMembers] = useState<ReadyToRegister[]>([]);
-
-//   useEffect(() => {
-//     if (manager) {
-//       void loadReadyMembers();
-//     }
-//   }, [manager]);
-
-//   useEffect(() => {
-//     const loadServerMembers = async () => {
-//       if (!selectedTeamId) {
-//         setServerTeamMembers([]);
-//         return;
-//       }
-
-//       // local teams stored in local store using ids like 'team-...'
-//       if (selectedTeamId.startsWith('team-')) {
-//         setServerTeamMembers([]);
-//         return;
-//       }
-
-//       try {
-//         const [members, regs] = await Promise.all([
-//           listTeamMembers(selectedTeamId).catch(() => []),
-//           getMyRegistrations().catch(() => []),
-//         ]);
-
-//         const mappedMembers: ReadyToRegister[] = (members as any[]).map((m) => {
-//           const participant = (m as any).participant || m;
-//           const memberLike: any = {
-//             id: participant.id || m.id,
-//             teamId: selectedTeamId,
-//             firstName: participant.firstName || participant.first_name || participant.fname || '',
-//             lastName: participant.lastName || participant.last_name || participant.lname || '',
-//             email: participant.email || '',
-//             phone: participant.phone || '',
-//             nationality: participant.nationality || '',
-//             passportNumber: participant.passportNumber || participant.passport_number || '',
-//             passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
-//             dateOfBirth: participant.dateOfBirth || '',
-//             gender: participant.gender || 'Male',
-//             sportCategory: '',
-//             subCategory: '',
-//             role: participant.jobTitle || participant.role || 'Participant',
-//             emergencyContact: '',
-//             emergencyPhone: '',
-//             dietaryRequirements: participant.dietaryNotes || '',
-//             medicalConditions: '',
-//             travelPreferences: participant.travelPreferences || {},
-//           };
-
-//           const event = eventStore.getById(m.eventId || m.event?.id || '');
-//           return {
-//             member: memberLike,
-//             event: event || ({ id: '', name: '', city: '' } as EMSEvent),
-//             hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
-//           } as ReadyToRegister;
-//         });
-
-//         // also map regs for this team
-//         const teamRegs = (regs as any[]).filter(r => r.teamId === selectedTeamId || r.team_id === selectedTeamId || r.team?.id === selectedTeamId);
-//         const mappedRegs = teamRegs.map(r => {
-//           const participant = r.participant || {};
-//           const memberLike: any = {
-//             id: participant.id || r.id,
-//             teamId: selectedTeamId,
-//             firstName: participant.firstName || participant.first_name || '',
-//             lastName: participant.lastName || participant.last_name || '',
-//             email: participant.email || '',
-//             phone: participant.phone || '',
-//             nationality: participant.nationality || '',
-//             passportNumber: participant.passportNumber || participant.passport_number || '',
-//             passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
-//             dateOfBirth: participant.dateOfBirth || '',
-//             gender: participant.gender || 'Male',
-//             sportCategory: '',
-//             subCategory: '',
-//             role: participant.jobTitle || participant.role || 'Participant',
-//             emergencyContact: '',
-//             emergencyPhone: '',
-//             dietaryRequirements: participant.dietaryNotes || '',
-//             medicalConditions: '',
-//             travelPreferences: participant.travelPreferences || {},
-//           };
-//           const event = eventStore.getById(r.eventId || r.event?.id || '');
-//           return {
-//             member: memberLike,
-//             event: event || ({ id: '', name: '', city: '' } as EMSEvent),
-//             hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
-//           } as ReadyToRegister;
-//         });
-
-//         // merge without duplicates (by email or id)
-//         const seen = new Set<string>();
-//         const combined: ReadyToRegister[] = [];
-//         for (const it of [...mappedMembers, ...mappedRegs]) {
-//           const key = (it.member.email || it.member.id || '').toString().toLowerCase();
-//           if (!seen.has(key)) {
-//             seen.add(key);
-//             combined.push(it);
-//           }
-//         }
-
-//         setServerTeamMembers(combined);
-//       } catch (e) {
-//         console.error('Failed to load server team members:', e);
-//         setServerTeamMembers([]);
-//       }
-//     };
-
-//     void loadServerMembers();
-//   }, [selectedTeamId]);
-
-//   const loadReadyMembers = async () => {
-//     if (!manager) return;
-
-//     const allInvitations = invitationStore.getAll();
-//     const allParticipants = participantStore.getAll();
-//     const localTeams = teamStore.getByManager(manager.id);
-//     const localDelegations = delegationStore.getByManager(manager.id);
-//     const [remoteDelegations, remoteTeams] = await Promise.all([
-//       getDelegationsDetails().catch(() => []),
-//       getMyTeams().catch(() => []),
-//     ]);
-
-//     const managerDelegations = [...remoteDelegations, ...localDelegations].filter((delegation: any) => {
-//       const delegationManagerId = delegation?.managerId || delegation?.manager_id || delegation?.manager?.id || delegation?.user?.id;
-//       return !delegationManagerId || delegationManagerId === manager.id;
-//     });
-
-//     const approvedDelegations = managerDelegations.filter((delegation: any) => normalizeStatus(delegation?.status) === 'approved');
-//     const approvedDelegationIds = new Set<string>(approvedDelegations.map((delegation: any) => delegation?.id || delegation?._id).filter(Boolean));
-//     const approvedTeamIds = new Set<string>();
-
-//     for (const delegation of approvedDelegations) {
-//       getDelegationTeamIds(delegation).forEach((teamId) => approvedTeamIds.add(teamId));
-//     }
-
-//     const allTeams = [...remoteTeams, ...localTeams];
-//     const approvedTeamsByDelegation = allTeams.filter((team: any) => {
-//       const teamDelegationId = team?.delegationId || team?.delegation_id || team?.delegation?.id || team?.delegation?._id;
-//       return approvedTeamIds.has(team?.id) || approvedDelegationIds.has(teamDelegationId) || normalizeStatus(team?.status) === 'approved';
-//     });
-
-//     const uniqueApprovedTeams = Array.from(
-//       new Map(approvedTeamsByDelegation.map((team: any) => [team.id, team as Team])).values()
-//     );
-
-//     const allowedTeamIds = new Set<string>([
-//       ...approvedTeamIds,
-//       ...uniqueApprovedTeams.map((team) => team.id),
-//     ]);
-
-//     setApprovedTeams(uniqueApprovedTeams);
-
-//     const teamMembers = teamMemberStore.getByManager(manager.id).filter((member) => allowedTeamIds.has(member.teamId));
-//     const ready: ReadyToRegister[] = [];
-
-//     // Check accepted invitations for team members
-//     for (const inv of allInvitations) {
-//       if (inv.status !== 'Accepted') continue;
-
-//       const participant = allParticipants.find(p => p.id === inv.participantId);
-//       const event = eventStore.getById(inv.eventId);
-
-//       if (participant && event) {
-//         // Check if already registered
-//         const existingRegs = registrationStore.getByParticipant(participant.id);
-//         const existingReg = existingRegs.find(r => r.eventId === event.id);
-//         if (existingReg) continue;
-
-//         // Check if this is a team member
-//         const teamMember = teamMembers.find(m => m.email.toLowerCase() === participant.email.toLowerCase());
-
-//         if (teamMember) {
-//           ready.push({
-//             member: teamMember,
-//             event,
-//             invitation: inv,
-//             hasTravelPrefs: !!teamMember.travelPreferences?.originCity,
-//           });
-//         } else {
-//           // Check if participant is from manager's country
-//           const isFromCountry = participant.nationality === manager.country;
-//           if (isFromCountry) {
-//             // Create virtual member
-//             ready.push({
-//               member: {
-//                 id: participant.id,
-//                 teamId: '',
-//                 firstName: participant.firstName,
-//                 lastName: participant.lastName,
-//                 email: participant.email,
-//                 phone: participant.phone,
-//                 nationality: participant.nationality,
-//                 passportNumber: participant.passportNumber || '',
-//                 passportExpiry: participant.passportExpiry || '',
-//                 dateOfBirth: '',
-//                 gender: 'Male',
-//                 sportCategory: '',
-//                 subCategory: '',
-//                 role: participant.role,
-//                 emergencyContact: participant.emergencyContact || '',
-//                 emergencyPhone: '',
-//                 dietaryRequirements: participant.dietaryNotes,
-//                 medicalConditions: '',
-//                 status: 'Draft',
-//                 createdAt: participant.createdAt,
-//                 updatedAt: participant.updatedAt,
-//               },
-//               event,
-//               invitation: inv,
-//               hasTravelPrefs: false,
-//             });
-//           }
-//         }
-//       }
-//     }
-
-//     // Also check team members who don't have invitations but are ready
-//     for (const member of teamMembers) {
-//       // Skip if already in list or already registered for their team's event
-//       const alreadyInList = ready.some(r => r.member.email.toLowerCase() === member.email.toLowerCase());
-//       if (alreadyInList) continue;
-
-//       // Skip members that are already registered
-//       if (member.registrationStatus === 'Submitted' || member.registrationStatus === 'Approved') continue;
-
-//       // Get team to find event
-//       const team = teamStore.getById(member.teamId);
-//       if (!team) continue;
-
-//       const event = eventStore.getById(team.eventId);
-//       if (!event) continue;
-
-//       // Check if participant exists and is registered
-//       const participant = participantStore.getByEmail(member.email);
-//       if (participant) {
-//         const existingRegs = registrationStore.getByParticipant(participant.id);
-//         const existingReg = existingRegs.find(r => r.eventId === event.id);
-//         if (existingReg) continue;
-//       }
-
-//       ready.push({
-//         member,
-//         event,
-//         hasTravelPrefs: !!member.travelPreferences?.originCity,
-//       });
-//     }
-
-//     setReadyMembers(ready);
-//   };
-
-//   const handleRegister = (item: ReadyToRegister) => {
-//     // 1. Determine the accurate team ID
-//     const effectiveTeamId = item.member.teamId || selectedTeamId || '';
-
-//     // 2. Fetch the actual team from the store to ensure we align with its designated event
-//     const actualTeam = teamStore.getById(effectiveTeamId);
-
-//     // 3. Prioritize the team's event ID to ensure the backend constraint is satisfied
-//     const effectiveEventId = actualTeam?.eventId || item.event?.id || '';
-
-//     const eventIdParam = effectiveEventId
-//       ? `&eventId=${encodeURIComponent(effectiveEventId)}`
-//       : '';
-
-//     if (item.invitation?.id) {
-//       navigate(`/register?invitationId=${encodeURIComponent(item.invitation.id)}&teamId=${encodeURIComponent(effectiveTeamId)}${eventIdParam}`);
-//       return;
-//     }
-
-//     navigate(`/register?teamId=${encodeURIComponent(effectiveTeamId)}${eventIdParam}`);
-//   };
-
-//   const registeredCount = teamMemberStore.getByManager(manager?.id || '').filter(
-//     m => m.registrationStatus === 'Submitted' || m.registrationStatus === 'Approved'
-//   ).length;
-
-//   const displayMembers = selectedTeamId
-//     ? (selectedTeamId.startsWith('team-')
-//       ? teamMemberStore.getByTeam(selectedTeamId).map((m) => ({ member: m, event: eventStore.getById(teamStore.getById(m.teamId || '')?.eventId || '') || ({ id: '', name: '', city: '' } as EMSEvent), hasTravelPrefs: !!m.travelPreferences?.originCity } as ReadyToRegister))
-//       : (serverTeamMembers.length ? serverTeamMembers : readyMembers.filter(r => r.member.teamId === selectedTeamId)))
-//     : readyMembers;
-
-//   return (
-//     <div className="space-y-6">
-//       <div>
-//         <h1 className="text-3xl font-bold">Register Members</h1>
-//         <p className="text-muted-foreground mt-1">
-//           Complete registration for your delegation members
-//         </p>
-//       </div>
-
-//       {/* Stats */}
-//       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-//         <Card>
-//           <CardContent className="pt-6">
-//             <div className="flex items-center gap-4">
-//               <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-//                 <UserPlus className="h-6 w-6 text-primary" />
-//               </div>
-//               <div>
-//                 <p className="text-2xl font-bold">{readyMembers.length}</p>
-//                 <p className="text-sm text-muted-foreground">Ready to Register</p>
-//               </div>
-//             </div>
-//           </CardContent>
-//         </Card>
-//         <Card>
-//           <CardContent className="pt-6">
-//             <div className="flex items-center gap-4">
-//               <div className="h-12 w-12 rounded-full bg-status-success-bg flex items-center justify-center">
-//                 <CheckCircle className="h-6 w-6 text-status-success" />
-//               </div>
-//               <div>
-//                 <p className="text-2xl font-bold">{registeredCount}</p>
-//                 <p className="text-sm text-muted-foreground">Registered</p>
-//               </div>
-//             </div>
-//           </CardContent>
-//         </Card>
-//         <Card>
-//           <CardContent className="pt-6">
-//             <div className="flex items-center gap-4">
-//               <div className="h-12 w-12 rounded-full bg-status-info-bg flex items-center justify-center">
-//                 <Plane className="h-6 w-6 text-status-info" />
-//               </div>
-//               <div>
-//                 <p className="text-2xl font-bold">{readyMembers.filter(m => m.hasTravelPrefs).length}</p>
-//                 <p className="text-sm text-muted-foreground">With Travel Prefs</p>
-//               </div>
-//             </div>
-//           </CardContent>
-//         </Card>
-//       </div>
-
-//       {approvedTeams.length > 0 && (
-//         <Card>
-//           <CardHeader>
-//             <CardTitle>Approved Delegation Teams</CardTitle>
-//             <CardDescription>
-//               Only teams linked to approved delegations are shown here and available for registration.
-//             </CardDescription>
-//           </CardHeader>
-//           <CardContent>
-//             <div className="flex flex-wrap gap-2">
-//               {approvedTeams.map((team) => {
-//                 const active = selectedTeamId === team.id;
-//                 return (
-//                   <Badge
-//                     key={team.id}
-//                     variant={active ? 'default' : 'secondary'}
-//                     className={`px-3 py-1 cursor-pointer ${active ? 'ring-2 ring-primary' : ''}`}
-//                     onClick={() => setSelectedTeamId(active ? null : team.id)}
-//                   >
-//                     {team.name}
-//                   </Badge>
-//                 );
-//               })}
-//             </div>
-//           </CardContent>
-//         </Card>
-//       )}
-
-//       {/* Ready to Register Table */}
-//       <Card>
-//         <CardHeader>
-//           <CardTitle className="flex items-center gap-2">
-//             <UserPlus className="h-5 w-5" />
-//             Ready to Register ({displayMembers.length})
-//           </CardTitle>
-//           <CardDescription>
-//             Members with accepted invitations or team members ready for registration .
-//             Travel preferences will be pre-filled if set via bulk action.
-//           </CardDescription>
-//         </CardHeader>
-//         <CardContent>
-//           {displayMembers.length === 0 ? (
-//             <div className="text-center py-12">
-//               <FileCheck className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-//               <p className="text-muted-foreground">No members ready to register</p>
-//               <p className="text-sm text-muted-foreground mt-1">
-//                 Approve the delegation, then accept invitations or add team members to get started
-//               </p>
-//             </div>
-//           ) : (
-//             <div className="overflow-x-auto">
-//               <Table>
-//                 <TableHeader>
-//                   <TableRow>
-//                     <TableHead>Member</TableHead>
-//                     <TableHead>Event</TableHead>
-//                     <TableHead>Role</TableHead>
-//                     <TableHead>Travel Prefs</TableHead>
-//                     <TableHead>Actions</TableHead>
-//                   </TableRow>
-//                 </TableHeader>
-//                 <TableBody>
-//                   {displayMembers.map((item, idx) => (
-//                     <TableRow key={`${item.member.id}-${idx}`}>
-//                       <TableCell>
-//                         <div>
-//                           <p className="font-medium">{item.member.firstName} {item.member.lastName}</p>
-//                           <p className="text-sm text-muted-foreground">{item.member.email}</p>
-//                         </div>
-//                       </TableCell>
-//                       <TableCell>
-//                         <div>
-//                           <p className="font-medium">{item.event.name}</p>
-//                           <p className="text-sm text-muted-foreground">{item.event.city}</p>
-//                         </div>
-//                       </TableCell>
-//                       <TableCell>
-//                         <Badge variant="secondary">{item.member.role || 'Participant'}</Badge>
-//                       </TableCell>
-//                       <TableCell>
-//                         {item.hasTravelPrefs ? (
-//                           <Badge className="bg-status-success-bg text-status-success">
-//                             <Plane className="h-3 w-3 mr-1" />
-//                             Set
-//                           </Badge>
-//                         ) : (
-//                           <Badge variant="outline" className="text-muted-foreground">
-//                             <Clock className="h-3 w-3 mr-1" />
-//                             Not Set
-//                           </Badge>
-//                         )}
-//                       </TableCell>
-//                       {/* <TableCell>
-//                         <Button size="sm" onClick={() => handleRegister(item)}>
-//                           <UserPlus className="h-4 w-4 mr-1" />
-//                           Register
-//                         </Button>
-//                       </TableCell>*/}
-//                     </TableRow>
-//                   ))}
-//                 </TableBody>
-//               </Table>
-//             </div>
-//           )}
-//         </CardContent>
-//       </Card>
-//     </div>
-//   );
-// };
-
-// export default ManagerRegisterPage;
-
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { eventStore, invitationStore, participantStore, registrationStore, EMSInvitation, EMSEvent } from '@/lib/emsStore';
-import { delegationStore, teamMemberStore, teamStore, Team, TeamMember } from '@/lib/teamStore';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { UserPlus, CheckCircle, Clock, Plane, FileCheck, Loader2 } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
-import { getDelegationsDetails } from '@/api/delegationApi';
+import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES, TEAM_ROLES } from '@/lib/teamStore';
+import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, ChevronDown } from 'lucide-react';
+import { toast } from 'sonner';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Textarea } from '@/components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
-import { getMyRegistrations } from '@/api/registrationApi';
+import { getMyDelegations } from '@/api/delegationApi';
+import { createRegistration, addPendingTeamRegistration, getRegistrationParticipantId } from '@/api/registrationApi';
+import { Loader2 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 
-interface ReadyToRegister {
-  member: TeamMember;
-  event: EMSEvent;
-  invitation?: EMSInvitation;
-  hasTravelPrefs: boolean;
+const COUNTRIES = [
+  'Saudi Arabia', 'United Arab Emirates', 'Egypt', 'Jordan', 'Kuwait',
+  'Qatar', 'Bahrain', 'Oman', 'Morocco', 'Tunisia', 'Algeria', 'Iraq',
+  'USA', 'UK', 'Germany', 'France', 'Japan', 'China', 'Brazil', 'Australia'
+];
+
+interface MemberForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  nationality: string;
+  passportNumber: string;
+  passportExpiry: string;
+  dateOfBirth: string;
+  gender: 'Male' | 'Female' | 'Other';
+  role: string;
+  emergencyContact: string;
+  emergencyPhone: string;
+  dietaryRequirements: string;
+  medicalConditions: string;
 }
 
-const normalizeStatus = (status?: string) => status?.toString().trim().toLowerCase();
+const emptyMember: MemberForm = {
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  nationality: '',
+  passportNumber: '',
+  passportExpiry: '',
+  dateOfBirth: '',
+  gender: 'Male',
+  role: '',
+  emergencyContact: '',
+  emergencyPhone: '',
+  dietaryRequirements: '',
+  medicalConditions: '',
+};
 
-const getDelegationTeamIds = (delegation: any): string[] => {
-  const teamIds = delegation?.teamIds || delegation?.team_ids || [];
-  const teamObjects = (delegation?.teams || []).map((team: any) => team?.id || team?._id).filter(Boolean);
+interface TeamMemberDetail {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  nationality?: string;
+  passportNumber?: string;
+  passportExpiry?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  role: string;
+  status?: string;
+  sportCategory?: string;
+  subCategory?: string;
+  emergencyContact?: string;
+  emergencyPhone?: string;
+  dietaryRequirements?: string;
+  medicalConditions?: string;
+}
 
-  return Array.from(new Set([...teamIds, ...teamObjects].filter(Boolean)));
+const normalizeTeamMember = (raw: any): TeamMemberDetail | null => {
+  if (!raw) return null;
+  const source = raw.participant || raw.user || raw;
+  const id = raw.id || source.id || source._id || raw.memberId || source.email;
+  const email = source.email || raw.email || '';
+  const firstName = source.firstName || raw.firstName || '';
+  const lastName = source.lastName || raw.lastName || '';
+  if (!id && !email) return null;
+
+  return {
+    id: String(id),
+    firstName: firstName || 'Unknown',
+    lastName,
+    email,
+    phone: source.phone || raw.phone,
+    nationality: source.nationality || raw.nationality || source.country || raw.country,
+    passportNumber: source.passportNumber || raw.passportNumber || source.passport_number,
+    passportExpiry: source.passportExpiry || raw.passportExpiry || source.passport_expiry,
+    dateOfBirth: source.dateOfBirth || raw.dateOfBirth || source.date_of_birth,
+    gender: source.gender || raw.gender,
+    role: source.role || raw.role || raw.jobTitle || source.jobTitle || 'Member',
+    status: raw.status || source.status,
+    sportCategory: source.sportCategory || raw.sportCategory || source.sport_category,
+    subCategory: source.subCategory || raw.subCategory || source.sub_category,
+    emergencyContact: source.emergencyContact || raw.emergencyContact || source.emergency_contact,
+    emergencyPhone: source.emergencyPhone || raw.emergencyPhone || source.emergency_phone,
+    dietaryRequirements: source.dietaryRequirements || raw.dietaryRequirements || source.dietary_requirements,
+    medicalConditions: source.medicalConditions || raw.medicalConditions || source.medical_conditions,
+  };
+};
+
+const formatDetailValue = (value?: string) => (value && value.trim() ? value : 'N/A');
+
+const resolveTeamEventId = (team?: any): string => {
+  if (!team) return '';
+  return String(team.eventId || team.event_id || team.event?.id || team.event?._id || '');
+};
+
+const enrichTeamWithDelegationEvent = (team: any, delegations: any[]): Team => {
+  const eventId = resolveTeamEventId(team);
+  if (eventId) return { ...(team as Team), eventId };
+
+  const delegationId =
+    team?.delegationId ||
+    team?.delegation_id ||
+    team?.delegation?.id ||
+    team?.delegation?._id;
+  const delegation = delegations.find((entry) => (entry?.id || entry?._id) === delegationId);
+  const delegationEventId =
+    delegation?.eventId ||
+    delegation?.event_id ||
+    delegation?.event?.id ||
+    delegation?.event?._id ||
+    '';
+
+  return delegationEventId
+    ? { ...(team as Team), eventId: String(delegationEventId) }
+    : (team as Team);
 };
 
 const ManagerRegisterPage: React.FC = () => {
-  const { manager } = useManagerSession();
   const navigate = useNavigate();
-  const [readyMembers, setReadyMembers] = useState<ReadyToRegister[]>([]);
-  const [approvedTeams, setApprovedTeams] = useState<Team[]>([]);
-  const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-  const [serverTeamMembers, setServerTeamMembers] = useState<ReadyToRegister[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingTeamMembers, setIsLoadingTeamMembers] = useState(false);
+  const [searchParams] = useSearchParams();
+  const { manager } = useManagerSession();
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [delegations, setDelegations] = useState<any[]>([]);
+  const [selectedTeamId, setSelectedTeamId] = useState<string>('');
+  const [members, setMembers] = useState<MemberForm[]>([{ ...emptyMember }]);
+  const [currentMembers, setCurrentMembers] = useState<TeamMemberDetail[]>([]);
+  const [selectedMember, setSelectedMember] = useState<TeamMemberDetail | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+
+  const maxDateOfBirth = new Date().toISOString().split('T')[0];
+
+  useEffect(() => {
+    if (selectedTeamId) {
+      loadCurrentMembers();
+    } else {
+      setCurrentMembers([]);
+    }
+  }, [selectedTeamId]);
+
+  const loadCurrentMembers = async () => {
+    if (!selectedTeamId) {
+      setCurrentMembers([]);
+      return;
+    }
+
+    setIsMembersLoading(true);
+    try {
+      if (selectedTeamId.startsWith('team-')) {
+        const localMembers = teamMemberStore.getByTeam(selectedTeamId);
+        setCurrentMembers(
+          localMembers
+            .map(normalizeTeamMember)
+            .filter(Boolean) as TeamMemberDetail[]
+        );
+        return;
+      }
+
+      const teamMembers = await listTeamMembers(selectedTeamId);
+      setCurrentMembers(
+        (Array.isArray(teamMembers) ? teamMembers : [])
+          .map(normalizeTeamMember)
+          .filter(Boolean) as TeamMemberDetail[]
+        );
+    } catch (e) {
+      console.error('Failed to load current members:', e);
+      toast.error('Failed to load team members');
+      setCurrentMembers([]);
+    } finally {
+      setIsMembersLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (manager) {
-      void loadReadyMembers();
+      loadTeams();
     }
-  }, [manager]);
+  }, [manager, searchParams]);
 
-  useEffect(() => {
-    const loadServerMembers = async () => {
-      if (!selectedTeamId) {
-        setServerTeamMembers([]);
-        return;
-      }
-
-      // local teams stored in local store using ids like 'team-...'
-      if (selectedTeamId.startsWith('team-')) {
-        setServerTeamMembers([]);
-        return;
-      }
-
-      setIsLoadingTeamMembers(true);
-      try {
-        const [members, regs] = await Promise.all([
-          listTeamMembers(selectedTeamId).catch(() => []),
-          getMyRegistrations().catch(() => []),
-        ]);
-
-        const mappedMembers: ReadyToRegister[] = (members as any[]).map((m) => {
-          const participant = (m as any).participant || m;
-          const memberLike: any = {
-            id: participant.id || m.id,
-            teamId: selectedTeamId,
-            firstName: participant.firstName || participant.first_name || participant.fname || '',
-            lastName: participant.lastName || participant.last_name || participant.lname || '',
-            email: participant.email || '',
-            phone: participant.phone || '',
-            nationality: participant.nationality || '',
-            passportNumber: participant.passportNumber || participant.passport_number || '',
-            passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
-            dateOfBirth: participant.dateOfBirth || '',
-            gender: participant.gender || 'Male',
-            sportCategory: '',
-            subCategory: '',
-            role: participant.jobTitle || participant.role || 'Participant',
-            emergencyContact: '',
-            emergencyPhone: '',
-            dietaryRequirements: participant.dietaryNotes || '',
-            medicalConditions: '',
-            travelPreferences: participant.travelPreferences || {},
-          };
-
-          const event = eventStore.getById(m.eventId || m.event?.id || '');
-          return {
-            member: memberLike,
-            event: event || ({ id: '', name: '', city: '' } as EMSEvent),
-            hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
-          } as ReadyToRegister;
-        });
-
-        // also map regs for this team
-        const teamRegs = (regs as any[]).filter(r => r.teamId === selectedTeamId || r.team_id === selectedTeamId || r.team?.id === selectedTeamId);
-        const mappedRegs = teamRegs.map(r => {
-          const participant = r.participant || {};
-          const memberLike: any = {
-            id: participant.id || r.id,
-            teamId: selectedTeamId,
-            firstName: participant.firstName || participant.first_name || '',
-            lastName: participant.lastName || participant.last_name || '',
-            email: participant.email || '',
-            phone: participant.phone || '',
-            nationality: participant.nationality || '',
-            passportNumber: participant.passportNumber || participant.passport_number || '',
-            passportExpiry: participant.passportExpiry || participant.passport_expiry || '',
-            dateOfBirth: participant.dateOfBirth || '',
-            gender: participant.gender || 'Male',
-            sportCategory: '',
-            subCategory: '',
-            role: participant.jobTitle || participant.role || 'Participant',
-            emergencyContact: '',
-            emergencyPhone: '',
-            dietaryRequirements: participant.dietaryNotes || '',
-            medicalConditions: '',
-            travelPreferences: participant.travelPreferences || {},
-          };
-          const event = eventStore.getById(r.eventId || r.event?.id || '');
-          return {
-            member: memberLike,
-            event: event || ({ id: '', name: '', city: '' } as EMSEvent),
-            hasTravelPrefs: !!memberLike.travelPreferences?.originCity,
-          } as ReadyToRegister;
-        });
-
-        // merge without duplicates (by email or id)
-        const seen = new Set<string>();
-        const combined: ReadyToRegister[] = [];
-        for (const it of [...mappedMembers, ...mappedRegs]) {
-          const key = (it.member.email || it.member.id || '').toString().toLowerCase();
-          if (!seen.has(key)) {
-            seen.add(key);
-            combined.push(it);
-          }
-        }
-
-        setServerTeamMembers(combined);
-      } catch (e) {
-        console.error('Failed to load server team members:', e);
-        setServerTeamMembers([]);
-      } finally {
-        setIsLoadingTeamMembers(false);
-      }
-    };
-
-    void loadServerMembers();
-  }, [selectedTeamId]);
-
-  const loadReadyMembers = async () => {
-    if (!manager) return;
-
+  const loadTeams = async () => {
     setIsLoading(true);
     try {
-      const allInvitations = invitationStore.getAll();
-      const allParticipants = participantStore.getAll();
-      const localTeams = teamStore.getByManager(manager.id);
-      const localDelegations = delegationStore.getByManager(manager.id);
-      const [remoteDelegations, remoteTeams] = await Promise.all([
-        getDelegationsDetails().catch(() => []),
-        getMyTeams().catch(() => []),
+      const [serverTeams, delegationsData] = await Promise.all([
+        getMyTeams(),
+        getMyDelegations().catch(() => []),
       ]);
+      setDelegations(Array.isArray(delegationsData) ? delegationsData : []);
 
-      const managerDelegations = [...remoteDelegations, ...localDelegations].filter((delegation: any) => {
-        const delegationManagerId = delegation?.managerId || delegation?.manager_id || delegation?.manager?.id || delegation?.user?.id;
-        return !delegationManagerId || delegationManagerId === manager.id;
-      });
+      const localTeams = teamStore.getByManager(manager?.id || '');
 
-      const approvedDelegations = managerDelegations.filter((delegation: any) => normalizeStatus(delegation?.status) === 'approved');
-      const approvedDelegationIds = new Set<string>(approvedDelegations.map((delegation: any) => delegation?.id || delegation?._id).filter(Boolean));
-      const approvedTeamIds = new Set<string>();
+      const merged = (Array.isArray(serverTeams) ? serverTeams : []).map((t: any) => ({
+        ...enrichTeamWithDelegationEvent(t, delegationsData),
+        memberCount: t.memberCount || t.member_count,
+      }));
 
-      for (const delegation of approvedDelegations) {
-        getDelegationTeamIds(delegation).forEach((teamId) => approvedTeamIds.add(teamId));
-      }
-
-      const allTeams = [...remoteTeams, ...localTeams];
-      const approvedTeamsByDelegation = allTeams.filter((team: any) => {
-        const teamDelegationId = team?.delegationId || team?.delegation_id || team?.delegation?.id || team?.delegation?._id;
-        return approvedTeamIds.has(team?.id) || approvedDelegationIds.has(teamDelegationId) || normalizeStatus(team?.status) === 'approved';
-      });
-
-      const uniqueApprovedTeams = Array.from(
-        new Map(approvedTeamsByDelegation.map((team: any) => [team.id, team as Team])).values()
-      );
-
-      const allowedTeamIds = new Set<string>([
-        ...approvedTeamIds,
-        ...uniqueApprovedTeams.map((team) => team.id),
-      ]);
-
-      setApprovedTeams(uniqueApprovedTeams);
-
-      const teamMembers = teamMemberStore.getByManager(manager.id).filter((member) => allowedTeamIds.has(member.teamId));
-      const ready: ReadyToRegister[] = [];
-
-      // Check accepted invitations for team members
-      for (const inv of allInvitations) {
-        if (inv.status !== 'Accepted') continue;
-
-        const participant = allParticipants.find(p => p.id === inv.participantId);
-        const event = eventStore.getById(inv.eventId);
-
-        if (participant && event) {
-          // Check if already registered
-          const existingRegs = registrationStore.getByParticipant(participant.id);
-          const existingReg = existingRegs.find(r => r.eventId === event.id);
-          if (existingReg) continue;
-
-          // Check if this is a team member
-          const teamMember = teamMembers.find(m => m.email.toLowerCase() === participant.email.toLowerCase());
-
-          if (teamMember) {
-            ready.push({
-              member: teamMember,
-              event,
-              invitation: inv,
-              hasTravelPrefs: !!teamMember.travelPreferences?.originCity,
-            });
-          } else {
-            // Check if participant is from manager's country
-            const isFromCountry = participant.nationality === manager.country;
-            if (isFromCountry) {
-              // Create virtual member
-              ready.push({
-                member: {
-                  id: participant.id,
-                  teamId: '',
-                  firstName: participant.firstName,
-                  lastName: participant.lastName,
-                  email: participant.email,
-                  phone: participant.phone,
-                  nationality: participant.nationality,
-                  passportNumber: participant.passportNumber || '',
-                  passportExpiry: participant.passportExpiry || '',
-                  dateOfBirth: '',
-                  gender: 'Male',
-                  sportCategory: '',
-                  subCategory: '',
-                  role: participant.role,
-                  emergencyContact: participant.emergencyContact || '',
-                  emergencyPhone: '',
-                  dietaryRequirements: participant.dietaryNotes,
-                  medicalConditions: '',
-                  status: 'Draft',
-                  createdAt: participant.createdAt,
-                  updatedAt: participant.updatedAt,
-                },
-                event,
-                invitation: inv,
-                hasTravelPrefs: false,
-              });
-            }
-          }
+      for (const lt of localTeams) {
+        if (!merged.find(st => st.id === lt.id)) {
+          const localCount = teamMemberStore.getByTeam(lt.id).length;
+          merged.push({
+            ...enrichTeamWithDelegationEvent(lt, delegationsData),
+            memberCount: localCount,
+          });
         }
       }
 
-      // Also check team members who don't have invitations but are ready
-      for (const member of teamMembers) {
-        // Skip if already in list or already registered for their team's event
-        const alreadyInList = ready.some(r => r.member.email.toLowerCase() === member.email.toLowerCase());
-        if (alreadyInList) continue;
+      setTeams(merged);
 
-        // Skip members that are already registered
-        if (member.registrationStatus === 'Submitted' || member.registrationStatus === 'Approved') continue;
-
-        // Get team to find event
-        const team = teamStore.getById(member.teamId);
-        if (!team) continue;
-
-        const event = eventStore.getById(team.eventId);
-        if (!event) continue;
-
-        // Check if participant exists and is registered
-        const participant = participantStore.getByEmail(member.email);
-        if (participant) {
-          const existingRegs = registrationStore.getByParticipant(participant.id);
-          const existingReg = existingRegs.find(r => r.eventId === event.id);
-          if (existingReg) continue;
-        }
-
-        ready.push({
-          member,
-          event,
-          hasTravelPrefs: !!member.travelPreferences?.originCity,
-        });
+      const teamIdParam = searchParams.get('teamId');
+      if (teamIdParam && merged.some(t => t.id === teamIdParam)) {
+        setSelectedTeamId(teamIdParam);
       }
-
-      setReadyMembers(ready);
+    } catch (error) {
+      console.error('Failed to load teams:', error);
+      toast.error('Failed to load teams');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleRegister = (item: ReadyToRegister) => {
-    // 1. Determine the accurate team ID
-    const effectiveTeamId = item.member.teamId || selectedTeamId || '';
+  const selectedTeam = teams.find(t => t.id === selectedTeamId);
+  const selectedTeamEventId = selectedTeam
+    ? resolveTeamEventId(enrichTeamWithDelegationEvent(selectedTeam, delegations))
+    : '';
 
-    // 2. Fetch the actual team from the store to ensure we align with its designated event
-    const actualTeam = teamStore.getById(effectiveTeamId);
+  const updateMember = (index: number, field: keyof MemberForm, value: string) => {
+    setMembers(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      return updated;
+    });
+  };
 
-    // 3. Prioritize the team's event ID to ensure the backend constraint is satisfied
-    const effectiveEventId = actualTeam?.eventId || item.event?.id || '';
+  const addMemberRow = () => {
+    setMembers(prev => [...prev, { ...emptyMember }]);
+  };
 
-    const eventIdParam = effectiveEventId
-      ? `&eventId=${encodeURIComponent(effectiveEventId)}`
-      : '';
+  const removeMemberRow = (index: number) => {
+    if (members.length > 1) {
+      setMembers(prev => prev.filter((_, i) => i !== index));
+    }
+  };
 
-    if (item.invitation?.id) {
-      navigate(`/register?invitationId=${encodeURIComponent(item.invitation.id)}&teamId=${encodeURIComponent(effectiveTeamId)}${eventIdParam}`);
+  const handleSaveMembers = async () => {
+    if (!selectedTeamId) {
+      toast.error('Please select a team first');
       return;
     }
 
-    navigate(`/register?teamId=${encodeURIComponent(effectiveTeamId)}${eventIdParam}`);
+    // Validate members
+    const validMembers = members.filter(m =>
+      m.firstName && m.lastName && m.email && m.passportNumber && m.role
+    );
+
+    if (validMembers.length === 0) {
+      toast.error('Please fill in at least one member with required fields');
+      return;
+    }
+
+    setIsSaving(true);
+
+    try {
+      let savedCount = 0;
+
+      for (const m of validMembers) {
+        if (!selectedTeam) continue;
+
+        const eventId = selectedTeamEventId;
+        if (!eventId) {
+          toast.error(`Team "${selectedTeam.name}" has no event assigned. Please link the team to an event.`);
+          setIsSaving(false);
+          return;
+        }
+
+        const isLocalTeam = selectedTeamId.startsWith('team-');
+
+        if (isLocalTeam) {
+          const localParticipantId = `local-participant-${Date.now()}-${savedCount}`;
+          addPendingTeamRegistration(selectedTeamId, {
+            participantId: localParticipantId,
+            registrationId: localParticipantId,
+            email: m.email,
+            firstName: m.firstName,
+            lastName: m.lastName,
+            registeredAt: new Date().toISOString(),
+          });
+        } else {
+          const formData = new FormData();
+
+          formData.append('eventId', eventId);
+          formData.append('teamId', selectedTeamId);
+          formData.append('firstName', m.firstName);
+          formData.append('lastName', m.lastName);
+          formData.append('email', m.email);
+          formData.append('phone', m.phone);
+          formData.append('nationality', m.nationality || manager?.country || '');
+          formData.append('passportNumber', m.passportNumber);
+          formData.append('organization', `${m.nationality || manager?.country || ''} Delegation`);
+          formData.append('jobTitle', m.role);
+          formData.append('participantRole', m.role === 'Athlete' ? 'Athlete' : 'Official');
+          formData.append('gender', m.gender.toLowerCase());
+
+          if (m.dateOfBirth) formData.append('dateOfBirth', m.dateOfBirth);
+          if (m.passportExpiry) formData.append('passportExpiry', m.passportExpiry);
+          if (m.emergencyContact) formData.append('emergencyContact', m.emergencyContact);
+          if (m.emergencyPhone) formData.append('emergencyPhone', m.emergencyPhone);
+          if (m.dietaryRequirements) formData.append('dietaryRequirements', m.dietaryRequirements);
+          if (m.medicalConditions) formData.append('medicalConditions', m.medicalConditions);
+
+          const created = await createRegistration(formData);
+          const createdRecord = (created as any)?.data || created;
+          const participantId = getRegistrationParticipantId(createdRecord);
+          const registrationId = String(createdRecord?.id || createdRecord?._id || '');
+
+          if (participantId) {
+            addPendingTeamRegistration(selectedTeamId, {
+              participantId,
+              registrationId,
+              email: m.email,
+              firstName: m.firstName,
+              lastName: m.lastName,
+              registeredAt: new Date().toISOString(),
+            });
+          }
+        }
+        savedCount++;
+      }
+
+      toast.success(`${savedCount} member(s) registered successfully! Go to Add Members to add them to the team.`);
+      setMembers([{ ...emptyMember }]);
+    } catch (error: any) {
+      console.error('Failed to save members:', error);
+      const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
+      toast.error('Failed to save members: ' + detail);
+    } finally {
+      setIsSaving(false);
+    }
   };
-
-  const registeredCount = teamMemberStore.getByManager(manager?.id || '').filter(
-    m => m.registrationStatus === 'Submitted' || m.registrationStatus === 'Approved'
-  ).length;
-
-  const displayMembers = selectedTeamId
-    ? (selectedTeamId.startsWith('team-')
-      ? teamMemberStore.getByTeam(selectedTeamId).map((m) => ({ member: m, event: eventStore.getById(teamStore.getById(m.teamId || '')?.eventId || '') || ({ id: '', name: '', city: '' } as EMSEvent), hasTravelPrefs: !!m.travelPreferences?.originCity } as ReadyToRegister))
-      : (serverTeamMembers.length ? serverTeamMembers : readyMembers.filter(r => r.member.teamId === selectedTeamId)))
-    : readyMembers;
-
-  const isTableLoading = isLoading || isLoadingTeamMembers;
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate('/manager/teams')}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          Back to Teams
+        </Button>
+      </div>
+
       <div>
         <h1 className="text-3xl font-bold">Register Members</h1>
         <p className="text-muted-foreground mt-1">
-          Complete registration for your delegation members
+          Register participant details first. They are added to the team/delegation from Add Members.
         </p>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <UserPlus className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{readyMembers.length}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Ready to Register</p>
-              </div>
+      {/* Team Selection */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Select Team</CardTitle>
+          <CardDescription>Choose which team you are registering members for</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center p-6">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-status-success-bg flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-status-success" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{registeredCount}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Registered</p>
-              </div>
+          ) : teams.length === 0 ? (
+            <div className="text-center py-6">
+              <Users className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
+              <p className="text-muted-foreground mb-3">No teams created yet</p>
+              <Button onClick={() => navigate('/manager/teams')}>Create a Team First</Button>
             </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-status-info-bg flex items-center justify-center">
-                <Plane className="h-6 w-6 text-status-info" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{readyMembers.filter(m => m.hasTravelPrefs).length}</p>
-                )}
-                <p className="text-sm text-muted-foreground">With Travel Prefs</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          ) : (
+            <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
+              <SelectTrigger className="max-w-md">
+                <SelectValue placeholder="Select a team" />
+              </SelectTrigger>
+              <SelectContent>
+                {teams.map(team => (
+                  <SelectItem key={team.id} value={team.id}>
+                    {team.name} ({typeof team.sportCategory === 'string' ? team.sportCategory : (team.sportCategory as any)?.name})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </CardContent>
+      </Card>
 
-      {isLoading ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-primary" />
-            <p className="text-muted-foreground">Loading approved teams...</p>
-          </CardContent>
-        </Card>
-      ) : approvedTeams.length > 0 && (
+  {/*    {selectedTeamId && (
         <Card>
           <CardHeader>
-            <CardTitle>Approved Delegation Teams</CardTitle>
+            <CardTitle className="text-lg">Registered — Pending Add to Team</CardTitle>
             <CardDescription>
-              Only teams linked to approved delegations are shown here and available for registration.
+              These members are registered but not yet in the delegation. Add them from the Add Members page.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {approvedTeams.map((team) => {
-                const active = selectedTeamId === team.id;
-                return (
-                  <Badge
-                    key={team.id}
-                    variant={active ? 'default' : 'secondary'}
-                    className={`px-3 py-1 cursor-pointer ${active ? 'ring-2 ring-primary' : ''}`}
-                    onClick={() => setSelectedTeamId(active ? null : team.id)}
+            {pendingRegistrations.length === 0 ? (
+              <div className="text-center py-6 text-muted-foreground">
+                <p>No pending registrations for this team</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pendingRegistrations.map((member) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center justify-between gap-3 p-3 border rounded-lg border-dashed"
                   >
-                    {team.name}
-                  </Badge>
-                );
-              })}
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{member.firstName} {member.lastName}</p>
+                      <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                    </div>
+                    <Badge variant="secondary">Pending Add</Badge>
+                  </div>
+                ))}
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  onClick={() => navigate(`/manager/add-members?teamId=${selectedTeamId}`)}
+                >
+                  Go to Add Members
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+*/}
+      {/* Team members already added via Add Members */}
+      {selectedTeamId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Team Members (In Delegation)</CardTitle>
+            <CardDescription>
+              Members already added to team: {selectedTeam?.name}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isMembersLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : currentMembers.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                <p>No team members added yet. Register first, then use Add Members.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {currentMembers.map((member) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => setSelectedMember(member)}
+                    className="w-full flex items-center justify-between gap-3 p-3 border rounded-lg text-left transition-colors hover:bg-muted/50 cursor-pointer"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>
+                          {(member.firstName[0] || '?').toUpperCase()}
+                          {(member.lastName[0] || '').toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {member.firstName} {member.lastName}
+                        </p>
+                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline">{member.role}</Badge>
+                      {member.status && (
+                        <Badge variant="secondary">{member.status}</Badge>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Member Entry Forms */}
+      {selectedTeamId && (
+        <Card>
+          <CardHeader>
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle className="text-lg">Register New Members</CardTitle>
+                <CardDescription>
+                  Registering to: {selectedTeam?.name} • {typeof selectedTeam?.sportCategory === 'string' ? selectedTeam?.sportCategory : (selectedTeam?.sportCategory as any)?.name}
+                </CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={addMemberRow}>
+                <Plus className="h-4 w-4 mr-1" />
+                Add Another
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {members.map((member, index) => (
+              <div key={index} className="border rounded-lg p-4 space-y-4 relative">
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="font-medium flex items-center gap-2">
+                    <UserPlus className="h-4 w-4" />
+                    Member {index + 1}
+                  </h4>
+                  {members.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeMemberRow(index)}
+                    >
+                      <Trash2 className="h-4 w-4 text-destructive" />
+                    </Button>
+                  )}
+                </div>
+
+                {/* Personal Info */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>First Name *</Label>
+                    <Input
+                      value={member.firstName}
+                      onChange={(e) => updateMember(index, 'firstName', e.target.value)}
+                      placeholder="First name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Last Name *</Label>
+                    <Input
+                      value={member.lastName}
+                      onChange={(e) => updateMember(index, 'lastName', e.target.value)}
+                      placeholder="Last name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Email *</Label>
+                    <Input
+                      type="email"
+                      value={member.email}
+                      onChange={(e) => updateMember(index, 'email', e.target.value)}
+                      placeholder="email@example.com"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>Phone</Label>
+                    <Input
+                      value={member.phone}
+                      onChange={(e) => updateMember(index, 'phone', e.target.value)}
+                      placeholder="+966 XXX XXX XXXX"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Nationality</Label>
+                    <Select
+                      value={member.nationality}
+                      onValueChange={(v) => updateMember(index, 'nationality', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select country" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {COUNTRIES.map(c => (
+                          <SelectItem key={c} value={c}>{c}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Date of Birth</Label>
+                    <Input
+                      type="date"
+                      max={maxDateOfBirth}
+                      value={member.dateOfBirth}
+                      onChange={(e) => updateMember(index, 'dateOfBirth', e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label>Passport Number *</Label>
+                    <Input
+                      value={member.passportNumber}
+                      onChange={(e) => updateMember(index, 'passportNumber', e.target.value.toUpperCase())}
+                      placeholder="A12345678"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Passport Expiry</Label>
+                    <Input
+                      type="date"
+                      value={member.passportExpiry}
+                      onChange={(e) => updateMember(index, 'passportExpiry', e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Gender</Label>
+                    <RadioGroup
+                      value={member.gender}
+                      onValueChange={(v) => updateMember(index, 'gender', v)}
+                      className="flex gap-4 pt-2"
+                    >
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="Male" id={`male-${index}`} />
+                        <Label htmlFor={`male-${index}`} className="font-normal">Male</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <RadioGroupItem value="Female" id={`female-${index}`} />
+                        <Label htmlFor={`female-${index}`} className="font-normal">Female</Label>
+                      </div>
+                    </RadioGroup>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Role/Position *</Label>
+                    <Select
+                      value={member.role}
+                      onValueChange={(v) => updateMember(index, 'role', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TEAM_ROLES.map(role => (
+                          <SelectItem key={role} value={role}>{role}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Dietary Requirements</Label>
+                    <Input
+                      value={member.dietaryRequirements}
+                      onChange={(e) => updateMember(index, 'dietaryRequirements', e.target.value)}
+                      placeholder="e.g., Halal, Vegetarian"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Emergency Contact Name</Label>
+                    <Input
+                      value={member.emergencyContact}
+                      onChange={(e) => updateMember(index, 'emergencyContact', e.target.value)}
+                      placeholder="Contact name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Emergency Contact Phone</Label>
+                    <Input
+                      value={member.emergencyPhone}
+                      onChange={(e) => updateMember(index, 'emergencyPhone', e.target.value)}
+                      placeholder="+966 XXX XXX XXXX"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Medical Conditions (Optional)</Label>
+                  <Textarea
+                    value={member.medicalConditions}
+                    onChange={(e) => updateMember(index, 'medicalConditions', e.target.value)}
+                    placeholder="Any medical conditions or allergies..."
+                    rows={2}
+                  />
+                </div>
+              </div>
+            ))}
+
+            <div className="flex justify-end gap-3 pt-4 border-t">
+              <Button variant="outline" onClick={addMemberRow}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add More Members
+              </Button>
+              <Button onClick={handleSaveMembers} disabled={isSaving}>
+                <Save className="h-4 w-4 mr-2" />
+                {isSaving ? 'Saving...' : 'Save All Members'}
+              </Button>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Ready to Register Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <UserPlus className="h-5 w-5" />
-            Ready to Register ({displayMembers.length})
-          </CardTitle>
-          <CardDescription>
-            Members with accepted invitations or team members ready for registration .
-            Travel preferences will be pre-filled if set via bulk action.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isTableLoading ? (
-            <div className="text-center py-12">
-              <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-primary" />
-              <p className="text-muted-foreground">
-                {isLoadingTeamMembers ? 'Loading team members...' : 'Loading members ready to register...'}
-              </p>
-            </div>
-          ) : displayMembers.length === 0 ? (
-            <div className="text-center py-12">
-              <FileCheck className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-              <p className="text-muted-foreground">No members ready to register</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Approve the delegation, then accept invitations or add team members to get started
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Member</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Travel Prefs</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {displayMembers.map((item, idx) => (
-                    <TableRow key={`${item.member.id}-${idx}`}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{item.member.firstName} {item.member.lastName}</p>
-                          <p className="text-sm text-muted-foreground">{item.member.email}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{item.event.name}</p>
-                          <p className="text-sm text-muted-foreground">{item.event.city}</p>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">{item.member.role || 'Participant'}</Badge>
-                      </TableCell>
-                      <TableCell>
-                        {item.hasTravelPrefs ? (
-                          <Badge className="bg-status-success-bg text-status-success">
-                            <Plane className="h-3 w-3 mr-1" />
-                            Set
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-muted-foreground">
-                            <Clock className="h-3 w-3 mr-1" />
-                            Not Set
-                          </Badge>
-                        )}
-                      </TableCell>
-                       <TableCell>
-                        <Button size="sm" onClick={() => handleRegister(item)}>
-                          <UserPlus className="h-4 w-4 mr-1" />
-                          Register
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+      <Dialog open={!!selectedMember} onOpenChange={(open) => !open && setSelectedMember(null)}>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Member Details</DialogTitle>
+          </DialogHeader>
+          {selectedMember && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 pb-2 border-b">
+                <Avatar className="h-12 w-12">
+                  <AvatarFallback>
+                    {(selectedMember.firstName[0] || '?').toUpperCase()}
+                    {(selectedMember.lastName[0] || '').toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <p className="font-semibold text-lg">
+                    {selectedMember.firstName} {selectedMember.lastName}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{selectedMember.email}</p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-start">
+                <div>
+                  <p className="text-sm text-muted-foreground">Role</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.role)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Status</p>
+                  {selectedMember.status ? (
+                    <Badge variant="secondary">{selectedMember.status}</Badge>
+                  ) : (
+                    <p className="font-medium">N/A</p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Phone</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.phone)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Nationality</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.nationality)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Passport Number</p>
+                  <p className="font-medium font-mono">{formatDetailValue(selectedMember.passportNumber)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Passport Expiry</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.passportExpiry)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Date of Birth</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.dateOfBirth)}</p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Gender</p>
+                  <p className="font-medium">{formatDetailValue(selectedMember.gender)}</p>
+                </div>
+                {selectedMember.sportCategory && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sport</p>
+                    <p className="font-medium">{formatDetailValue(selectedMember.sportCategory)}</p>
+                  </div>
+                )}
+                {selectedMember.subCategory && (
+                  <div>
+                    <p className="text-sm text-muted-foreground">Sub Category</p>
+                    <p className="font-medium">{formatDetailValue(selectedMember.subCategory)}</p>
+                  </div>
+                )}
+              </div>
+
+              {selectedMember.dietaryRequirements && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Dietary Requirements</p>
+                  <p className="font-medium">{selectedMember.dietaryRequirements}</p>
+                </div>
+              )}
+              {selectedMember.medicalConditions && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Medical Conditions</p>
+                  <p className="font-medium">{selectedMember.medicalConditions}</p>
+                </div>
+              )}
+              {(selectedMember.emergencyContact || selectedMember.emergencyPhone) && (
+                <div className="text-start">
+                  <p className="text-sm text-muted-foreground">Emergency Contact</p>
+                  <p className="font-medium">
+                    {formatDetailValue(selectedMember.emergencyContact)}
+                    {selectedMember.emergencyPhone ? ` · ${selectedMember.emergencyPhone}` : ''}
+                  </p>
+                </div>
+              )}
             </div>
           )}
-        </CardContent>
-      </Card>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

@@ -1267,6 +1267,7 @@ import * as campaignApi from '@/api/campaignApi';
 import { getEvents } from '@/api/eventApi';
 import { getParticipants } from '@/api/participantApi';
 import { getAllDelegations } from '@/api/delegationApi';
+import apiClient from '@/api/apiClient';
 import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
@@ -1350,12 +1351,13 @@ const InvitationsPage: React.FC = () => {
   const [wizardStep, setWizardStep] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
   const [apiCampaigns, setApiCampaigns] = useState<campaignApi.Campaign[]>([]);
   const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
   const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
   const [apiDelegations, setApiDelegations] = useState<any[]>([]);
+  const [apiManagers, setApiManagers] = useState<InvitationManager[]>([]);
   const [isParticipantsLoading, setIsParticipantsLoading] = useState(false);
 
   // Wizard form state
@@ -1404,16 +1406,42 @@ const InvitationsPage: React.FC = () => {
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
-      const [campaignData, eventData, participantData, delegationData] = await Promise.all([
+      const fetchManagers = async (): Promise<InvitationManager[]> => {
+        const endpoints = ['/admin/managers', '/team-managers'];
+        for (const endpoint of endpoints) {
+          try {
+            const { data } = await apiClient.get(endpoint);
+            const list = Array.isArray(data) ? data : (data?.data || data?.managers || data?.users || []);
+            if (Array.isArray(list) && list.length > 0) {
+              return list.map((manager: any) => ({
+                id: String(manager.id || manager._id || ''),
+                firstName: manager.firstName || manager.first_name,
+                lastName: manager.lastName || manager.last_name,
+                name: manager.name,
+                email: manager.email || '',
+                country: manager.country,
+                organization: manager.organization || manager.federation,
+              })).filter((manager: InvitationManager) => Boolean(manager.id || manager.email));
+            }
+          } catch {
+            // try next endpoint
+          }
+        }
+        return [];
+      };
+
+      const [campaignData, eventData, participantData, delegationData, managerData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
         getParticipants().catch(() => []),
         getAllDelegations().catch(() => []),
+        fetchManagers().catch(() => []),
       ]);
       setApiCampaigns(Array.isArray(campaignData) ? campaignData : []);
       setApiEvents(Array.isArray(eventData) ? eventData : []);
       setApiParticipants(Array.isArray(participantData) ? participantData : []);
       setApiDelegations(Array.isArray(delegationData) ? delegationData : []);
+      setApiManagers(Array.isArray(managerData) ? managerData : []);
     } catch (error) {
       console.error('Failed to load invitations data:', error);
     } finally {
@@ -1442,7 +1470,41 @@ const InvitationsPage: React.FC = () => {
     });
   }, [apiParticipants]);
 
-  const managers = MOCK_MANAGERS;
+  const managers = useMemo(() => {
+    const fromApi = apiManagers.filter(manager => manager.id || manager.email);
+    if (fromApi.length > 0) return fromApi;
+
+    const fromDelegations = apiDelegations
+      .map((del) => {
+        const managerId = String(
+          del?.managerId ||
+          del?.manager_id ||
+          del?.manager?.id ||
+          del?.manager?._id ||
+          del?.user?.id ||
+          del?.user?._id ||
+          ''
+        );
+        const email =
+          del?.managerEmail ||
+          del?.manager_email ||
+          del?.manager?.email ||
+          del?.user?.email ||
+          '';
+        if (!managerId && !email) return null;
+        return {
+          id: managerId || `email:${email.toLowerCase()}`,
+          email,
+          name: del?.manager?.name || del?.user?.name,
+          country: del?.country,
+          organization: del?.organization,
+        } as InvitationManager;
+      })
+      .filter(Boolean) as InvitationManager[];
+
+    if (fromDelegations.length > 0) return fromDelegations;
+    return MOCK_MANAGERS;
+  }, [apiManagers, apiDelegations]);
 
   const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
 
@@ -1531,6 +1593,45 @@ const InvitationsPage: React.FC = () => {
     delegationName?: string;
   }
 
+  const extractDelegationManager = (del: any) => {
+    let managerId = String(
+      del?.managerId ||
+      del?.manager_id ||
+      del?.manager?.id ||
+      del?.manager?._id ||
+      del?.user?.id ||
+      del?.user?._id ||
+      del?.userId ||
+      del?.user_id ||
+      del?.createdBy ||
+      del?.created_by ||
+      ''
+    );
+    let managerEmail = (
+      del?.managerEmail ||
+      del?.manager_email ||
+      del?.manager?.email ||
+      del?.user?.email ||
+      ''
+    ).toLowerCase().trim();
+
+    if (!managerId && managerEmail) {
+      const matchedManager = managers.find(m => m.email.toLowerCase() === managerEmail);
+      if (matchedManager?.id) managerId = String(matchedManager.id);
+    }
+
+    if (managerId && !managerEmail) {
+      const matchedManager = managers.find(m => String(m.id) === managerId);
+      if (matchedManager?.email) managerEmail = matchedManager.email.toLowerCase();
+    }
+
+    if (!managerId && managerEmail) {
+      managerId = `email:${managerEmail}`;
+    }
+
+    return { managerId, managerEmail };
+  };
+
   const resolveManagerTargetsFromDelegations = (): ManagerInvitationTarget[] => {
     if (audienceMode !== 'delegation') return [];
 
@@ -1545,13 +1646,14 @@ const InvitationsPage: React.FC = () => {
       const del = approvedDelegations.find(d => (d.id || d._id) === delegationId);
       if (!del) continue;
 
-      const managerId = del.managerId || del.manager_id || del.manager?.id;
-      if (!managerId || seenManagerIds.has(managerId)) continue;
+      const { managerId, managerEmail } = extractDelegationManager(del);
+      const dedupeKey = managerEmail || managerId;
+      if (!managerId || !dedupeKey || seenManagerIds.has(dedupeKey)) continue;
 
-      seenManagerIds.add(managerId);
+      seenManagerIds.add(dedupeKey);
       targets.push({
         managerId,
-        managerEmail: del.managerEmail || del.manager_email || del.manager?.email,
+        managerEmail,
         delegationId,
         delegationName: del.country || del.name,
       });
@@ -1618,13 +1720,14 @@ const InvitationsPage: React.FC = () => {
       const del = apiDelegations.find(d => (d.id || d._id) === delegationId);
       if (!del) continue;
 
-      const managerId = del.managerId || del.manager_id || del.manager?.id;
-      if (!managerId || seenManagerIds.has(managerId)) continue;
+      const { managerId, managerEmail } = extractDelegationManager(del);
+      const dedupeKey = managerEmail || managerId;
+      if (!managerId || !dedupeKey || seenManagerIds.has(dedupeKey)) continue;
 
-      seenManagerIds.add(managerId);
+      seenManagerIds.add(dedupeKey);
       targets.push({
         managerId,
-        managerEmail: del.managerEmail || del.manager_email || del.manager?.email,
+        managerEmail,
         delegationId,
         delegationName: del.country || del.name,
       });
@@ -1659,31 +1762,8 @@ const InvitationsPage: React.FC = () => {
     }
 
     if (audienceMode === 'delegation') {
-      const selectedCountries = selectedDelegations
-        .map(id => {
-          const del = approvedDelegations.find(d => (d.id || d._id) === id);
-          return (del?.country || del?.name || '').toLowerCase();
-        })
-        .filter(Boolean);
-
-      if (selectedCountries.length > 0) {
-        return participants.filter(p => {
-          const orgLower = (p.organization || '').toLowerCase();
-          const natLower = (p.nationality || '').toLowerCase();
-          return selectedCountries.some(c =>
-            orgLower.includes(c) || c.includes(orgLower) || natLower === c
-          );
-        });
-      }
-      return approvedDelegations.length > 0
-        ? participants.filter(p => {
-          return approvedDelegations.some(del => {
-            const countryLower = (del.country || '').toLowerCase();
-            const orgLower = (p.organization || '').toLowerCase();
-            return countryLower && (orgLower.includes(countryLower) || countryLower.includes(orgLower));
-          });
-        })
-        : [];
+      // Delegation campaigns invite only the delegation manager — not individual participants.
+      return [];
     }
 
     if (selectedRoles.length === 0) return [];
@@ -1702,10 +1782,15 @@ const InvitationsPage: React.FC = () => {
       return resolveManagerTargetsFromSelection().length > 0;
     }
     if (audienceMode === 'delegation') {
-      return getFilteredAudience().length > 0 || resolveManagerTargetsFromDelegations().length > 0;
+      return selectedDelegations.length > 0 && resolveManagerTargetsFromDelegations().length > 0;
     }
     return getFilteredAudience().length > 0;
   };
+
+  const getManagerIdsForCampaignRoles = (targets: ManagerInvitationTarget[]): string[] =>
+    targets
+      .map(target => target.managerId)
+      .filter((id): id is string => Boolean(id) && !String(id).startsWith('email:'));
 
   const getCampaignTargetRoles = (): string[] | undefined => {
     if (audienceMode === 'role' && selectedRoles.length > 0) {
@@ -1713,6 +1798,14 @@ const InvitationsPage: React.FC = () => {
     }
     if (audienceMode === 'individual' && selectedParticipantIds.length > 0) {
       return selectedParticipantIds;
+    }
+    if (audienceMode === 'delegation') {
+      const managerIds = getManagerIdsForCampaignRoles(resolveManagerTargetsFromDelegations());
+      return managerIds.length > 0 ? managerIds : undefined;
+    }
+    if (audienceMode === 'manager') {
+      const managerIds = getManagerIdsForCampaignRoles(resolveManagerTargetsFromSelection());
+      return managerIds.length > 0 ? managerIds : undefined;
     }
     return undefined;
   };
@@ -1847,7 +1940,7 @@ const InvitationsPage: React.FC = () => {
       name: payload.campaignName,
       eventId: payload.selectedEventId,
       templateId: payload.selectedTemplateId,
-      targetRoles: payload.selectedRoles,
+      targetRoles: (payload.selectedRoles ?? []) as ParticipantRole[],
       targetNationalities: [],
       targetDelegationIds: payload.targetDelegationIds,
       targetManagerIds: payload.targetManagerIds,
@@ -1931,7 +2024,7 @@ const InvitationsPage: React.FC = () => {
         managerTargets: managerTargets.length > 0 ? managerTargets : undefined,
       });
 
-      const participantIds = audience.map(p => p.id);
+      const participantIds = audienceMode === 'delegation' ? [] : audience.map(p => p.id);
 
       const backendCampaign = await campaignApi.createCampaign({
         name: campaignName,
@@ -1941,9 +2034,11 @@ const InvitationsPage: React.FC = () => {
 
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
-        audienceIds: participantIds,
-        targetParticipantIds: participantIds,
-        audienceSize: participantIds.length,
+        ...(participantIds.length > 0 ? {
+          audienceIds: participantIds,
+          targetParticipantIds: participantIds,
+          audienceSize: participantIds.length,
+        } : {}),
         roleFilters: campaignTargetRoles,
         targetRoles: campaignTargetRoles,
         targetDelegationIds: computedTargetDelegationIds,
@@ -1993,11 +2088,9 @@ const InvitationsPage: React.FC = () => {
     }
     if (!campaign) return existing;
 
-    const audienceIds: string[] = Array.isArray(campaign.audienceIds)
-      ? campaign.audienceIds
-      : Array.isArray(campaign.targetParticipantIds)
-        ? campaign.targetParticipantIds
-        : [];
+    const isDelegationCampaign =
+      (Array.isArray(campaign?.targetDelegationIds) && campaign.targetDelegationIds.length > 0) ||
+      (Array.isArray(campaign?.targetManagerIds) && campaign.targetManagerIds.length > 0);
 
     const managerTargets = resolveManagerTargetsForCampaign(campaign);
     const ensureManagerInvitations = () => {
@@ -2010,6 +2103,17 @@ const InvitationsPage: React.FC = () => {
         campaign.rsvpDeadline || rsvpDeadline || ''
       );
     };
+
+    if (isDelegationCampaign) {
+      const createdManagers = ensureManagerInvitations();
+      return createdManagers.length > 0 ? [...existing, ...createdManagers] : existing;
+    }
+
+    const audienceIds: string[] = Array.isArray(campaign.audienceIds)
+      ? campaign.audienceIds
+      : Array.isArray(campaign.targetParticipantIds)
+        ? campaign.targetParticipantIds
+        : [];
 
     if (audienceIds.length === 0) {
       const createdManagers = ensureManagerInvitations();
@@ -2058,27 +2162,56 @@ const InvitationsPage: React.FC = () => {
         campaign = apiCampaigns.find(c => c.id === campaignId);
       }
 
-      const participantIds: string[] = Array.isArray(campaign?.audienceIds)
-        ? campaign.audienceIds
-        : Array.isArray(campaign?.targetParticipantIds)
-          ? campaign.targetParticipantIds
-          : created
-            .filter(inv => inv.recipientType !== 'manager' && inv.participantId)
-            .map(inv => inv.participantId as string);
+      const targetDelegationIds: string[] = Array.isArray(campaign?.targetDelegationIds)
+        ? campaign.targetDelegationIds
+        : [];
+      const isDelegationCampaign = targetDelegationIds.length > 0;
 
-      const campaignTargetRoles = Array.isArray(campaign?.targetRoles) && campaign.targetRoles.length > 0
-        ? campaign.targetRoles
-        : participantIds.length > 0
-          ? participantIds
-          : undefined;
+      const participantIds: string[] = isDelegationCampaign
+        ? []
+        : Array.isArray(campaign?.audienceIds)
+          ? campaign.audienceIds
+          : Array.isArray(campaign?.targetParticipantIds)
+            ? campaign.targetParticipantIds
+            : created
+              .filter(inv => inv.recipientType !== 'manager' && inv.participantId)
+              .map(inv => inv.participantId as string);
 
-      if (participantIds.length > 0 || campaignTargetRoles?.length) {
+      const managerTargets = resolveManagerTargetsForCampaign(campaign);
+      const targetManagerIds: string[] = managerTargets.length > 0
+        ? managerTargets.map(target => target.managerId)
+        : Array.isArray(campaign?.targetManagerIds)
+          ? campaign.targetManagerIds
+          : [];
+
+      const delegationManagerRoleIds = getManagerIdsForCampaignRoles(managerTargets);
+      const campaignTargetRoles = isDelegationCampaign
+        ? (delegationManagerRoleIds.length > 0
+          ? delegationManagerRoleIds
+          : targetManagerIds.filter(id => id && !String(id).startsWith('email:')))
+        : Array.isArray(campaign?.targetRoles) && campaign.targetRoles.length > 0
+          ? campaign.targetRoles
+          : participantIds.length > 0
+            ? participantIds
+            : undefined;
+
+      const shouldSyncAudience =
+        participantIds.length > 0 ||
+        !!campaignTargetRoles?.length ||
+        targetDelegationIds.length > 0 ||
+        targetManagerIds.length > 0;
+
+      if (shouldSyncAudience) {
         await campaignApi.updateCampaign(campaignId, {
-          audienceIds: participantIds,
-          targetParticipantIds: participantIds,
-          audienceSize: participantIds.length,
+          ...(participantIds.length > 0 ? {
+            audienceIds: participantIds,
+            targetParticipantIds: participantIds,
+            audienceSize: participantIds.length,
+          } : {}),
           roleFilters: campaignTargetRoles,
           targetRoles: campaignTargetRoles,
+          targetDelegationIds: targetDelegationIds.length > 0 ? targetDelegationIds : undefined,
+          targetManagerIds: targetManagerIds.length > 0 ? targetManagerIds : undefined,
         }).catch((error) => {
           console.warn('Backend campaign audience sync failed before send:', error);
         });
@@ -2086,7 +2219,13 @@ const InvitationsPage: React.FC = () => {
 
       const sent = invitationStore.sendCampaign(campaignId);
 
-      campaignStore.update(campaignId, { status: 'Sent', sentAt: new Date().toISOString() } as any);
+      campaignStore.update(campaignId, {
+        status: 'Sent',
+        sentAt: new Date().toISOString(),
+        ...(targetDelegationIds.length > 0 ? { targetDelegationIds } : {}),
+        ...(targetManagerIds.length > 0 ? { targetManagerIds } : {}),
+        ...(campaignTargetRoles?.length ? { targetRoles: campaignTargetRoles } : {}),
+      } as any);
       campaignStore.updateStats(campaignId);
 
       // Sync status change to backend API so it stays Sent on refresh
@@ -2094,7 +2233,18 @@ const InvitationsPage: React.FC = () => {
         console.warn('Backend sendCampaignNow failed, continuing with local flow:', error);
       });
 
-      toast({ title: 'Campaign sent', description: `Delivered ${sent || created.length} invitations to selected participants.` });
+      const managerInviteCount = created.filter(inv => inv.recipientType === 'manager').length;
+      const participantInviteCount = created.filter(inv => inv.recipientType !== 'manager').length;
+      const descriptionParts: string[] = [];
+      if (managerInviteCount > 0) descriptionParts.push(`${managerInviteCount} manager invitation(s)`);
+      if (participantInviteCount > 0) descriptionParts.push(`${participantInviteCount} participant invitation(s)`);
+
+      toast({
+        title: 'Campaign sent',
+        description: descriptionParts.length > 0
+          ? `Delivered ${descriptionParts.join(' and ')}.`
+          : `Delivered ${sent || created.length} invitation(s).`,
+      });
       setRefreshKey(k => k + 1);
       setViewCampaignOpen(false);
     } catch (error: any) {
@@ -2552,17 +2702,19 @@ const InvitationsPage: React.FC = () => {
                   <p className="text-2xl font-bold">
                     {selectedParticipantIds.length}
                   </p>
-                ) : (
+                ) : audienceMode === 'delegation' ? (
                   <>
                     <p className="text-2xl font-bold">
-                      {t('common.participants_count', { count: getFilteredAudience().length })}
+                      {resolveManagerTargetsFromDelegations().length}
                     </p>
-                    {audienceMode === 'delegation' && resolveManagerTargetsFromDelegations().length > 0 && (
-                      <p className="text-sm text-muted-foreground mt-2">
-                        {resolveManagerTargetsFromDelegations().length} manager invitation(s) will be sent
-                      </p>
-                    )}
+                    <p className="text-sm text-muted-foreground mt-1">
+                      delegation manager invitation(s) will be sent
+                    </p>
                   </>
+                ) : (
+                  <p className="text-2xl font-bold">
+                    {t('common.participants_count', { count: getFilteredAudience().length })}
+                  </p>
                 )}
               </CardContent>
             </Card>
@@ -2669,13 +2821,18 @@ const InvitationsPage: React.FC = () => {
                     <span className="text-muted-foreground">Managers:</span>
                     <span>{managerTargets.length} manager(s)</span>
                   </div>
+                ) : audienceMode === 'delegation' ? (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Delegation managers:</span>
+                    <span>{managerTargets.length} manager(s)</span>
+                  </div>
                 ) : (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">{t('common.audience')}:</span>
                     <span>{t('common.participants_count', { count: audience.length })}</span>
                   </div>
                 )}
-                {managerTargets.length > 0 && audienceMode !== 'manager' && (
+                {managerTargets.length > 0 && audienceMode !== 'manager' && audienceMode !== 'delegation' && (
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Managers:</span>
                     <span>{managerTargets.length} manager invitation(s)</span>
@@ -2863,6 +3020,15 @@ const InvitationsPage: React.FC = () => {
         }
       />
 
+      {isLoading ? (
+        <Card className="p-12">
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+            <p className="text-muted-foreground">{t('invitations.loading', 'Loading invitations...')}</p>
+          </div>
+        </Card>
+      ) : (
+        <>
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatsCard title={t('invitations.total_sent')} value={stats.totalSent} icon={Send} />
@@ -3075,6 +3241,8 @@ const InvitationsPage: React.FC = () => {
           </div>
         </TabsContent>
       </Tabs>
+        </>
+      )}
 
       <CampaignDetailDialog />
 

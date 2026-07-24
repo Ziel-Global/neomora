@@ -142,7 +142,7 @@ const RegistrationsPage: React.FC = () => {
   const [viewDocsDialogOpen, setViewDocsDialogOpen] = useState(false);
   const [viewProfileDialogOpen, setViewProfileDialogOpen] = useState(false);
 
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   const normalizeName = (fullName: string | undefined) => {
     if (!fullName) return { firstName: 'Unknown', lastName: '' };
@@ -707,7 +707,14 @@ const RegistrationsPage: React.FC = () => {
       </div>
 
       {/* Empty State or Data Table */}
-      {groupedTeams.length === 0 && individualRegistrations.length === 0 ? (
+      {isLoading ? (
+        <Card className="p-12">
+          <div className="flex flex-col items-center justify-center py-12">
+            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
+            <p className="text-muted-foreground">{t('registrations.loading', 'Loading registrations...')}</p>
+          </div>
+        </Card>
+      ) : groupedTeams.length === 0 && individualRegistrations.length === 0 ? (
         <Card className="p-12">
           <div className="flex flex-col items-center justify-center text-center">
             <div className="h-16 w-16 rounded-full bg-muted flex items-center justify-center mb-4">
