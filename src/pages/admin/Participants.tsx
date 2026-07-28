@@ -50,6 +50,7 @@ import { toast } from 'sonner';
 interface ParticipantWithStatus extends EMSParticipant {
   invitationStatus?: string;
   registrationStatus?: string;
+  registrationId?: string;
 }
 
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
@@ -93,13 +94,12 @@ const ParticipantsPage: React.FC = () => {
   const loadParticipants = async () => {
     setIsLoading(true);
     try {
-      const data = await participantApi.getParticipants();
+      const data = await participantApi.getApprovedParticipantsFromRegistrations();
       setParticipants(data);
     } catch (error) {
-      console.error('Error fetching participants:', error);
-      toast.error('Failed to load participants');
-      // Fallback to local store for demo persistence if local server not running
-      setParticipants(participantStore.getAll());
+      console.error('Error fetching approved participants:', error);
+      toast.error('Failed to load approved participants');
+      setParticipants([]);
     } finally {
       setIsLoading(false);
     }
@@ -227,10 +227,13 @@ const ParticipantsPage: React.FC = () => {
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )[0];
 
+    const approvedParticipant = p as participantApi.AdminApprovedParticipant;
+
     return {
       ...p,
       invitationStatus: latestInvitation?.status,
-      registrationStatus: latestRegistration?.status,
+      registrationStatus: approvedParticipant.registrationStatus || latestRegistration?.status || 'Approved',
+      registrationId: approvedParticipant.registrationId,
     };
   }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 

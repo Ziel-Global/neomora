@@ -18,7 +18,6 @@ import {
   Download,
   Filter,
   Eye,
-  MoreHorizontal,
   CheckCircle2,
   XCircle,
   Clock,
@@ -28,13 +27,6 @@ import {
   Upload,
   ChevronDown,
 } from 'lucide-react';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   Collapsible,
   CollapsibleContent,
@@ -143,6 +135,7 @@ const RegistrationsPage: React.FC = () => {
   const [viewProfileDialogOpen, setViewProfileDialogOpen] = useState(false);
 
   const [isLoading, setIsLoading] = useState(true);
+  const [isStatusUpdating, setIsStatusUpdating] = useState(false);
 
   const normalizeName = (fullName: string | undefined) => {
     if (!fullName) return { firstName: 'Unknown', lastName: '' };
@@ -376,9 +369,31 @@ const RegistrationsPage: React.FC = () => {
   // };
 
 
+  const updateSelectedRegistrationStatus = (
+    reg: RegistrationWithParticipant,
+    status: RegistrationWithParticipant['status'],
+  ) => {
+    setSelectedRegistration((prev) => {
+      if (!prev) return prev;
+      const sameRecord =
+        prev.id === reg.id ||
+        prev.registrationId === reg.registrationId;
+      return sameRecord ? { ...prev, status } : prev;
+    });
+  };
+
   const handleApprove = async (reg: RegistrationWithParticipant) => {
-    await approveRegistration(reg.registrationId);
-    loadData();
+    setIsStatusUpdating(true);
+    try {
+      await approveRegistration(reg.registrationId);
+      updateSelectedRegistrationStatus(reg, 'Approved');
+      toast.success(t('common.activity.reg_approved', { defaultValue: 'Registration approved' }));
+      await loadData();
+    } catch (e) {
+      toast.error(t('common.failed'));
+    } finally {
+      setIsStatusUpdating(false);
+    }
   };
 
 
@@ -397,8 +412,17 @@ const RegistrationsPage: React.FC = () => {
 
 
   const handleStartReview = async (reg: RegistrationWithParticipant) => {
-    await startRegistrationReview(reg.registrationId);
-    loadData();
+    setIsStatusUpdating(true);
+    try {
+      await startRegistrationReview(reg.registrationId);
+      updateSelectedRegistrationStatus(reg, 'Under Review');
+      toast.success(t('registrations.start_review'));
+      await loadData();
+    } catch (e) {
+      toast.error(t('common.failed'));
+    } finally {
+      setIsStatusUpdating(false);
+    }
   };
 
 
@@ -421,10 +445,10 @@ const RegistrationsPage: React.FC = () => {
       toast.error(t('common.failed'));
       return;
     }
-    loadData();
+    updateSelectedRegistrationStatus(selectedRegistration, 'Rejected');
+    await loadData();
     toast.success(t('common.rejected') + `: ${selectedRegistration.registrationId}`);
     setRejectDialogOpen(false);
-    setSelectedRegistration(null);
     setReason('');
   };
 
@@ -439,10 +463,10 @@ const RegistrationsPage: React.FC = () => {
       toast.error(t('common.failed'));
       return;
     }
-    loadData();
+    updateSelectedRegistrationStatus(selectedRegistration, 'Update Requested');
+    await loadData();
     toast.success(t('common.update_requested') + `: ${selectedRegistration.registrationId}`);
     setRequestUpdateDialogOpen(false);
-    setSelectedRegistration(null);
     setReason('');
   };
 
@@ -545,65 +569,77 @@ const RegistrationsPage: React.FC = () => {
       header: t('common.status'),
       accessor: (row) => <StatusBadge status={row.status} />,
     },
-    {
-      key: 'actions',
-      header: '',
-      className: 'w-12',
-      accessor: (row) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-8 w-8">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align={isRtl ? 'start' : 'end'}>
-            <DropdownMenuItem
-              className="flex items-center gap-2 text-start cursor-pointer"
-              onClick={() => openViewProfileDialog(row)}
-            >
-              <Eye className="h-4 w-4" />
-              {t('registrations.view_profile')}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {row.status === 'Submitted' && (
-              <DropdownMenuItem
-                className="flex items-center gap-2 text-status-info text-start"
-                onClick={() => handleStartReview(row)}
-              >
-                <Clock className="h-4 w-4" />
-                {t('registrations.start_review')}
-              </DropdownMenuItem>
-            )}
-            {(row.status === 'Submitted' || row.status === 'Under Review') && (
-              <>
-                <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-success text-start"
-                  onClick={() => handleApprove(row)}
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  Approve
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-error text-start"
-                  onClick={() => openRejectDialog(row)}
-                >
-                  <XCircle className="h-4 w-4" />
-                  Reject
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="flex items-center gap-2 text-status-warning text-start"
-                  onClick={() => openRequestUpdateDialog(row)}
-                >
-                  <AlertTriangle className="h-4 w-4" />
-                  {t('registrations.request_update')}
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ),
-    },
   ];
+
+  const handleRowClick = (row: RegistrationWithParticipant) => {
+    openViewProfileDialog(row);
+  };
+
+  const renderRegistrationStatusActions = (reg: RegistrationWithParticipant) => (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">{t('common.status')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t('registrations.change_status_hint', { defaultValue: 'Update the registration review status below.' })}
+          </p>
+        </div>
+        <StatusBadge status={reg.status} />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {reg.status === 'Submitted' && (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={isStatusUpdating}
+            onClick={() => handleStartReview(reg)}
+          >
+            {isStatusUpdating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Clock className="h-4 w-4 mr-2" />}
+            {t('registrations.start_review')}
+          </Button>
+        )}
+
+        {(reg.status === 'Submitted' || reg.status === 'Under Review') && (
+          <>
+            <Button
+              size="sm"
+              disabled={isStatusUpdating}
+              className="bg-status-success hover:bg-status-success/90"
+              onClick={() => handleApprove(reg)}
+            >
+              {isStatusUpdating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              {t('common.approve', { defaultValue: 'Approve' })}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={isStatusUpdating}
+              onClick={() => openRejectDialog(reg)}
+            >
+              <XCircle className="h-4 w-4 mr-2" />
+              {t('common.reject', { defaultValue: 'Reject' })}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isStatusUpdating}
+              onClick={() => openRequestUpdateDialog(reg)}
+            >
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              {t('registrations.request_update')}
+            </Button>
+          </>
+        )}
+
+        {(reg.status === 'Approved' || reg.status === 'Rejected' || reg.status === 'Update Requested') && (
+          <p className="text-sm text-muted-foreground">
+            {t('registrations.status_finalized', { defaultValue: 'This registration has been finalized. No further status changes are available.' })}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 
   const memberColumns = columns.filter((col) => col.key !== 'team');
 
@@ -783,6 +819,7 @@ const RegistrationsPage: React.FC = () => {
                   searchKey={(row) => `${row.participant.firstName} ${row.participant.lastName} ${row.participant.email}`}
                   selectable
                   onSelectionChange={(ids) => console.log('Selected:', ids)}
+                  onRowClick={handleRowClick}
                 />
               )
             ) : (
@@ -815,6 +852,7 @@ const RegistrationsPage: React.FC = () => {
                             searchable={false}
                             selectable
                             onSelectionChange={(ids) => console.log('Selected:', ids)}
+                            onRowClick={handleRowClick}
                           />
                         </CollapsibleContent>
                       </Card>
@@ -964,13 +1002,19 @@ const RegistrationsPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* View Profile Dialog */}
+      {/* View Profile Dialog — opened by row click; status actions at bottom */}
       <Dialog open={viewProfileDialogOpen} onOpenChange={setViewProfileDialogOpen}>
-        <DialogContent className="max-w-3xl" dir={isRtl ? 'rtl' : 'ltr'}>
+        <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col" dir={isRtl ? 'rtl' : 'ltr'}>
           <DialogHeader>
             <DialogTitle className="text-start">{t('registrations.view_profile')}</DialogTitle>
+            <DialogDescription className="text-start">
+              {selectedRegistration
+                ? `${selectedRegistration.participant.firstName} ${selectedRegistration.participant.lastName}`
+                : ''}
+            </DialogDescription>
           </DialogHeader>
-          <div className="space-y-6 py-4 max-h-[70vh] overflow-y-auto">
+
+          <div className="flex-1 overflow-y-auto space-y-6 py-2">
             {selectedRegistration && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-start">
                 <div>
@@ -990,17 +1034,33 @@ const RegistrationsPage: React.FC = () => {
                   <h4 className="font-semibold mb-2">Registration Details</h4>
                   <div className="space-y-2 text-sm">
                     <p><span className="text-muted-foreground">{t('common.team', { defaultValue: 'Team' })}:</span> {selectedRegistration.teamName || 'Unknown Team'}</p>
-                    <p><span className="text-muted-foreground">{t('common.status', { defaultValue: 'Status' })}:</span> <span className="ml-2 inline-block"><StatusBadge status={selectedRegistration.status} /></span></p>
                     <p><span className="text-muted-foreground">{t('common.submitted', { defaultValue: 'Submitted At' })}:</span> {selectedRegistration.submittedAt ? new Date(selectedRegistration.submittedAt).toLocaleDateString() : '-'}</p>
                     <p><span className="text-muted-foreground">Dietary Notes:</span> {selectedRegistration.participant.dietaryNotes || '-'}</p>
                     <p><span className="text-muted-foreground">Accessibility Needs:</span> {selectedRegistration.participant.accessibilityNeeds || '-'}</p>
+                    <p>
+                      <span className="text-muted-foreground">{t('registrations.documents')}:</span>{' '}
+                      <Button
+                        variant="link"
+                        className="h-auto p-0 align-baseline"
+                        onClick={() => openViewDocsDialog(selectedRegistration)}
+                      >
+                        {selectedRegistration.documentCount} {t('registrations.view_docs', { defaultValue: 'View documents' })}
+                      </Button>
+                    </p>
                   </div>
                 </div>
               </div>
             )}
           </div>
-          <DialogFooter>
-            <Button onClick={() => setViewProfileDialogOpen(false)}>
+
+          {selectedRegistration && (
+            <div className="border-t pt-4 mt-2 shrink-0">
+              {renderRegistrationStatusActions(selectedRegistration)}
+            </div>
+          )}
+
+          <DialogFooter className="shrink-0">
+            <Button variant="outline" onClick={() => setViewProfileDialogOpen(false)}>
               {t('common.close', { defaultValue: 'Close' })}
             </Button>
           </DialogFooter>

@@ -12,10 +12,9 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Switch } from '@/components/ui/switch';
 import { getMyTeams, addTeamMember, addTeamMembersBulk, listTeamMembers } from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
+import { getManagerParticipants } from '@/api/participantApi';
 import {
-  getMyRegistrations,
   getPendingTeamRegistrations,
-  normalizeRegistrationParticipant,
   removePendingTeamRegistrations,
   RegisteredParticipantOption,
 } from '@/api/registrationApi';
@@ -104,14 +103,9 @@ const getMemberEmail = (member: any): string =>
 
 const loadRegisteredParticipantsForTeam = async (
   teamId: string,
-  team: Team,
-  delegations: any[],
 ): Promise<Participant[]> => {
-  const enrichedTeam = enrichTeamWithDelegationEvent(team, delegations);
-  const teamEventId = resolveTeamEventId(enrichedTeam);
   const pendingEntries = getPendingTeamRegistrations(teamId);
   const pendingIds = new Set(pendingEntries.map((entry) => entry.participantId));
-  const pendingEmails = new Set(pendingEntries.map((entry) => entry.email.toLowerCase()));
 
   let teamMembers: any[] = [];
   if (teamId.startsWith('team-')) {
@@ -133,35 +127,26 @@ const loadRegisteredParticipantsForTeam = async (
     if (email) existingEmails.add(email);
   }
 
-  const registrations = await getMyRegistrations();
+  const managerParticipants = await getManagerParticipants();
   const available = new Map<string, Participant>();
 
-  for (const registration of registrations) {
-    const participant = normalizeRegistrationParticipant(registration);
-    if (!participant) continue;
-
-    const regTeamId = String(
-      (registration as any).teamId ||
-      (registration as any).team_id ||
-      (registration as any).team?.id ||
-      (registration as any).team?._id ||
-      participant.teamId ||
-      '',
-    );
-    const isPendingForTeam =
-      pendingIds.has(participant.id) ||
-      (participant.email && pendingEmails.has(participant.email.toLowerCase()));
-    const matchesTeam = regTeamId && regTeamId === teamId;
-    const matchesEvent =
-      teamEventId &&
-      participant.eventId &&
-      participant.eventId === teamEventId;
-
-    if (!isPendingForTeam && !matchesTeam && !matchesEvent) continue;
+  for (const participant of managerParticipants) {
     if (existingParticipantIds.has(participant.id)) continue;
     if (participant.email && existingEmails.has(participant.email.toLowerCase())) continue;
 
-    available.set(participant.id, participant);
+    available.set(participant.id, {
+      id: participant.id,
+      registrationId: participant.id,
+      firstName: participant.firstName,
+      lastName: participant.lastName,
+      name: `${participant.firstName || ''} ${participant.lastName || ''}`.trim() || participant.email,
+      email: participant.email,
+      phone: participant.phone,
+      nationality: participant.nationality,
+      passportNumber: participant.passportNumber,
+      gender: participant.gender,
+      role: participant.role,
+    });
   }
 
   for (const pending of pendingEntries) {
@@ -170,6 +155,21 @@ const loadRegisteredParticipantsForTeam = async (
     if (available.has(pending.participantId)) continue;
 
     available.set(pending.participantId, {
+      id: pending.participantId,
+      registrationId: pending.registrationId,
+      firstName: pending.firstName,
+      lastName: pending.lastName,
+      name: `${pending.firstName || ''} ${pending.lastName || ''}`.trim() || pending.email,
+      email: pending.email,
+    });
+  }
+
+  // Include pending entries that may not yet appear in GET /manager/participants
+  for (const pendingId of pendingIds) {
+    if (available.has(pendingId) || existingParticipantIds.has(pendingId)) continue;
+    const pending = pendingEntries.find((entry) => entry.participantId === pendingId);
+    if (!pending) continue;
+    available.set(pendingId, {
       id: pending.participantId,
       registrationId: pending.registrationId,
       firstName: pending.firstName,
@@ -248,11 +248,10 @@ const AddMembersPage: React.FC = () => {
       return;
     }
 
-    const team = teams.find((entry) => entry.id === selectedTeamId);
-    if (!team) return;
+    if (!teams.some((entry) => entry.id === selectedTeamId)) return;
 
     setIsLoadingParticipants(true);
-    loadRegisteredParticipantsForTeam(selectedTeamId, team, delegations)
+    loadRegisteredParticipantsForTeam(selectedTeamId)
       .then(setAllParticipants)
       .catch((error) => {
         console.error('Failed to load registered participants:', error);
@@ -413,15 +412,8 @@ const AddMembersPage: React.FC = () => {
 
       setRows([emptyRow()]);
 
-      const team = teams.find((entry) => entry.id === selectedTeamId);
-      if (team) {
-        const refreshed = await loadRegisteredParticipantsForTeam(
-          selectedTeamId,
-          team,
-          delegations,
-        );
+      const refreshed = await loadRegisteredParticipantsForTeam(selectedTeamId);
         setAllParticipants(refreshed);
-      }
     } catch (error: any) {
       const detail =
         error?.response?.data?.message ||

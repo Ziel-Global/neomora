@@ -54,14 +54,7 @@ const toPreviewTemplate = (raw: unknown): EMSInvitationTemplate | null => {
 const syncTemplateToStore = (raw: unknown) => {
   const template = toPreviewTemplate(raw);
   if (!template) return;
-  const templates = templateStore.getAll();
-  const index = templates.findIndex(entry => entry.id === template.id);
-  if (index >= 0) {
-    templates[index] = { ...templates[index], ...template };
-  } else {
-    templates.push(template);
-  }
-  localStorage.setItem('ems_invitation_templates', JSON.stringify(templates));
+  templateStore.upsert(template);
 };
 
 const resolveDelegationName = (
@@ -95,6 +88,38 @@ const resolveDelegationName = (
     }
   }
   return '';
+};
+
+/** Delegation id only when present on the invitation payload — not from manager-owned delegations or campaign targets. */
+const getInvitationDelegationIdFromRaw = (raw: any): string =>
+  String(
+    raw?.delegationId ||
+    raw?.delegation_id ||
+    raw?.delegation?.id ||
+    raw?.delegation?._id ||
+    '',
+  );
+
+const resolveInvitationDelegation = (
+  normalized: any,
+  serverDelegations: any[],
+  rawSource?: any,
+): { delegationId: string; delegationName: string } => {
+  const source = rawSource || normalized;
+  const delegationId = getInvitationDelegationIdFromRaw(source);
+  if (!delegationId) {
+    return { delegationId: '', delegationName: '' };
+  }
+
+  return {
+    delegationId,
+    delegationName: resolveDelegationName(
+      delegationId,
+      serverDelegations,
+      undefined,
+      source?.delegation || normalized?.delegation,
+    ),
+  };
 };
 
 const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
@@ -443,15 +468,7 @@ const ManagerInvitationsPage: React.FC = () => {
             participantEmail: inv.participantEmail || inv.participant_email || inv.participant?.email || '',
             managerId: inv.managerId || inv.manager_id || inv.manager?.id || inv.manager?._id || '',
             managerEmail: inv.managerEmail || inv.manager_email || inv.manager?.email || '',
-            delegationId:
-              normalizedInv.delegationId ||
-              inv.delegationId ||
-              inv.delegation_id ||
-              inv.delegation?.id ||
-              inv.delegation?._id ||
-              inv.campaign?.targetDelegationIds?.[0] ||
-              inv.campaign?.targetDelegationId ||
-              '',
+            delegationId: getInvitationDelegationIdFromRaw(inv),
             recipientType: inv.recipientType || inv.recipient_type || ((inv.managerId || inv.manager_id || inv.manager?.id || inv.delegationId) ? 'manager' : 'participant'),
             eventId: inv.eventId || inv.event_id || inv.event?.id || inv.event?._id || '',
             status: inv.status || 'Pending',
@@ -476,13 +493,15 @@ const ManagerInvitationsPage: React.FC = () => {
         const matchesByManagerRole = getCampaignManagerRoleIds(campaign).includes(String(manager.id));
         if (!matchingDelegationId && !matchesByManagerRole) continue;
 
-        const resolvedDelegationId = matchingDelegationId || campaignDelegationIds[0] || '';
+        const resolvedDelegationId = matchingDelegationId || '';
 
         const syntheticId = `mgr-camp-${campaign.id}-${resolvedDelegationId || manager.id}`;
-        const serverDelegation = serverDelegations.find(d => idsMatch(d.id || d._id, resolvedDelegationId));
-        const delegationLabel = serverDelegation?.country
+        const serverDelegation = resolvedDelegationId
+          ? serverDelegations.find(d => idsMatch(d.id || d._id, resolvedDelegationId))
+          : undefined;
+        const delegationLabel = resolvedDelegationId && serverDelegation?.country
           ? `${serverDelegation.country} Delegation`
-          : `${manager.country} Delegation`;
+          : '';
 
         const campaignEventId = String(campaign.eventId || campaign.event?.id || '');
         const serverEvent = serverEvents.find((ev: any) => idsMatch(ev.id || ev._id, campaignEventId));
@@ -557,7 +576,7 @@ const ManagerInvitationsPage: React.FC = () => {
       const delegationInvitations: DelegationInvitation[] = [];
       const seenInvitationKeys = new Set<string>();
 
-      const appendInvitationRow = (normalized: any) => {
+      const appendInvitationRow = (normalized: any, rawPayload?: any) => {
         const invitationId = String(normalized?.id || '');
         if (!invitationId || seenInvitationKeys.has(invitationId)) return;
 
@@ -567,33 +586,34 @@ const ManagerInvitationsPage: React.FC = () => {
         seenInvitationKeys.add(invitationId);
         const storeInvitation =
           invitationStore.getById(invitationId) || normalizedToStoreInvitation(normalized);
-        const delegationName = resolveDelegationName(
-          normalized.delegationId || storeInvitation.delegationId,
+        const rawSource = rawPayload || sourceMap[invitationId] || normalized;
+        const invitationDelegation = resolveInvitationDelegation(
+          normalized,
           serverDelegations,
-          undefined,
-          normalized.delegation || normalized.campaign?.targetDelegation,
+          rawSource,
         );
+        storeInvitation.delegationId = invitationDelegation.delegationId;
 
         delegationInvitations.push({
           invitation: storeInvitation,
           event,
-          participantName: delegationName,
+          participantName: invitationDelegation.delegationName,
           participantEmail: storeInvitation.managerEmail || manager.email,
-          delegationName,
-          rawSource: normalized,
+          delegationName: invitationDelegation.delegationName,
+          rawSource,
         });
       };
 
       // Primary source: API response (manager invitations endpoint already scopes data)
       for (const rawInv of serverInvitationsMerged as any[]) {
         const normalized = sourceMap[String(rawInv.id || rawInv._id)] || normalizeInvitation(rawInv);
-        appendInvitationRow(normalized);
+        appendInvitationRow(normalized, rawInv);
       }
 
       // Synthetic rows from delegation-targeted campaigns
       for (const [sourceId, normalized] of Object.entries(sourceMap)) {
         if (sourceId.startsWith('mgr-camp-')) {
-          appendInvitationRow({ ...normalized, id: sourceId });
+          appendInvitationRow({ ...normalized, id: sourceId }, normalized);
         }
       }
 
@@ -879,22 +899,31 @@ const ManagerInvitationsPage: React.FC = () => {
   const resolveDelegationEventId = (delegation: any): string =>
     String(delegation?.eventId || delegation?.event_id || delegation?.event?.id || delegation?.event?._id || '');
 
-  const hasManagerDelegationForEvent = (eventId: string): boolean =>
-    managerDelegations.some((delegation) => resolveDelegationEventId(delegation) === String(eventId));
+  const hasManagerDelegationForEvent = (eventId: string): boolean => {
+    const targetEventId = String(eventId);
+    if (!targetEventId) return false;
 
-  const invitationNeedsDelegation = (inv: DelegationInvitation): boolean => {
-    if (hasManagerDelegationForEvent(inv.event.id)) return false;
+    const fromServer = managerDelegations.some(
+      (delegation) => resolveDelegationEventId(delegation) === targetEventId,
+    );
+    if (fromServer) return true;
 
-    const delegationId = inv.invitation.delegationId;
-    if (delegationId) {
-      const ownsDelegation = managerDelegations.some(
-        (delegation) => String(delegation.id || delegation._id) === String(delegationId),
-      );
-      if (ownsDelegation) return false;
-    }
-
-    return true;
+    if (!manager?.id) return false;
+    return delegationStore.getByManager(manager.id).some(
+      (delegation) => String(delegation.eventId || '') === targetEventId,
+    );
   };
+
+  const invitationHasDelegation = (inv: DelegationInvitation): boolean => {
+    const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
+    return Boolean(getInvitationDelegationIdFromRaw(rawSource));
+  };
+
+  const invitationNeedsDelegation = (inv: DelegationInvitation): boolean =>
+    !invitationHasDelegation(inv);
+
+  const isCreateDelegationDisabled = (inv: DelegationInvitation): boolean =>
+    invitationNeedsDelegation(inv) && hasManagerDelegationForEvent(inv.event.id);
 
   const handleRegister = (inv: DelegationInvitation) => {
     if (['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status)) {
@@ -1092,7 +1121,7 @@ const ManagerInvitationsPage: React.FC = () => {
                               </Badge>
                             )}
                           </div>
-                          {inv.delegationName && (
+                          {invitationHasDelegation(inv) && inv.delegationName && (
                             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs mt-1">
                               Delegation: {inv.delegationName}
                             </Badge>
@@ -1138,6 +1167,12 @@ const ManagerInvitationsPage: React.FC = () => {
                             <Button
                               size="sm"
                               variant="outline"
+                              disabled={isCreateDelegationDisabled(inv)}
+                              title={
+                                isCreateDelegationDisabled(inv)
+                                  ? 'Delegation already created for this event'
+                                  : undefined
+                              }
                               onClick={() => handleCreateDelegationForInvitation(inv)}
                             >
                               <Flag className="h-3 w-3 mr-1" />

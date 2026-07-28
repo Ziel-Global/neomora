@@ -293,10 +293,110 @@ export const getRegistrations = async (): Promise<Registration[]> => {
     return Array.isArray(data) ? data : (data?.data || data?.registrations || []);
 };
 
+const unwrapRegistrationCollection = (data: unknown): any[] => {
+    if (Array.isArray(data)) return data;
+    if (data && typeof data === 'object') {
+        const record = data as Record<string, unknown>;
+        if (Array.isArray(record.data)) return record.data;
+        if (Array.isArray(record.registrations)) return record.registrations;
+        if (Array.isArray(record.teams)) return record.teams;
+    }
+    return [];
+};
+
 // GET /admin/registrations/by-team — Get registrations grouped by team (admin)
 export const getRegistrationsByTeam = async (): Promise<any[]> => {
-    const { data } = await apiClient.get('/admin/registrations/by-team');
-    return Array.isArray(data) ? data : (data?.data || data?.teams || []);
+    const endpoints = ['/admin/registrations/by-team', '/admin/registration-team'];
+
+    for (const endpoint of endpoints) {
+        if (isEndpointBlocked(endpoint)) continue;
+        try {
+            const { data } = await apiClient.get(endpoint);
+            const result = unwrapRegistrationCollection(data);
+            if (Array.isArray(result)) {
+                setCachedEndpoint('registrationsEndpoint', endpoint);
+                return result;
+            }
+        } catch (err: any) {
+            markEndpointBlocked(endpoint, err?.response?.status);
+        }
+    }
+
+    return [];
+};
+
+export const isApprovedRegistration = (registration: any): boolean => {
+    const status = String(
+        registration?.status ||
+        registration?.registrationStatus ||
+        registration?.registration_status ||
+        '',
+    ).trim().toLowerCase();
+
+    return status === 'approved';
+};
+
+const getRegistrationRecordKey = (registration: any): string =>
+    String(
+        registration?.id ||
+        registration?._id ||
+        registration?.registrationId ||
+        registration?.registration_id ||
+        '',
+    );
+
+const extractRegistrationsFromTeamGroups = (groups: any[]): any[] => {
+    const rawGroups = Array.isArray(groups) ? groups : [];
+    const hasGroupShape = rawGroups.some(
+        (group) => group?.members || group?.participants || group?.registrations,
+    );
+    const normalizedGroups = hasGroupShape
+        ? rawGroups
+        : [{ members: rawGroups }];
+
+    const rows: any[] = [];
+    for (const group of normalizedGroups) {
+        const members = group.members || group.participants || group.registrations || [];
+        for (const member of members) {
+            const reg = member?.registration || member;
+            if (reg && typeof reg === 'object') {
+                rows.push(reg);
+            }
+        }
+    }
+    return rows;
+};
+
+const getRegistrationEventId = (registration: any): string =>
+    String(
+        registration?.eventId ||
+        registration?.event_id ||
+        registration?.event?.id ||
+        registration?.event?._id ||
+        '',
+    );
+
+/** Merge admin registration sources and return only Approved registrations. */
+export const getApprovedAdminRegistrations = async (eventId?: string): Promise<Registration[]> => {
+    const [teamGroups, allRegs] = await Promise.all([
+        getRegistrationsByTeam().catch(() => []),
+        getRegistrations().catch(() => []),
+    ]);
+
+    const merged = new Map<string, Registration>();
+    const targetEventId = eventId ? String(eventId) : '';
+
+    for (const reg of [
+        ...extractRegistrationsFromTeamGroups(teamGroups),
+        ...(Array.isArray(allRegs) ? allRegs : []),
+    ]) {
+        const key = getRegistrationRecordKey(reg);
+        if (!key || !isApprovedRegistration(reg)) continue;
+        if (targetEventId && getRegistrationEventId(reg) !== targetEventId) continue;
+        merged.set(key, reg);
+    }
+
+    return Array.from(merged.values());
 };
 
 // POST /registrations/:id/start-review — Set status to Under Review
@@ -319,8 +419,6 @@ export const requestRegistrationUpdate = async (id: string, reason?: string): Pr
     await apiClient.post(`/registrations/${id}/request-update`, reason ? { reason } : undefined);
 };
 
-// GET /registrations/event/:eventId/participants
-export const getEventParticipants = async (eventId: string): Promise<any[]> => {
-    const { data } = await apiClient.get(`/registrations/event/${eventId}/participants`);
-    return Array.isArray(data) ? data : (data?.data || data?.participants || []);
-};
+// GET /registrations/event/:eventId/participants — legacy alias; uses approved admin registrations.
+export const getEventParticipants = async (eventId: string): Promise<any[]> =>
+    getApprovedAdminRegistrations(eventId);

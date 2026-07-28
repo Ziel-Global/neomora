@@ -51,6 +51,7 @@ interface DataTableProps<T> {
   pageSize?: number;
   emptyMessage?: string;
   className?: string;
+  onRowClick?: (row: T) => void;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -67,6 +68,7 @@ export function DataTable<T>({
   pageSize: initialPageSize = 10,
   emptyMessage = 'No data available',
   className,
+  onRowClick,
 }: DataTableProps<T>) {
   const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -262,11 +264,13 @@ export function DataTable<T>({
                       key={id}
                       className={cn(
                         'transition-colors',
-                        isSelected && 'bg-accent/5'
+                        isSelected && 'bg-accent/5',
+                        onRowClick && 'cursor-pointer hover:bg-muted/50',
                       )}
+                      onClick={() => onRowClick?.(row)}
                     >
                       {selectable && (
-                        <TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={(checked) =>

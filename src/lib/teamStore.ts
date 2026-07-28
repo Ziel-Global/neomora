@@ -144,18 +144,14 @@ export const SPORT_CATEGORIES: SportCategory[] = [
 ];
 
 export const TEAM_ROLES = [
+  'VVIP',
+  'VIP',
   'Athlete',
-  'Head Coach',
-  'Assistant Coach',
-  'Team Manager',
-  'Medical Doctor',
-  'Physiotherapist',
-  'Nutritionist',
-  'Technical Official',
-  'Media Officer',
-  'Security Officer',
-  'Interpreter',
-  'Support Staff',
+  'Official',
+  'Judge',
+  'Media',
+  'Fan',
+ 
 ];
 
 // ============= STORE KEYS =============

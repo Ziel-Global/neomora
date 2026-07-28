@@ -149,7 +149,7 @@ const SubAdminInvitationsPage: React.FC = () => {
     return participantStore.getAll();
   }, [apiParticipants, refreshKey]);
 
-  const templates = useMemo(() => templateStore.getAll(), [refreshKey]);
+  const templates = useMemo(() => templateStore.getUnique(), [refreshKey]);
 
   const campaigns = useMemo(() => {
     if (Array.isArray(apiCampaigns) && apiCampaigns.length > 0) {

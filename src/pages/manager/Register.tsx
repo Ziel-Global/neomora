@@ -14,7 +14,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
-import { createRegistration, addPendingTeamRegistration, getRegistrationParticipantId } from '@/api/registrationApi';
+import { createManagerParticipant } from '@/api/participantApi';
+import { addPendingTeamRegistration } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -113,6 +114,68 @@ const normalizeTeamMember = (raw: any): TeamMemberDetail | null => {
 
 const formatDetailValue = (value?: string) => (value && value.trim() ? value : 'N/A');
 
+const getLocalDateString = (date = new Date()) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const MIN_BIRTH_YEAR = 1980;
+const MAX_AGE_YEARS = 120;
+const minDateOfBirth = `${MIN_BIRTH_YEAR}-01-01`;
+
+const parseIsoDateParts = (value: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return { year, month, day, iso: value.trim() };
+};
+
+const validateDateOfBirth = (value: string): string => {
+  if (!value || !value.trim()) return '';
+
+  const parsed = parseIsoDateParts(value);
+  if (!parsed) return 'Please enter a valid date of birth';
+
+  if (parsed.year < MIN_BIRTH_YEAR) {
+    return `Date of birth must be ${MIN_BIRTH_YEAR} or later`;
+  }
+
+  const today = getLocalDateString();
+  if (parsed.iso > today) return 'Date of birth cannot be in the future';
+
+  const oldestAllowed = new Date();
+  oldestAllowed.setFullYear(oldestAllowed.getFullYear() - MAX_AGE_YEARS);
+  if (parsed.iso < getLocalDateString(oldestAllowed)) {
+    return `Date of birth cannot be more than ${MAX_AGE_YEARS} years ago`;
+  }
+
+  return '';
+};
+
+const validatePassportExpiry = (value: string): string => {
+  if (!value || !value.trim()) return '';
+
+  const parsed = parseIsoDateParts(value);
+  if (!parsed) return 'Please enter a valid passport expiry date';
+
+  const today = getLocalDateString();
+  if (parsed.iso < today) return 'Passport expiry cannot be in the past';
+
+  return '';
+};
+
 const resolveTeamEventId = (team?: any): string => {
   if (!team) return '';
   return String(team.eventId || team.event_id || team.event?.id || team.event?._id || '');
@@ -153,8 +216,9 @@ const ManagerRegisterPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const [memberErrors, setMemberErrors] = useState<Record<number, Partial<Record<keyof MemberForm, string>>>>({});
 
-  const maxDateOfBirth = new Date().toISOString().split('T')[0];
+  const maxDateOfBirth = getLocalDateString();
 
   useEffect(() => {
     if (selectedTeamId) {
@@ -254,6 +318,60 @@ const ManagerRegisterPage: React.FC = () => {
       updated[index] = { ...updated[index], [field]: value };
       return updated;
     });
+
+    setMemberErrors(prev => {
+      const next = { ...prev };
+      const rowErrors = { ...(next[index] || {}) };
+
+      if (field === 'dateOfBirth') {
+        const error = validateDateOfBirth(value);
+        if (error) rowErrors.dateOfBirth = error;
+        else delete rowErrors.dateOfBirth;
+      } else if (field === 'passportExpiry') {
+        const error = validatePassportExpiry(value);
+        if (error) rowErrors.passportExpiry = error;
+        else delete rowErrors.passportExpiry;
+      } else if (rowErrors[field]) {
+        delete rowErrors[field];
+      }
+
+      if (Object.keys(rowErrors).length === 0) {
+        delete next[index];
+      } else {
+        next[index] = rowErrors;
+      }
+      return next;
+    });
+  };
+
+  const validateMembers = (rows: MemberForm[]): boolean => {
+    const nextErrors: Record<number, Partial<Record<keyof MemberForm, string>>> = {};
+    let firstMessage = '';
+
+    rows.forEach((member, index) => {
+      if (member.dateOfBirth) {
+        const dobError = validateDateOfBirth(member.dateOfBirth);
+        if (dobError) {
+          nextErrors[index] = { ...(nextErrors[index] || {}), dateOfBirth: dobError };
+          firstMessage ||= dobError;
+        }
+      }
+
+      if (member.passportExpiry) {
+        const passportError = validatePassportExpiry(member.passportExpiry);
+        if (passportError) {
+          nextErrors[index] = { ...(nextErrors[index] || {}), passportExpiry: passportError };
+          firstMessage ||= passportError;
+        }
+      }
+    });
+
+    setMemberErrors(nextErrors);
+    if (firstMessage) {
+      toast.error(firstMessage);
+      return false;
+    }
+    return true;
   };
 
   const addMemberRow = () => {
@@ -279,6 +397,10 @@ const ManagerRegisterPage: React.FC = () => {
 
     if (validMembers.length === 0) {
       toast.error('Please fill in at least one member with required fields');
+      return;
+    }
+
+    if (!validateMembers(members)) {
       return;
     }
 
@@ -310,37 +432,31 @@ const ManagerRegisterPage: React.FC = () => {
             registeredAt: new Date().toISOString(),
           });
         } else {
-          const formData = new FormData();
+          const created = await createManagerParticipant({
+            firstName: m.firstName,
+            lastName: m.lastName,
+            email: m.email,
+            phone: m.phone || undefined,
+            nationality: m.nationality || manager?.country || undefined,
+            passportNumber: m.passportNumber,
+            passportExpiry: m.passportExpiry || undefined,
+            organization: `${m.nationality || manager?.country || ''} Delegation`.trim(),
+            jobTitle: m.role,
+            role: m.role,
+            gender: m.gender,
+            dateOfBirth: m.dateOfBirth || undefined,
+            emergencyContact: m.emergencyContact || undefined,
+            emergencyPhone: m.emergencyPhone || undefined,
+            dietaryRequirements: m.dietaryRequirements || undefined,
+            medicalConditions: m.medicalConditions || undefined,
+          });
 
-          formData.append('eventId', eventId);
-          formData.append('teamId', selectedTeamId);
-          formData.append('firstName', m.firstName);
-          formData.append('lastName', m.lastName);
-          formData.append('email', m.email);
-          formData.append('phone', m.phone);
-          formData.append('nationality', m.nationality || manager?.country || '');
-          formData.append('passportNumber', m.passportNumber);
-          formData.append('organization', `${m.nationality || manager?.country || ''} Delegation`);
-          formData.append('jobTitle', m.role);
-          formData.append('participantRole', m.role === 'Athlete' ? 'Athlete' : 'Official');
-          formData.append('gender', m.gender.toLowerCase());
-
-          if (m.dateOfBirth) formData.append('dateOfBirth', m.dateOfBirth);
-          if (m.passportExpiry) formData.append('passportExpiry', m.passportExpiry);
-          if (m.emergencyContact) formData.append('emergencyContact', m.emergencyContact);
-          if (m.emergencyPhone) formData.append('emergencyPhone', m.emergencyPhone);
-          if (m.dietaryRequirements) formData.append('dietaryRequirements', m.dietaryRequirements);
-          if (m.medicalConditions) formData.append('medicalConditions', m.medicalConditions);
-
-          const created = await createRegistration(formData);
-          const createdRecord = (created as any)?.data || created;
-          const participantId = getRegistrationParticipantId(createdRecord);
-          const registrationId = String(createdRecord?.id || createdRecord?._id || '');
+          const participantId = String(created?.id || '');
 
           if (participantId) {
             addPendingTeamRegistration(selectedTeamId, {
               participantId,
-              registrationId,
+              registrationId: participantId,
               email: m.email,
               firstName: m.firstName,
               lastName: m.lastName,
@@ -353,6 +469,7 @@ const ManagerRegisterPage: React.FC = () => {
 
       toast.success(`${savedCount} member(s) registered successfully! Go to Add Members to add them to the team.`);
       setMembers([{ ...emptyMember }]);
+      setMemberErrors({});
     } catch (error: any) {
       console.error('Failed to save members:', error);
       const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
@@ -602,10 +719,15 @@ const ManagerRegisterPage: React.FC = () => {
                     <Label>Date of Birth</Label>
                     <Input
                       type="date"
+                      min={minDateOfBirth}
                       max={maxDateOfBirth}
                       value={member.dateOfBirth}
                       onChange={(e) => updateMember(index, 'dateOfBirth', e.target.value)}
+                      className={memberErrors[index]?.dateOfBirth ? 'border-red-500' : undefined}
                     />
+                    {memberErrors[index]?.dateOfBirth && (
+                      <p className="text-sm text-red-500">{memberErrors[index]?.dateOfBirth}</p>
+                    )}
                   </div>
                 </div>
 
@@ -622,9 +744,14 @@ const ManagerRegisterPage: React.FC = () => {
                     <Label>Passport Expiry</Label>
                     <Input
                       type="date"
+                      min={maxDateOfBirth}
                       value={member.passportExpiry}
                       onChange={(e) => updateMember(index, 'passportExpiry', e.target.value)}
+                      className={memberErrors[index]?.passportExpiry ? 'border-red-500' : undefined}
                     />
+                    {memberErrors[index]?.passportExpiry && (
+                      <p className="text-sm text-red-500">{memberErrors[index]?.passportExpiry}</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Gender</Label>

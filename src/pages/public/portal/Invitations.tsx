@@ -829,7 +829,7 @@ const Invitations: React.FC = () => {
                                                             navigate(`/register?${params.toString()}`);
                                                         }}
                                                     >
-                                                        {alreadyRegistered ? 'Registered' : 'Register'}
+                                                        {alreadyRegistered ? 'Registeration Submitted' : 'Register'}
                                                     </Button>
 
                                                 </TableCell>

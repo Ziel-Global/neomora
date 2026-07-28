@@ -1,7 +1,7 @@
 import apiClient from './apiClient';
 import { EMSParticipant } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { getRegistrations } from './registrationApi';
+import { getApprovedAdminRegistrations, getRegistrationParticipantId, getRegistrations } from './registrationApi';
 import {
     hasParticipantToken,
     isEndpointBlocked,
@@ -21,6 +21,25 @@ export interface ParticipantPayload {
   role: string;
   dietaryNotes?: string;
   accessibilityNeeds?: string;
+}
+
+export interface ManagerParticipantPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  nationality?: string;
+  passportNumber?: string;
+  passportExpiry?: string;
+  organization?: string;
+  jobTitle?: string;
+  role: string;
+  dateOfBirth?: string;
+  gender?: string;
+  emergencyContact?: string;
+  emergencyPhone?: string;
+  dietaryRequirements?: string;
+  medicalConditions?: string;
 }
 
 const unwrapList = (data: unknown): any[] => {
@@ -121,11 +140,41 @@ const mergeParticipants = (...lists: EMSParticipant[][]): EMSParticipant[] => {
   });
 };
 
+export interface AdminApprovedParticipant extends EMSParticipant {
+  registrationId?: string;
+  registrationStatus?: string;
+}
+
 export const getParticipants = async (): Promise<EMSParticipant[]> => {
   const { data } = await apiClient.get('/admin/participants');
   return unwrapList(data)
     .map((item) => normalizeParticipant(item))
     .filter(Boolean) as EMSParticipant[];
+};
+
+/** Admin members page: approved registrations from admin/all + admin registration-team. */
+export const getApprovedParticipantsFromRegistrations = async (
+  eventId?: string,
+): Promise<AdminApprovedParticipant[]> => {
+  const registrations = await getApprovedAdminRegistrations(eventId);
+
+  const participants = registrations
+    .map((reg) => {
+      const participant = normalizeParticipant(
+        reg,
+        getRegistrationParticipantId(reg) || undefined,
+      );
+      if (!participant) return null;
+
+      return {
+        ...participant,
+        registrationId: String(reg.id || reg._id || ''),
+        registrationStatus: 'Approved',
+      } satisfies AdminApprovedParticipant;
+    })
+    .filter(Boolean) as AdminApprovedParticipant[];
+
+  return mergeParticipants(participants);
 };
 
 export const getAllParticipantsForInvitations = async (): Promise<EMSParticipant[]> => {
@@ -151,6 +200,21 @@ export const getAllParticipantsForInvitations = async (): Promise<EMSParticipant
 export const createParticipant = async (payload: ParticipantPayload): Promise<EMSParticipant> => {
   const { data } = await apiClient.post('/admin/participants', payload);
   return normalizeParticipant(data) || (data as EMSParticipant);
+};
+
+export const createManagerParticipant = async (
+  payload: ManagerParticipantPayload,
+): Promise<EMSParticipant> => {
+  const { data } = await apiClient.post('/manager/participants', payload);
+  const raw = (data as any)?.data || (data as any)?.participant || data;
+  return normalizeParticipant(raw) || (raw as EMSParticipant);
+};
+
+export const getManagerParticipants = async (): Promise<EMSParticipant[]> => {
+  const { data } = await apiClient.get('/manager/participants');
+  return unwrapList(data)
+    .map((item) => normalizeParticipant(item))
+    .filter(Boolean) as EMSParticipant[];
 };
 
 export const updateParticipant = async (id: string, payload: Partial<ParticipantPayload>): Promise<EMSParticipant> => {

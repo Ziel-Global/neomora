@@ -3,17 +3,17 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
-import { EMSParticipant } from '@/lib/emsStore';
 import { Card, CardContent } from '@/components/ui/card';
 import { Users, Loader2, Plus, Download, Search, Filter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getEvents } from '@/api/eventApi';
-import { getEventParticipants } from '@/api/registrationApi';
+import { getApprovedParticipantsFromRegistrations, AdminApprovedParticipant } from '@/api/participantApi';
+import { StatusBadge } from '@/components/common/StatusBadge';
 const EventParticipantsPage: React.FC = () => {
     const { t } = useTranslation();
     const { eventId } = useParams<{ eventId: string }>();
     const [isLoading, setIsLoading] = useState(true);
-    const [participants, setParticipants] = useState<EMSParticipant[]>([]);
+    const [participants, setParticipants] = useState<AdminApprovedParticipant[]>([]);
     const [eventName, setEventName] = useState<string>('');
 
     useEffect(() => {
@@ -29,7 +29,7 @@ const EventParticipantsPage: React.FC = () => {
 
                 // Fetch participants for this event
                 if (eventId) {
-                    const eventParticipants = await getEventParticipants(eventId);
+                    const eventParticipants = await getApprovedParticipantsFromRegistrations(eventId);
                     setParticipants(eventParticipants);
                 } else {
                     setParticipants([]);
@@ -44,26 +44,28 @@ const EventParticipantsPage: React.FC = () => {
         loadEventData();
     }, [eventId]);
 
-    const columns: Column<EMSParticipant>[] = [
+    const columns: Column<AdminApprovedParticipant>[] = [
         {
             key: 'name',
             header: t('common.participant'),
-            accessor: (row: any) => row.participantId ? `${row.participantId.firstName || ''} ${row.participantId.lastName || ''}`.trim() : (row.firstName ? `${row.firstName} ${row.lastName}` : 'Unknown'),
+            accessor: (row) => `${row.firstName || ''} ${row.lastName || ''}`.trim() || row.email || 'Unknown',
         },
         {
             key: 'organization',
             header: t('participants.organization'),
-            accessor: (row: any) => row.participantId?.organization || row.organization || '-',
+            accessor: (row) => row.organization || '-',
         },
         {
             key: 'role',
             header: t('participants.role'),
-            accessor: (row: any) => row.participantId?.role || row.role || '-',
+            accessor: (row) => row.role || '-',
         },
         {
             key: 'status',
             header: t('common.status'),
-            accessor: (row: any) => row.status || 'Draft',
+            accessor: (row) => (
+                <StatusBadge status={row.registrationStatus || 'Approved'} size="sm" />
+            ),
         }
     ];
 
@@ -116,8 +118,9 @@ const EventParticipantsPage: React.FC = () => {
                 <DataTable
                     data={participants}
                     columns={columns}
-                    keyExtractor={(row: any) => row.id || row._id}
+                    keyExtractor={(row) => row.id}
                     searchable
+                    searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
                     searchPlaceholder={t('participants.search_placeholder')}
                 />
             )}

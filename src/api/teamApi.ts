@@ -121,16 +121,20 @@ export const listTeamMembers = async (teamId: string): Promise<TeamMember[]> => 
     return Array.isArray(data) ? data : (data?.data || data?.members || []);
 };
 
-export const updateTeamMember = async (teamId: string, memberId: string, payload: any): Promise<TeamMember> => {
-    const { data } = await apiClient.patch(`/teams/${teamId}/members/${memberId}`, payload);
-    return data;
+export const updateTeamMember = async (membershipId: string, payload: any): Promise<TeamMember> => {
+    const { data } = await apiClient.patch(`/team-members/${membershipId}`, payload);
+    return data?.data || data;
 };
 
-export const deleteTeamMember = async (teamId: string, memberId: string): Promise<void> => {
-    await apiClient.delete(`/teams/${teamId}/members/${memberId}`);
+export const deleteTeamMember = async (membershipId: string): Promise<void> => {
+    await apiClient.delete(`/team-members/${membershipId}`);
 };
 
 export const addTeamMembersBulk = async (teamId: string, members: any[]): Promise<any> => {
-    const { data } = await apiClient.post(`/teams/${teamId}/members/bulk`, { members });
-    return data;
+    const results = [];
+    for (const member of members) {
+        const created = await addTeamMember(teamId, member);
+        results.push(created);
+    }
+    return results;
 };

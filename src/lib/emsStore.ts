@@ -411,23 +411,103 @@ export const participantStore = {
 
 // ============= INVITATION TEMPLATE STORE =============
 
+export const BACKEND_INVITATION_TEMPLATE_IDS = {
+  VIP: '03a64d7b-50df-4be1-a97f-fe9182321174',
+  STANDARD: 'a424a3fd-3afe-4357-a179-41794ff34197',
+} as const;
+
+export type InvitationTemplateKind = 'standard' | 'vip';
+
+export const isBackendInvitationTemplateId = (id: string): boolean =>
+  id === BACKEND_INVITATION_TEMPLATE_IDS.VIP ||
+  id === BACKEND_INVITATION_TEMPLATE_IDS.STANDARD;
+
+export const getInvitationTemplateKind = (template: EMSInvitationTemplate): InvitationTemplateKind => {
+  if (template.id === BACKEND_INVITATION_TEMPLATE_IDS.VIP) return 'vip';
+  if (template.id === BACKEND_INVITATION_TEMPLATE_IDS.STANDARD) return 'standard';
+
+  const haystack = `${template.name || ''} ${template.subject || ''}`.toLowerCase();
+  if (haystack.includes('vip') || haystack.includes('exclusive')) return 'vip';
+  return 'standard';
+};
+
+const scoreInvitationTemplate = (template: EMSInvitationTemplate): number => {
+  let score = 0;
+  if (isBackendInvitationTemplateId(template.id)) score += 100;
+  if ((template.variables?.length || 0) > 0) score += 10;
+  if (template.subject?.trim()) score += 5;
+  if (template.body?.trim()) score += 5;
+  return score;
+};
+
+export const dedupeInvitationTemplates = (templates: EMSInvitationTemplate[]): EMSInvitationTemplate[] => {
+  const byKind = new Map<InvitationTemplateKind, EMSInvitationTemplate>();
+
+  for (const template of templates) {
+    if (!template?.id) continue;
+    const kind = getInvitationTemplateKind(template);
+    const existing = byKind.get(kind);
+    if (!existing || scoreInvitationTemplate(template) > scoreInvitationTemplate(existing)) {
+      byKind.set(kind, template);
+    }
+  }
+
+  const standard = byKind.get('standard');
+  const vip = byKind.get('vip');
+  return [standard, vip].filter(Boolean) as EMSInvitationTemplate[];
+};
+
+export const normalizeInvitationTemplate = (raw: unknown): EMSInvitationTemplate | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const template = raw as Record<string, unknown>;
+  const id = template.id || template._id;
+  if (!id) return null;
+
+  return {
+    id: String(id),
+    name: String(template.name || ''),
+    subject: String(template.subject || ''),
+    body: String(template.body || template.content || ''),
+    language: String(template.language || 'en'),
+    variables: Array.isArray(template.variables) ? template.variables.map(String) : [],
+    createdAt: String(template.createdAt || template.created_at || new Date().toISOString()),
+  };
+};
+
 export const templateStore = {
   getAll: (): EMSInvitationTemplate[] => getItem<EMSInvitationTemplate>(KEYS.INVITATION_TEMPLATES),
 
+  getUnique: (): EMSInvitationTemplate[] => dedupeInvitationTemplates(templateStore.getAll()),
+
   getById: (id: string): EMSInvitationTemplate | undefined => {
-    return templateStore.getAll().find(t => t.id === id);
+    return templateStore.getUnique().find(t => t.id === id) || templateStore.getAll().find(t => t.id === id);
+  },
+
+  upsert: (template: Omit<EMSInvitationTemplate, 'createdAt'> & { createdAt?: string }): EMSInvitationTemplate => {
+    const normalized: EMSInvitationTemplate = {
+      ...template,
+      createdAt: template.createdAt || now(),
+    };
+    const merged = dedupeInvitationTemplates([
+      ...templateStore.getAll().filter((entry) => entry.id !== normalized.id),
+      normalized,
+    ]);
+    setItem(KEYS.INVITATION_TEMPLATES, merged);
+    return normalized;
+  },
+
+  replaceAll: (templates: EMSInvitationTemplate[]): EMSInvitationTemplate[] => {
+    const normalized = dedupeInvitationTemplates(templates);
+    setItem(KEYS.INVITATION_TEMPLATES, normalized);
+    return normalized;
   },
 
   create: (template: Omit<EMSInvitationTemplate, 'id' | 'createdAt'>): EMSInvitationTemplate => {
-    const newTemplate: EMSInvitationTemplate = {
+    return templateStore.upsert({
       ...template,
       id: generateId('tpl'),
       createdAt: now(),
-    };
-    const templates = templateStore.getAll();
-    templates.push(newTemplate);
-    setItem(KEYS.INVITATION_TEMPLATES, templates);
-    return newTemplate;
+    });
   },
 
   delete: (id: string): boolean => {
@@ -438,24 +518,38 @@ export const templateStore = {
     return true;
   },
 
-  // Seed default templates if none exist
+  normalizeStoredTemplates: (): EMSInvitationTemplate[] => {
+    const normalized = dedupeInvitationTemplates(templateStore.getAll());
+    setItem(KEYS.INVITATION_TEMPLATES, normalized);
+    return normalized;
+  },
+
   seedDefaults: (): void => {
-    if (templateStore.getAll().length === 0) {
-      templateStore.create({
-        name: 'Standard Event Invitation',
-        subject: 'You\'re Invited: {{eventName}}',
-        body: 'Dear {{firstName}},\n\nWe are pleased to invite you to {{eventName}} taking place in {{eventCity}} from {{startDate}} to {{endDate}}.\n\nPlease RSVP using the link below by {{rsvpDeadline}}.\n\nBest regards,\nEvent Team',
-        language: 'English',
-        variables: ['firstName', 'eventName', 'eventCity', 'startDate', 'endDate', 'rsvpDeadline'],
-      });
-      templateStore.create({
-        name: 'VIP Exclusive Invitation',
-        subject: 'Exclusive VIP Invitation: {{eventName}}',
-        body: 'Dear {{firstName}},\n\nAs a distinguished guest, we cordially invite you to {{eventName}}.\n\nYour VIP status entitles you to exclusive benefits including priority seating and dedicated concierge service.\n\nPlease confirm your attendance by {{rsvpDeadline}}.\n\nWith warm regards,\nEvent Team',
-        language: 'English',
+    const defaults: EMSInvitationTemplate[] = [
+      {
+        id: BACKEND_INVITATION_TEMPLATE_IDS.STANDARD,
+        name: 'Standard Invitation',
+        subject: 'Invitation to {{eventName}}',
+        body: 'Hello {{firstName}}, you are cordially invited to {{eventName}}. Please RSVP by {{rsvpDeadline}}.',
+        language: 'en',
         variables: ['firstName', 'eventName', 'rsvpDeadline'],
-      });
-    }
+        createdAt: now(),
+      },
+      {
+        id: BACKEND_INVITATION_TEMPLATE_IDS.VIP,
+        name: 'VIP Invitation',
+        subject: 'Exclusive VIP Invitation: {{eventName}}',
+        body: 'Dear {{firstName}}, you are invited as a VIP guest to {{eventName}}. Please RSVP by {{rsvpDeadline}}.',
+        language: 'en',
+        variables: ['firstName', 'eventName', 'rsvpDeadline'],
+        createdAt: now(),
+      },
+    ];
+
+    templateStore.replaceAll([
+      ...templateStore.getAll(),
+      ...defaults,
+    ]);
   },
 };
 
@@ -1867,8 +1961,8 @@ export const seedArabicParticipants = (): void => {
 // ============= STORE INITIALIZATION =============
 
 export const initializeStore = (): void => {
-  // Seed default templates
   templateStore.seedDefaults();
+  templateStore.normalizeStoredTemplates();
   // Seed Arabic participants
   seedArabicParticipants();
   // Seed default hotels
