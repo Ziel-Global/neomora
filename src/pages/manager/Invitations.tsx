@@ -8,7 +8,7 @@ import { teamMemberStore, teamStore, delegationStore } from '@/lib/teamStore';
 import { getMyDelegations } from '@/api/delegationApi';
 import { getMyTeams } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
-import { getMyInvitations, getInvitationsForDelegations, normalizeInvitation } from '@/api/invitationApi';
+import { getMyInvitations, getInvitationsForDelegations, normalizeInvitation, respondToInvitationById, InvitationResponse, Invitation } from '@/api/invitationApi';
 import { getCampaignsForManager, getCampaignDelegationIds, getCampaignManagerRoleIds, isSentCampaignStatus, Campaign } from '@/api/campaignApi';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -34,6 +34,58 @@ interface DelegationNotice {
   status: 'Draft' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected';
   rejectionReason?: string;
 }
+
+const PENDING_INVITATION_STATUSES = new Set([
+  'pending',
+  'sent',
+  'delivered',
+  'opened',
+  'invited',
+]);
+
+const isRealInvitationId = (id: string): boolean =>
+  Boolean(id) && !id.startsWith('camp-inv-');
+
+const getInvitationResponseStatus = (invitation: Pick<EMSInvitation, 'id' | 'status'> & { rsvpResponse?: string }): string => {
+  const raw = String(invitation.rsvpResponse || invitation.status || '').trim();
+  if (!raw) return 'Pending';
+  const lower = raw.toLowerCase();
+  if (lower === 'accepted' || lower === 'accept') return 'Accepted';
+  if (lower === 'declined' || lower === 'reject' || lower === 'rejected') return 'Declined';
+  if (lower === 'maybe') return 'Maybe';
+  if (PENDING_INVITATION_STATUSES.has(lower)) return 'Pending';
+  return raw.charAt(0).toUpperCase() + raw.slice(1);
+};
+
+const isInvitationAccepted = (invitation: EMSInvitation): boolean =>
+  getInvitationResponseStatus(invitation) === 'Accepted';
+
+const isInvitationDeclined = (invitation: EMSInvitation): boolean =>
+  getInvitationResponseStatus(invitation) === 'Declined';
+
+const canRespondToInvitation = (invitation: EMSInvitation): boolean => {
+  if (!isRealInvitationId(invitation.id)) return false;
+  const status = getInvitationResponseStatus(invitation);
+  return status === 'Pending' || status === 'Maybe';
+};
+
+const mergeInvitationAfterRespond = (
+  existing: EMSInvitation,
+  updated: Invitation,
+  response: InvitationResponse,
+): EMSInvitation => ({
+  ...existing,
+  ...updated,
+  id: existing.id,
+  eventId: updated.eventId || existing.eventId,
+  campaignId: updated.campaignId || existing.campaignId,
+  templateId: updated.templateId || existing.templateId,
+  token: updated.token || existing.token,
+  status: (updated.status || response) as EMSInvitation['status'],
+  rsvpDeadline: updated.rsvpDeadline || existing.rsvpDeadline,
+  respondedAt: updated.respondedAt || existing.respondedAt || new Date().toISOString(),
+  rsvpResponse: updated.rsvpResponse || response,
+} as EMSInvitation);
 
 const toPreviewTemplate = (raw: unknown): EMSInvitationTemplate | null => {
   if (!raw || typeof raw !== 'object') return null;
@@ -318,6 +370,7 @@ const ManagerInvitationsPage: React.FC = () => {
   const [previewInvitation, setPreviewInvitation] = useState<EMSInvitation | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [invitationSources, setInvitationSources] = useState<Record<string, any>>({});
+  const [respondingInvitationId, setRespondingInvitationId] = useState<string | null>(null);
 
   useEffect(() => {
     if (manager) {
@@ -861,6 +914,9 @@ const ManagerInvitationsPage: React.FC = () => {
         return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Accepted</Badge>;
       case 'Declined':
         return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Declined</Badge>;
+      case 'Maybe':
+        return <Badge className="bg-status-info-bg text-status-info"><Clock className="h-3 w-3 mr-1" />Maybe</Badge>;
+      case 'Pending':
       case 'Delivered':
       case 'Opened':
         return <Badge className="bg-status-warning-bg text-status-warning"><Clock className="h-3 w-3 mr-1" />Pending Response</Badge>;
@@ -868,6 +924,47 @@ const ManagerInvitationsPage: React.FC = () => {
         return <Badge className="bg-muted text-muted-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>;
       default:
         return <Badge variant="secondary">{status}</Badge>;
+    }
+  };
+
+  const updateInvitationEntry = (entry: DelegationInvitation, mergedInvitation: EMSInvitation) => {
+    setInvitations(prev =>
+      prev.map(item =>
+        item.invitation.id === entry.invitation.id
+          ? { ...item, invitation: mergedInvitation }
+          : item,
+      ),
+    );
+    if (previewInvitation?.id === entry.invitation.id) {
+      setPreviewInvitation(mergedInvitation);
+    }
+  };
+
+  const handleRespond = async (entry: DelegationInvitation, response: InvitationResponse): Promise<boolean> => {
+    if (!canRespondToInvitation(entry.invitation)) return false;
+
+    setRespondingInvitationId(entry.invitation.id);
+    try {
+      const updated = await respondToInvitationById(entry.invitation.id, response);
+      const merged = mergeInvitationAfterRespond(entry.invitation, updated, response);
+      updateInvitationEntry(entry, merged);
+      toast.success(
+        response === 'Accepted'
+          ? `Invitation accepted for ${entry.participantName}`
+          : response === 'Declined'
+            ? 'Invitation declined.'
+            : 'Marked as maybe.',
+      );
+      return true;
+    } catch (err: any) {
+      const detail =
+        err?.response?.data?.message ||
+        err?.message ||
+        'Failed to update invitation response';
+      toast.error(detail);
+      return false;
+    } finally {
+      setRespondingInvitationId(null);
     }
   };
 
@@ -925,9 +1022,13 @@ const ManagerInvitationsPage: React.FC = () => {
   const isCreateDelegationDisabled = (inv: DelegationInvitation): boolean =>
     invitationNeedsDelegation(inv) && hasManagerDelegationForEvent(inv.event.id);
 
-  const handleRegister = (inv: DelegationInvitation) => {
-    if (['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status)) {
-      invitationStore.respond(inv.invitation.id, 'Accepted');
+  const handleRegister = async (inv: DelegationInvitation) => {
+    if (canRespondToInvitation(inv.invitation)) {
+      const accepted = await handleRespond(inv, 'Accepted');
+      if (!accepted) return;
+    } else if (!isInvitationAccepted(inv.invitation)) {
+      toast.error('Please accept the invitation before continuing.');
+      return;
     }
 
     const params = new URLSearchParams();
@@ -956,45 +1057,48 @@ const ManagerInvitationsPage: React.FC = () => {
 
     setIsProcessing(true);
     try {
-      // Update invitation status to Accepted
-      invitationStore.respond(selectedInvitation.invitation.id, 'Accepted');
-
-      toast.success(`Invitation accepted for ${selectedInvitation.participantName}`);
-      loadInvitations();
+      await handleRespond(selectedInvitation, 'Accepted');
       setIsAcceptDialogOpen(false);
       setSelectedInvitation(null);
-    } catch (error) {
+    } catch {
       toast.error('Failed to accept invitation');
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleBulkAccept = () => {
-    const pendingInvitations = invitations.filter(
-      inv => ['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status)
-    );
+  const handleBulkAccept = async () => {
+    const pendingInvitations = invitations.filter(inv => canRespondToInvitation(inv.invitation));
 
     if (pendingInvitations.length === 0) {
       toast.info('No pending invitations to accept');
       return;
     }
 
+    setIsProcessing(true);
     let accepted = 0;
-    for (const inv of pendingInvitations) {
-      invitationStore.respond(inv.invitation.id, 'Accepted');
-      accepted++;
+    try {
+      for (const inv of pendingInvitations) {
+        try {
+          await handleRespond(inv, 'Accepted');
+          accepted++;
+        } catch {
+          // handleRespond already shows toast
+        }
+      }
+      if (accepted > 0) {
+        toast.success(`Accepted ${accepted} invitation(s) for your delegation`);
+      }
+    } finally {
+      setIsProcessing(false);
     }
-
-    toast.success(`Accepted ${accepted} invitation(s) for your delegation`);
-    loadInvitations();
   };
 
   const pendingCount = invitations.filter(
-    inv => ['Delivered', 'Opened', 'Pending'].includes(inv.invitation.status)
+    inv => getInvitationResponseStatus(inv.invitation) === 'Pending',
   ).length;
 
-  const acceptedCount = invitations.filter(inv => inv.invitation.status === 'Accepted').length;
+  const acceptedCount = invitations.filter(inv => isInvitationAccepted(inv.invitation)).length;
   const displayInvitations = dedupeInvitations(invitations);
 
   return (
@@ -1100,6 +1204,7 @@ const ManagerInvitationsPage: React.FC = () => {
                     <TableHead>Location</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>RSVP Deadline</TableHead>
+                    <TableHead>Status</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -1109,6 +1214,10 @@ const ManagerInvitationsPage: React.FC = () => {
                     const campaign = getCampaignForInvitation(inv.invitation, managerCampaigns, rawSource);
                     const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
                     const isVIP = template ? isVIPTemplate(template) : false;
+                    const responseStatus = getInvitationResponseStatus(inv.invitation);
+                    const showRespondActions = canRespondToInvitation(inv.invitation);
+                    const canContinue = isInvitationAccepted(inv.invitation) && !isInvitationDeclined(inv.invitation);
+                    const isResponding = respondingInvitationId === inv.invitation.id;
 
                     return (
                       <TableRow key={`${inv.invitation.id}-${inv.delegationName}`}>
@@ -1158,27 +1267,87 @@ const ManagerInvitationsPage: React.FC = () => {
                                 : 'N/A'}
                           </span>
                         </TableCell>
-                        <TableCell className="flex items-center gap-2">
-                          <Eye
-                            onClick={() => handlePreview(inv)}
-                            className="h-4 w-4 cursor-pointer text-muted-foreground hover:text-foreground"
-                          />
-                          {invitationNeedsDelegation(inv) && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={isCreateDelegationDisabled(inv)}
-                              title={
-                                isCreateDelegationDisabled(inv)
-                                  ? 'Delegation already created for this event'
-                                  : undefined
-                              }
-                              onClick={() => handleCreateDelegationForInvitation(inv)}
-                            >
-                              <Flag className="h-3 w-3 mr-1" />
-                              Create Delegation
-                            </Button>
-                          )}
+                        <TableCell>{getStatusBadge(responseStatus)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-2 min-w-[220px]">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => handlePreview(inv)}
+                                title="Preview invitation"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+
+                              {showRespondActions && (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    disabled={isResponding}
+                                    onClick={() => void handleRespond(inv, 'Accepted')}
+                                  >
+                                    {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept'}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isResponding}
+                                    onClick={() => void handleRespond(inv, 'Maybe')}
+                                  >
+                                    Maybe
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    disabled={isResponding}
+                                    onClick={() => void handleRespond(inv, 'Declined')}
+                                  >
+                                    Decline
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+
+                            {invitationNeedsDelegation(inv) ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={isCreateDelegationDisabled(inv) || !canContinue}
+                                title={
+                                  isCreateDelegationDisabled(inv)
+                                    ? 'Delegation already created for this event'
+                                    : !canContinue
+                                      ? 'Accept the invitation first'
+                                      : undefined
+                                }
+                                onClick={() => {
+                                  if (!canContinue) {
+                                    toast.error('Please accept the invitation before creating a delegation.');
+                                    return;
+                                  }
+                                  handleCreateDelegationForInvitation(inv);
+                                }}
+                              >
+                                <Flag className="h-3 w-3 mr-1" />
+                                Create Delegation
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                disabled={!canContinue}
+                                onClick={() => void handleRegister(inv)}
+                              >
+                                {isInvitationDeclined(inv.invitation)
+                                  ? 'Declined'
+                                  : canContinue
+                                    ? 'Continue to Delegation'
+                                    : 'Accept to Continue'}
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -1314,6 +1483,22 @@ const ManagerInvitationsPage: React.FC = () => {
           email: manager?.email || '',
         }}
         rsvpDeadline={previewInvitation?.rsvpDeadline}
+        invitationStatus={previewInvitation ? getInvitationResponseStatus(previewInvitation) : undefined}
+        canRespond={previewInvitation ? canRespondToInvitation(previewInvitation) : false}
+        canRegister={
+          previewInvitation
+            ? isInvitationAccepted(previewInvitation) && !isInvitationDeclined(previewInvitation)
+            : false
+        }
+        isResponding={previewInvitation ? respondingInvitationId === previewInvitation.id : false}
+        onRespond={(response) => {
+          const entry = invitations.find(item => item.invitation.id === previewInvitation?.id);
+          if (entry) void handleRespond(entry, response);
+        }}
+        onRegister={() => {
+          const entry = invitations.find(item => item.invitation.id === previewInvitation?.id);
+          if (entry) void handleRegister(entry);
+        }}
       />
     </div>
   );

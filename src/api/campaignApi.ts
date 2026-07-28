@@ -8,6 +8,37 @@ import {
     setCachedEndpoint,
 } from './endpointCache';
 
+export interface CampaignInvitationStats {
+    totalInvitations: number;
+    deliveries: {
+        delivered: number;
+        opened: number;
+    };
+    rsvp: {
+        accepted: number;
+        declined: number;
+        maybe: number;
+        pending: number;
+    };
+}
+
+export interface CampaignStatsView {
+    totalInvitations: number;
+    delivered: number;
+    opened: number;
+    accepted: number;
+    maybe: number;
+    declined: number;
+    pending: number;
+    audienceSize: number;
+    sentCount: number;
+    deliveredCount: number;
+    openedCount: number;
+    acceptedCount: number;
+    maybeCount: number;
+    declinedCount: number;
+}
+
 export interface Campaign {
     id: string;
     name: string;
@@ -26,6 +57,7 @@ export interface Campaign {
     audienceIds?: string[];
     targetParticipantIds?: string[];
     audienceSize?: number | null;
+    invitationStats?: CampaignInvitationStats;
     stats?: {
         audienceSize?: number | null;
         sentCount?: number | null;
@@ -201,6 +233,103 @@ const unwrapItem = (data: any): any => {
     return data.data || data.campaign || data.item || data;
 };
 
+const pickStatNumber = (...values: unknown[]): number => {
+    for (const value of values) {
+        if (value === null || value === undefined || value === '') continue;
+        const parsed = Number(value);
+        if (!Number.isNaN(parsed)) return parsed;
+    }
+    return 0;
+};
+
+const normalizeInvitationStats = (raw: any): CampaignInvitationStats | undefined => {
+    const source = raw?.invitationStats || raw?.invitation_stats;
+    if (!source || typeof source !== 'object') return undefined;
+
+    const deliveries = (source.deliveries || source.delivery || {}) as Record<string, unknown>;
+    const rsvp = (source.rsvp || source.responses || source.response || {}) as Record<string, unknown>;
+
+    const totalInvitations = pickStatNumber(
+        source.totalInvitations,
+        source.total_invitations,
+        source.total,
+        source.count,
+    );
+    const delivered = pickStatNumber(deliveries.delivered, deliveries.deliveredCount, deliveries.delivered_count);
+    const opened = pickStatNumber(deliveries.opened, deliveries.openedCount, deliveries.opened_count);
+    const accepted = pickStatNumber(rsvp.accepted, rsvp.yes, rsvp.confirmed);
+    const declined = pickStatNumber(rsvp.declined, rsvp.decline, rsvp.no, rsvp.rejected);
+    const maybe = pickStatNumber(rsvp.maybe);
+    const pending = pickStatNumber(rsvp.pending, source.pending);
+
+    if (
+        totalInvitations === 0 &&
+        delivered === 0 &&
+        opened === 0 &&
+        accepted === 0 &&
+        declined === 0 &&
+        maybe === 0 &&
+        pending === 0
+    ) {
+        return undefined;
+    }
+
+    return {
+        totalInvitations,
+        deliveries: { delivered, opened },
+        rsvp: { accepted, declined, maybe, pending },
+    };
+};
+
+export const getCampaignInvitationStats = (campaign: Campaign | any): CampaignStatsView => {
+    const invitationStats = campaign?.invitationStats || normalizeInvitationStats(campaign);
+    const stats = campaign?.stats || {};
+
+    if (invitationStats) {
+        return {
+            totalInvitations: invitationStats.totalInvitations,
+            delivered: invitationStats.deliveries.delivered,
+            opened: invitationStats.deliveries.opened,
+            accepted: invitationStats.rsvp.accepted,
+            maybe: invitationStats.rsvp.maybe,
+            declined: invitationStats.rsvp.declined,
+            pending: invitationStats.rsvp.pending,
+            audienceSize: invitationStats.totalInvitations,
+            sentCount: invitationStats.totalInvitations,
+            deliveredCount: invitationStats.deliveries.delivered,
+            openedCount: invitationStats.deliveries.opened,
+            acceptedCount: invitationStats.rsvp.accepted,
+            maybeCount: invitationStats.rsvp.maybe,
+            declinedCount: invitationStats.rsvp.declined,
+        };
+    }
+
+    const audienceSize = pickStatNumber(stats.audienceSize, campaign?.audienceSize);
+    const sentCount = pickStatNumber(stats.sentCount, campaign?.sentCount, audienceSize);
+    const deliveredCount = pickStatNumber(stats.deliveredCount, campaign?.deliveredCount);
+    const openedCount = pickStatNumber(stats.openedCount, campaign?.openedCount);
+    const acceptedCount = pickStatNumber(stats.acceptedCount, campaign?.acceptedCount);
+    const maybeCount = pickStatNumber(stats.maybeCount, campaign?.maybeCount);
+    const declinedCount = pickStatNumber(stats.declinedCount, campaign?.declinedCount);
+
+    return {
+        totalInvitations: sentCount || audienceSize,
+        delivered: deliveredCount,
+        opened: openedCount,
+        accepted: acceptedCount,
+        maybe: maybeCount,
+        declined: declinedCount,
+        pending: Math.max(0, (sentCount || audienceSize) - acceptedCount - maybeCount - declinedCount),
+        audienceSize,
+        sentCount,
+        deliveredCount,
+        openedCount,
+        acceptedCount,
+        maybeCount,
+        declinedCount,
+    };
+};
+
 const normalizeCampaign = (raw: any): Campaign => {
     const audienceIds = Array.isArray(raw?.audienceIds)
         ? raw.audienceIds
@@ -218,7 +347,15 @@ const normalizeCampaign = (raw: any): Campaign => {
 
     const effectiveAudienceIds = [...new Set([...audienceIds, ...targetRoles].map(String))];
 
+    const invitationStats = normalizeInvitationStats(raw);
     const stats = raw?.stats || {};
+    const mergedStats = getCampaignInvitationStats({
+        ...raw,
+        invitationStats,
+        stats,
+        audienceIds: effectiveAudienceIds,
+        audienceSize: stats.audienceSize ?? raw?.audienceSize ?? effectiveAudienceIds.length,
+    });
 
     return {
         ...raw,
@@ -238,16 +375,19 @@ const normalizeCampaign = (raw: any): Campaign => {
         rsvpDeadline: raw?.rsvpDeadline || raw?.rsvp_deadline || '',
         audienceIds: effectiveAudienceIds,
         targetParticipantIds: effectiveAudienceIds,
-        audienceSize: stats.audienceSize ?? raw?.audienceSize ?? effectiveAudienceIds.length,
+        audienceSize: mergedStats.audienceSize || effectiveAudienceIds.length,
+        invitationStats,
         stats: {
-            audienceSize: stats.audienceSize ?? raw?.audienceSize ?? effectiveAudienceIds.length,
-            sentCount: stats.sentCount ?? raw?.sentCount ?? 0,
-            deliveredCount: stats.deliveredCount ?? raw?.deliveredCount ?? 0,
-            openedCount: stats.openedCount ?? raw?.openedCount ?? 0,
-            acceptedCount: stats.acceptedCount ?? raw?.acceptedCount ?? 0,
-            maybeCount: stats.maybeCount ?? raw?.maybeCount ?? 0,
-            declinedCount: stats.declinedCount ?? raw?.declinedCount ?? 0,
+            audienceSize: mergedStats.audienceSize || effectiveAudienceIds.length,
+            sentCount: mergedStats.sentCount,
+            deliveredCount: mergedStats.deliveredCount,
+            openedCount: mergedStats.openedCount,
+            acceptedCount: mergedStats.acceptedCount,
+            maybeCount: mergedStats.maybeCount,
+            declinedCount: mergedStats.declinedCount,
         },
+        createdAt: raw?.createdAt || raw?.created_at || new Date().toISOString(),
+        updatedAt: raw?.updatedAt || raw?.updated_at || new Date().toISOString(),
     };
 };
 

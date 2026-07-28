@@ -391,6 +391,22 @@ export const respondToInvitation = async (token: string, response: 'Accepted' | 
     return data;
 };
 
+export type InvitationResponse = 'Accepted' | 'Declined' | 'Maybe';
+
+/** Authenticated RSVP: PATCH /invitations/:invitationId/respond (participant + manager) */
+export const respondToInvitationById = async (
+    invitationId: string,
+    response: InvitationResponse,
+    notes?: string,
+): Promise<Invitation> => {
+    const { data } = await myInvitationsClient.patch(`/invitations/${invitationId}/respond`, {
+        response,
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
+    });
+    const raw = data?.data || data?.invitation || data;
+    return normalizeInvitation(raw);
+};
+
 // Mark invitation as opened
 export const markInvitationOpened = async (token: string): Promise<void> => {
     await apiClient.post(`/invitations/token/${token}/open`).catch(() => { /* silent */ });

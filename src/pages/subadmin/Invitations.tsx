@@ -93,6 +93,11 @@ const SubAdminInvitationsPage: React.FC = () => {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [rsvpDeadline, setRsvpDeadline] = useState('');
   const [customMessage, setCustomMessage] = useState('');
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
+  const [scheduleCampaignTargetId, setScheduleCampaignTargetId] = useState<string | null>(null);
+
+  type CampaignDeliveryAction = 'draft' | 'send' | 'schedule';
 
   // View states
   const [selectedCampaign, setSelectedCampaign] = useState<EMSCampaign | null>(null);
@@ -163,12 +168,17 @@ const SubAdminInvitationsPage: React.FC = () => {
   }, [refreshKey]);
 
   // Calculate stats
-  const stats = useMemo(() => ({
-    totalSent: (invitations || []).filter(i => i.sentAt).length,
-    delivered: (invitations || []).filter(i => i.deliveredAt).length,
-    accepted: (invitations || []).filter(i => i.status === 'Accepted').length,
-    campaigns: (campaigns || []).length,
-  }), [invitations, campaigns]);
+  const stats = useMemo(() => {
+    const campaignStats = campaigns.map(campaign => campaignApi.getCampaignInvitationStats(campaign));
+    return {
+      totalSent: campaignStats.reduce((sum, item) => sum + item.totalInvitations, 0),
+      delivered: campaignStats.reduce((sum, item) => sum + item.delivered, 0),
+      opened: campaignStats.reduce((sum, item) => sum + item.opened, 0),
+      accepted: campaignStats.reduce((sum, item) => sum + item.accepted, 0),
+      declined: campaignStats.reduce((sum, item) => sum + item.declined, 0),
+      campaigns: campaigns.length,
+    };
+  }, [campaigns]);
 
   const getStatusVariant = (status: string): 'success' | 'info' | 'warning' | 'default' | 'destructive' => {
     switch (status) {
@@ -196,16 +206,28 @@ const SubAdminInvitationsPage: React.FC = () => {
     return events.find(e => e.id === eventId)?.name || 'Unknown Event';
   };
 
-  const getCampaignStats = (campaign: EMSCampaign | { id: string; stats?: any }) => {
+  const getCampaignStats = (campaign: EMSCampaign | campaignApi.Campaign) => {
+    const apiStats = campaignApi.getCampaignInvitationStats(campaign);
+    if (apiStats.totalInvitations > 0 || apiStats.delivered > 0 || apiStats.accepted > 0) {
+      return apiStats;
+    }
+
     const invitationsForCampaign = invitationStore.getByCampaign(campaign.id);
     return {
-      audienceSize: campaign.stats?.audienceSize ?? invitationsForCampaign.length,
-      sentCount: campaign.stats?.sentCount ?? invitationsForCampaign.filter(i => i.sentAt).length,
-      deliveredCount: campaign.stats?.deliveredCount ?? invitationsForCampaign.filter(i => i.deliveredAt).length,
-      openedCount: campaign.stats?.openedCount ?? invitationsForCampaign.filter(i => i.openedAt).length,
-      acceptedCount: campaign.stats?.acceptedCount ?? invitationsForCampaign.filter(i => i.status === 'Accepted').length,
-      maybeCount: campaign.stats?.maybeCount ?? invitationsForCampaign.filter(i => i.status === 'Maybe').length,
-      declinedCount: campaign.stats?.declinedCount ?? invitationsForCampaign.filter(i => i.status === 'Declined').length,
+      ...apiStats,
+      totalInvitations: invitationsForCampaign.length || apiStats.totalInvitations,
+      audienceSize: invitationsForCampaign.length || apiStats.audienceSize,
+      sentCount: invitationsForCampaign.filter(i => i.sentAt).length || apiStats.sentCount,
+      delivered: invitationsForCampaign.filter(i => i.deliveredAt).length || apiStats.delivered,
+      deliveredCount: invitationsForCampaign.filter(i => i.deliveredAt).length || apiStats.deliveredCount,
+      opened: invitationsForCampaign.filter(i => i.openedAt).length || apiStats.opened,
+      openedCount: invitationsForCampaign.filter(i => i.openedAt).length || apiStats.openedCount,
+      accepted: invitationsForCampaign.filter(i => i.status === 'Accepted').length || apiStats.accepted,
+      acceptedCount: invitationsForCampaign.filter(i => i.status === 'Accepted').length || apiStats.acceptedCount,
+      maybe: invitationsForCampaign.filter(i => i.status === 'Maybe').length || apiStats.maybe,
+      maybeCount: invitationsForCampaign.filter(i => i.status === 'Maybe').length || apiStats.maybeCount,
+      declined: invitationsForCampaign.filter(i => i.status === 'Declined').length || apiStats.declined,
+      declinedCount: invitationsForCampaign.filter(i => i.status === 'Declined').length || apiStats.declinedCount,
     };
   };
 
@@ -260,6 +282,7 @@ const SubAdminInvitationsPage: React.FC = () => {
     setSelectedTemplateId('');
     setRsvpDeadline('');
     setCustomMessage('');
+    setScheduledAt('');
   };
 
   const createLocalCampaignInvitations = (payload: {
@@ -305,7 +328,7 @@ const SubAdminInvitationsPage: React.FC = () => {
     return { localCampaign, createdInvitations };
   };
 
-  const handleCreateCampaign = async () => {
+  const handleCreateCampaign = async (delivery: CampaignDeliveryAction = 'draft') => {
     if (!selectedEventId || !campaignName || !selectedTemplateId || !rsvpDeadline) {
       toast({ title: 'Missing fields', description: 'Please fill in all required fields', variant: 'destructive' });
       return;
@@ -314,6 +337,24 @@ const SubAdminInvitationsPage: React.FC = () => {
     const audience = getFilteredAudience();
     if (audience.length === 0) {
       toast({ title: 'No audience', description: 'No participants match your criteria', variant: 'destructive' });
+      return;
+    }
+
+    if (delivery === 'schedule' && !scheduledAt) {
+      toast({
+        title: t('invitations.schedule_required_title', { defaultValue: 'Schedule time required' }),
+        description: t('invitations.schedule_required_desc', { defaultValue: 'Please choose when this campaign should be sent.' }),
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (delivery === 'schedule' && new Date(scheduledAt).getTime() <= Date.now()) {
+      toast({
+        title: t('invitations.schedule_invalid_title', { defaultValue: 'Invalid schedule time' }),
+        description: t('invitations.schedule_invalid_desc', { defaultValue: 'Scheduled time must be in the future.' }),
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -332,7 +373,6 @@ const SubAdminInvitationsPage: React.FC = () => {
         selectedRoles,
       });
 
-      // Sync with backend — no delegation IDs sent
       const backendCampaign = await campaignApi.createCampaign({
         name: campaignName,
         subject: selectedTemplate?.subject || campaignName,
@@ -341,7 +381,6 @@ const SubAdminInvitationsPage: React.FC = () => {
         eventId: selectedEventId,
         rsvpDeadline: rsvpDeadline,
         audienceIds: audience.map(p => p.id),
-        // invitationIds: createdInvitations.map(i => i.id),
         roleFilters: audienceMode === 'role' ? selectedRoles : undefined,
       }).catch((error) => {
         console.warn('Backend campaign create failed, ignored for local flow:', error);
@@ -356,7 +395,22 @@ const SubAdminInvitationsPage: React.FC = () => {
         }
       }
 
-      toast({ title: 'Campaign created', description: `Created ${createdInvitations.length} invitations for participants.` });
+      const finalCampaignId = backendCampaignId || tempCampaignId;
+
+      if (delivery === 'send') {
+        await handleSendCampaign(finalCampaignId);
+      } else if (delivery === 'schedule') {
+        await handleScheduleCampaign(finalCampaignId, scheduledAt);
+      } else {
+        toast({
+          title: t('invitations.campaign_created', { defaultValue: 'Campaign created' }),
+          description: t('invitations.campaign_created_desc', {
+            defaultValue: `Created ${createdInvitations.length} invitations for participants.`,
+            details: `${createdInvitations.length} invitations for participants`,
+          }),
+        });
+      }
+
       setIsCreateOpen(false);
       resetWizard();
       setRefreshKey(k => k + 1);
@@ -413,7 +467,13 @@ const SubAdminInvitationsPage: React.FC = () => {
         console.warn('Backend sendCampaignNow failed, continuing with local flow:', error);
       });
 
-      toast({ title: 'Campaign sent', description: `Delivered ${sent || created.length} invitations to selected participants.` });
+      toast({
+        title: t('invitations.campaign_sent', { defaultValue: 'Campaign sent' }),
+        description: t('invitations.campaign_sent_count', {
+          defaultValue: `Delivered ${sent || created.length} invitation(s).`,
+          count: sent || created.length,
+        }),
+      });
       setRefreshKey(k => k + 1);
       setViewCampaignOpen(false);
     } catch (error: any) {
@@ -422,6 +482,68 @@ const SubAdminInvitationsPage: React.FC = () => {
     } finally {
       setIsActionLoading(false);
     }
+  };
+
+  const handleScheduleCampaign = async (campaignId: string, scheduleValue: string) => {
+    if (!scheduleValue) {
+      toast({
+        title: t('invitations.schedule_required_title', { defaultValue: 'Schedule time required' }),
+        description: t('invitations.schedule_required_desc', { defaultValue: 'Please choose when this campaign should be sent.' }),
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const scheduledIso = new Date(scheduleValue).toISOString();
+    if (new Date(scheduledIso).getTime() <= Date.now()) {
+      toast({
+        title: t('invitations.schedule_invalid_title', { defaultValue: 'Invalid schedule time' }),
+        description: t('invitations.schedule_invalid_desc', { defaultValue: 'Scheduled time must be in the future.' }),
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsActionLoading(true);
+    try {
+      ensureLocalInvitationsForCampaign(campaignId);
+
+      await campaignApi.scheduleCampaign(campaignId, scheduledIso).catch((error) => {
+        console.warn('Backend scheduleCampaign failed, continuing with local flow:', error);
+      });
+
+      campaignStore.update(campaignId, {
+        status: 'Scheduled',
+        scheduledAt: scheduledIso,
+      } as any);
+
+      toast({
+        title: t('invitations.campaign_scheduled', { defaultValue: 'Campaign scheduled' }),
+        description: t('invitations.campaign_scheduled_desc', { defaultValue: 'Invitations will be sent at the scheduled time.' }),
+      });
+
+      setScheduleDialogOpen(false);
+      setScheduleCampaignTargetId(null);
+      setScheduledAt('');
+      setRefreshKey(k => k + 1);
+      setViewCampaignOpen(false);
+    } catch (error) {
+      console.error('Failed to schedule campaign:', error);
+      toast({ title: 'Error', description: t('invitations.schedule_failed', { defaultValue: 'Failed to schedule campaign' }), variant: 'destructive' });
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  const openScheduleDialog = (campaignId: string) => {
+    setScheduleCampaignTargetId(campaignId);
+    setScheduledAt('');
+    setScheduleDialogOpen(true);
+  };
+
+  const confirmScheduleCampaign = async () => {
+    if (!scheduleCampaignTargetId) return;
+    await handleScheduleCampaign(scheduleCampaignTargetId, scheduledAt);
   };
 
   const handleDeleteCampaign = async (campaignId: string) => {
@@ -747,9 +869,27 @@ const SubAdminInvitationsPage: React.FC = () => {
               {audience.length === 1
                 ? t('invitations.review_create_desc_singular')
                 : t('invitations.review_create_desc_plural', { count: audience.length })}
-              <br />
-              {t('invitations.review_create_subdesc')}
             </p>
+
+            <div className="space-y-3 border-t pt-4">
+              <Label>{t('invitations.delivery_option', { defaultValue: 'When should invitations be sent?' })}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('invitations.delivery_option_desc', { defaultValue: 'Choose to send immediately, schedule for later, or save as draft.' })}
+              </p>
+              <div className="grid gap-2">
+                <Label htmlFor="subadmin-campaign-schedule-at">{t('invitations.schedule_datetime', { defaultValue: 'Schedule date & time' })}</Label>
+                <Input
+                  id="subadmin-campaign-schedule-at"
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('invitations.schedule_hint', { defaultValue: 'Optional — use Schedule Campaign below, or Send Now to deliver immediately.' })}
+                </p>
+              </div>
+            </div>
           </div>
         );
 
@@ -772,47 +912,82 @@ const SubAdminInvitationsPage: React.FC = () => {
           <DialogHeader>
             <DialogTitle>{selectedCampaign.name}</DialogTitle>
             <DialogDescription>
-              {eventName || 'Unknown Event'} • {t('common.participants_count', { count: campInvitations.length })}
+              {eventName || 'Unknown Event'} • {t('common.participants_count', { count: campaignStats.totalInvitations })}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 my-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 my-4">
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold">{campaignStats.sentCount}</p>
+                <p className="text-2xl font-bold">{campaignStats.totalInvitations}</p>
+                <p className="text-xs text-muted-foreground">Invitations</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3 text-center">
+                <p className="text-2xl font-bold">{campaignStats.delivered}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.delivered')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-success">{campaignStats.acceptedCount}</p>
+                <p className="text-2xl font-bold">{campaignStats.opened}</p>
+                <p className="text-xs text-muted-foreground">Opened</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3 text-center">
+                <p className="text-2xl font-bold text-success">{campaignStats.accepted}</p>
                 <p className="text-xs text-muted-foreground">{t('invitations.accepted')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-warning">{campaignStats.maybeCount}</p>
+                <p className="text-2xl font-bold text-warning">{campaignStats.maybe}</p>
                 <p className="text-xs text-muted-foreground">{t('common.maybe')}</p>
               </CardContent>
             </Card>
             <Card>
               <CardContent className="p-3 text-center">
-                <p className="text-2xl font-bold text-destructive">{campaignStats.declinedCount}</p>
+                <p className="text-2xl font-bold text-destructive">{campaignStats.declined}</p>
                 <p className="text-xs text-muted-foreground">{t('events.declined')}</p>
               </CardContent>
             </Card>
           </div>
 
           {selectedCampaign.status === 'Draft' && (
-            <div className="bg-muted/50 p-4 rounded-lg flex items-center justify-between mb-4">
+            <div className="bg-muted/50 p-4 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
               <div>
                 <p className="font-medium">{t('invitations.campaign_not_sent')}</p>
                 <p className="text-sm text-muted-foreground">{t('invitations.click_send_to_deliver')}</p>
               </div>
-              <Button onClick={() => {
-                handleSendCampaign(selectedCampaign.id);
-                setSelectedCampaign(campaignStore.getById(selectedCampaign.id) || null);
-              }}>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" disabled={isActionLoading} onClick={() => openScheduleDialog(selectedCampaign.id)}>
+                  <Clock className="h-4 w-4 mr-2" />
+                  {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                </Button>
+                <Button disabled={isActionLoading} onClick={() => handleSendCampaign(selectedCampaign.id)}>
+                  <Send className="h-4 w-4 mr-2" />
+                  {t('invitations.send_now')}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {selectedCampaign.status === 'Scheduled' && (
+            <div className="bg-warning/10 border border-warning/20 p-4 rounded-lg flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+              <div>
+                <p className="font-medium">{t('invitations.campaign_scheduled_title', { defaultValue: 'Campaign scheduled' })}</p>
+                <p className="text-sm text-muted-foreground">
+                  {(selectedCampaign as any).scheduledAt
+                    ? t('invitations.campaign_scheduled_for', {
+                      defaultValue: 'Invitations will be sent on {{datetime}}.',
+                      datetime: format(new Date((selectedCampaign as any).scheduledAt), 'MMM d, yyyy HH:mm'),
+                    })
+                    : t('invitations.campaign_scheduled_pending', { defaultValue: 'Invitations will be sent at the scheduled time.' })}
+                </p>
+              </div>
+              <Button variant="outline" disabled={isActionLoading} onClick={() => handleSendCampaign(selectedCampaign.id)}>
                 <Send className="h-4 w-4 mr-2" />
                 {t('invitations.send_now')}
               </Button>
@@ -907,10 +1082,19 @@ const SubAdminInvitationsPage: React.FC = () => {
                     {t('invitations.next')}
                   </Button>
                 ) : (
-                  <Button onClick={handleCreateCampaign} disabled={isActionLoading}>
-                    {isActionLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    {t('common.create')}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" disabled={isActionLoading} onClick={() => handleCreateCampaign('draft')}>
+                      {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
+                    </Button>
+                    <Button variant="outline" disabled={isActionLoading || !scheduledAt} onClick={() => handleCreateCampaign('schedule')}>
+                      <Clock className="h-4 w-4 mr-2" />
+                      {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                    </Button>
+                    <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
+                      <Send className="h-4 w-4 mr-2" />
+                      {t('invitations.send_now')}
+                    </Button>
+                  </div>
                 )}
               </DialogFooter>
             </DialogContent>
@@ -996,18 +1180,28 @@ const SubAdminInvitationsPage: React.FC = () => {
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">{getEventName(campaign)}</TableCell>
-                      <TableCell>{getCampaignStats(campaign).audienceSize}</TableCell>
+                      <TableCell>{getCampaignStats(campaign).totalInvitations}</TableCell>
                       <TableCell>
-                        <div className="flex gap-1">
-                          <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                            {getCampaignStats(campaign).acceptedCount}
-                          </Badge>
-                          <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
-                            {getCampaignStats(campaign).maybeCount}
-                          </Badge>
-                          <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
-                            {getCampaignStats(campaign).declinedCount}
-                          </Badge>
+                        <div className="flex flex-col gap-1">
+                          <div className="flex gap-1 flex-wrap">
+                            <Badge variant="outline" className="bg-muted/40 text-foreground border-border">
+                              {getCampaignStats(campaign).delivered} delivered
+                            </Badge>
+                            <Badge variant="outline" className="bg-muted/40 text-foreground border-border">
+                              {getCampaignStats(campaign).opened} opened
+                            </Badge>
+                          </div>
+                          <div className="flex gap-1 flex-wrap">
+                            <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+                              {getCampaignStats(campaign).accepted}
+                            </Badge>
+                            <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
+                              {getCampaignStats(campaign).maybe}
+                            </Badge>
+                            <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
+                              {getCampaignStats(campaign).declined}
+                            </Badge>
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1023,8 +1217,18 @@ const SubAdminInvitationsPage: React.FC = () => {
                               <Eye className="h-4 w-4 mr-2" />{t('invitations.view_details')}
                             </DropdownMenuItem>
                             {campaign.status === 'Draft' && (
+                              <>
+                                <DropdownMenuItem onClick={() => handleSendCampaign(campaign.id)}>
+                                  <Send className="h-4 w-4 mr-2" />{t('invitations.send_now')}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openScheduleDialog(campaign.id)}>
+                                  <Clock className="h-4 w-4 mr-2" />{t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                            {campaign.status === 'Scheduled' && (
                               <DropdownMenuItem onClick={() => handleSendCampaign(campaign.id)}>
-                                <Send className="h-4 w-4 mr-2" />{t('invitations.send_campaign')}
+                                <Send className="h-4 w-4 mr-2" />{t('invitations.send_now')}
                               </DropdownMenuItem>
                             )}
                             <DropdownMenuSeparator />
@@ -1105,6 +1309,42 @@ const SubAdminInvitationsPage: React.FC = () => {
           )}
         </TabsContent>
       </Tabs>
+
+      <Dialog open={scheduleDialogOpen} onOpenChange={(open) => {
+        setScheduleDialogOpen(open);
+        if (!open) {
+          setScheduleCampaignTargetId(null);
+          setScheduledAt('');
+        }
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}</DialogTitle>
+            <DialogDescription>
+              {t('invitations.schedule_dialog_desc', { defaultValue: 'Choose when invitations should be sent automatically.' })}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="subadmin-schedule-campaign-at">{t('invitations.schedule_datetime', { defaultValue: 'Schedule date & time' })}</Label>
+            <Input
+              id="subadmin-schedule-campaign-at"
+              type="datetime-local"
+              value={scheduledAt}
+              min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+              onChange={(e) => setScheduledAt(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setScheduleDialogOpen(false)}>
+              {t('common.cancel', { defaultValue: 'Cancel' })}
+            </Button>
+            <Button disabled={!scheduledAt || isActionLoading} onClick={confirmScheduleCampaign}>
+              {isActionLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Clock className="h-4 w-4 mr-2" />}
+              {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <CampaignDetailDialog />
 

@@ -12,7 +12,23 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { getMyTeams, listTeamMembers } from '@/api/teamApi';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  getMyTeams,
+  listTeamMembers,
+  deleteTeamMember,
+  resolveTeamMembershipId,
+  syncTeamMemberCount,
+} from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
 import { createManagerParticipant } from '@/api/participantApi';
 import { addPendingTeamRegistration } from '@/api/registrationApi';
@@ -62,6 +78,7 @@ const emptyMember: MemberForm = {
 
 interface TeamMemberDetail {
   id: string;
+  membershipId?: string;
   firstName: string;
   lastName: string;
   email: string;
@@ -84,14 +101,17 @@ interface TeamMemberDetail {
 const normalizeTeamMember = (raw: any): TeamMemberDetail | null => {
   if (!raw) return null;
   const source = raw.participant || raw.user || raw;
-  const id = raw.id || source.id || source._id || raw.memberId || source.email;
+  const membershipId = resolveTeamMembershipId(raw);
+  const participantId = source.id || source._id || raw.memberId || '';
   const email = source.email || raw.email || '';
   const firstName = source.firstName || raw.firstName || '';
   const lastName = source.lastName || raw.lastName || '';
-  if (!id && !email) return null;
+  const id = membershipId || participantId || email;
+  if (!id) return null;
 
   return {
     id: String(id),
+    membershipId: membershipId || undefined,
     firstName: firstName || 'Unknown',
     lastName,
     email,
@@ -216,6 +236,8 @@ const ManagerRegisterPage: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState<TeamMemberDetail | null>(null);
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
   const [memberErrors, setMemberErrors] = useState<Record<number, Partial<Record<keyof MemberForm, string>>>>({});
 
   const maxDateOfBirth = getLocalDateString();
@@ -258,6 +280,38 @@ const ManagerRegisterPage: React.FC = () => {
       setCurrentMembers([]);
     } finally {
       setIsMembersLoading(false);
+    }
+  };
+
+  const handleConfirmRemoveMember = async () => {
+    if (!memberToRemove || !selectedTeamId) return;
+
+    setIsRemovingMember(true);
+    try {
+      if (selectedTeamId.startsWith('team-')) {
+        const removed = teamMemberStore.delete(memberToRemove.id);
+        if (!removed) throw new Error('Member not found');
+      } else {
+        const membershipId = memberToRemove.membershipId || memberToRemove.id;
+        await deleteTeamMember(membershipId);
+        await syncTeamMemberCount(selectedTeamId).catch(() => undefined);
+      }
+
+      if (selectedMember?.id === memberToRemove.id) {
+        setSelectedMember(null);
+      }
+
+      toast.success(`${memberToRemove.firstName} ${memberToRemove.lastName} removed from team`);
+      setMemberToRemove(null);
+      await loadCurrentMembers();
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to remove member';
+      toast.error(detail);
+    } finally {
+      setIsRemovingMember(false);
     }
   };
 
@@ -591,33 +645,47 @@ const ManagerRegisterPage: React.FC = () => {
             ) : (
               <div className="space-y-3">
                 {currentMembers.map((member) => (
-                  <button
+                  <div
                     key={member.id}
-                    type="button"
-                    onClick={() => setSelectedMember(member)}
-                    className="w-full flex items-center justify-between gap-3 p-3 border rounded-lg text-left transition-colors hover:bg-muted/50 cursor-pointer"
+                    className="flex items-center gap-2 p-3 border rounded-lg"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback>
-                          {(member.firstName[0] || '?').toUpperCase()}
-                          {(member.lastName[0] || '').toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {member.firstName} {member.lastName}
-                        </p>
-                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedMember(member)}
+                      className="flex-1 flex items-center justify-between gap-3 min-w-0 text-left transition-colors hover:bg-muted/50 rounded-md -m-1 p-1 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Avatar className="h-10 w-10">
+                          <AvatarFallback>
+                            {(member.firstName[0] || '?').toUpperCase()}
+                            {(member.lastName[0] || '').toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="font-medium truncate">
+                            {member.firstName} {member.lastName}
+                          </p>
+                          <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="outline">{member.role}</Badge>
-                      {member.status && (
-                        <Badge variant="secondary">{member.status}</Badge>
-                      )}
-                    </div>
-                  </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge variant="outline">{member.role}</Badge>
+                        {member.status && (
+                          <Badge variant="secondary">{member.status}</Badge>
+                        )}
+                      </div>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-destructive hover:text-destructive"
+                      title="Remove from team"
+                      onClick={() => setMemberToRemove(member)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 ))}
               </div>
             )}
@@ -942,6 +1010,39 @@ const ManagerRegisterPage: React.FC = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!memberToRemove} onOpenChange={(open) => !open && !isRemovingMember && setMemberToRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove team member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {memberToRemove
+                ? `${memberToRemove.firstName} ${memberToRemove.lastName} will be removed from ${selectedTeam?.name || 'this team'}. This does not delete their participant registration.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRemovingMember}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isRemovingMember}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmRemoveMember();
+              }}
+            >
+              {isRemovingMember ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Removing…
+                </>
+              ) : (
+                'Remove'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

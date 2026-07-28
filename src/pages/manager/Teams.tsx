@@ -16,6 +16,11 @@ import { getMyDelegations } from '@/api/delegationApi';
 import { getEvents } from '@/api/eventApi';
 import { EMSEvent } from '@/lib/emsStore';
 import { Loader2 } from 'lucide-react';
+import {
+  countTeamsForDelegation,
+  delegationHasTeam,
+  MAX_TEAMS_PER_DELEGATION,
+} from '@/lib/delegationTeamRules';
 
 interface EventSportCategoryOption {
   key: string;
@@ -176,6 +181,24 @@ const TeamsPage: React.FC = () => {
     }
   };
 
+  const selectedDelegation = useMemo(
+    () => delegations.find(d => (d.id || d._id) === formData.delegationId),
+    [delegations, formData.delegationId],
+  );
+
+  const selectedDelegationTeamCount = useMemo(() => {
+    if (!formData.delegationId) return 0;
+    return countTeamsForDelegation(formData.delegationId, teams, selectedDelegation);
+  }, [formData.delegationId, teams, selectedDelegation]);
+
+  const availableDelegationsForNewTeam = useMemo(
+    () => delegations.filter(d => {
+      const id = d.id || d._id;
+      return id && !delegationHasTeam(String(id), teams, d);
+    }),
+    [delegations, teams],
+  );
+
   const selectedEvent = useMemo(
     () => events.find(e => e.id === formData.eventId),
     [events, formData.eventId],
@@ -235,6 +258,11 @@ const TeamsPage: React.FC = () => {
       return;
     }
 
+    if (delegationHasTeam(formData.delegationId, teams, selectedDelegation)) {
+      toast.error(`This delegation already has a team. Each delegation can only have ${MAX_TEAMS_PER_DELEGATION} team.`);
+      return;
+    }
+
     setIsActionLoading(true);
     try {
       await createTeam({
@@ -291,7 +319,7 @@ const TeamsPage: React.FC = () => {
         <div>
           <h1 className="text-3xl font-bold">My Teams</h1>
           <p className="text-muted-foreground mt-1">
-            Create teams under your delegations
+            Create one team per delegation
           </p>
         </div>
         <Dialog
@@ -322,6 +350,10 @@ const TeamsPage: React.FC = () => {
                   <p className="text-sm text-muted-foreground">
                     No delegations yet. Create one from the Delegations page first.
                   </p>
+                ) : availableDelegationsForNewTeam.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    All delegations already have a team. Each delegation can only have one team.
+                  </p>
                 ) : (
                   <Select
                     value={formData.delegationId}
@@ -331,7 +363,7 @@ const TeamsPage: React.FC = () => {
                       <SelectValue placeholder="Select delegation" />
                     </SelectTrigger>
                     <SelectContent>
-                      {delegations.map(d => {
+                      {availableDelegationsForNewTeam.map(d => {
                         const id = d.id || d._id;
                         return (
                           <SelectItem key={id} value={id}>{getDelegationLabel(d)}</SelectItem>
@@ -339,6 +371,11 @@ const TeamsPage: React.FC = () => {
                       })}
                     </SelectContent>
                   </Select>
+                )}
+                {formData.delegationId && selectedDelegationTeamCount > 0 && (
+                  <p className="text-xs text-destructive">
+                    This delegation already has a team and cannot accept another.
+                  </p>
                 )}
               </div>
 
@@ -408,7 +445,13 @@ const TeamsPage: React.FC = () => {
               <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isActionLoading}>Cancel</Button>
               <Button
                 onClick={handleCreateTeam}
-                disabled={isActionLoading || delegations.length === 0 || eventSportOptions.length === 0}
+                disabled={
+                  isActionLoading ||
+                  availableDelegationsForNewTeam.length === 0 ||
+                  !formData.delegationId ||
+                  selectedDelegationTeamCount > 0 ||
+                  eventSportOptions.length === 0
+                }
               >
                 {isActionLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create Team

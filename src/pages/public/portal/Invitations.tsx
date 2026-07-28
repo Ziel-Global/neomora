@@ -316,21 +316,81 @@ import {
     EMSInvitationTemplate
 } from '@/lib/emsStore';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
-import { Calendar, Crown, Eye, Mail, Loader2, MapPin, Clock, CheckCircle, X, AlertCircle } from 'lucide-react';
-import { getMyInvitations, Invitation } from '@/api/invitationApi';
+import { Calendar, Crown, Eye, Mail, Loader2, MapPin, Clock, CheckCircle, X, AlertCircle, HelpCircle } from 'lucide-react';
+import {
+    getMyInvitations,
+    Invitation,
+    respondToInvitationById,
+    InvitationResponse,
+} from '@/api/invitationApi';
 import { getEvents } from '@/api/eventApi';
 import { getMyRegistrations, Registration } from '@/api/registrationApi';
 import * as campaignApi from '@/api/campaignApi';
+import { toast } from 'sonner';
 
 const INVITATION_REGISTRATIONS_KEY = 'ems_invitation_registrations';
 
 const REGISTERED_INVITATION_STATUSES = new Set([
     'registered',
-    'accepted',
     'completed',
     'approved',
     'submitted',
 ]);
+
+const PENDING_INVITATION_STATUSES = new Set([
+    'pending',
+    'sent',
+    'delivered',
+    'opened',
+    'invited',
+]);
+
+const isRealInvitationId = (id: string): boolean =>
+    Boolean(id) && !id.startsWith('camp-inv-');
+
+const getInvitationResponseStatus = (invitation: Invitation): string => {
+    const raw = String(invitation.rsvpResponse || invitation.status || '').trim();
+    if (!raw) return 'Pending';
+    const lower = raw.toLowerCase();
+    if (lower === 'accepted' || lower === 'accept') return 'Accepted';
+    if (lower === 'declined' || lower === 'reject' || lower === 'rejected') return 'Declined';
+    if (lower === 'maybe') return 'Maybe';
+    if (PENDING_INVITATION_STATUSES.has(lower)) return 'Pending';
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+};
+
+const isInvitationAccepted = (invitation: Invitation): boolean =>
+    getInvitationResponseStatus(invitation) === 'Accepted';
+
+const isInvitationDeclined = (invitation: Invitation): boolean =>
+    getInvitationResponseStatus(invitation) === 'Declined';
+
+const canRespondToInvitation = (invitation: Invitation): boolean => {
+    if (!isRealInvitationId(invitation.id)) return false;
+    const status = getInvitationResponseStatus(invitation);
+    return status === 'Pending' || status === 'Maybe';
+};
+
+const mergeInvitationAfterRespond = (
+    existing: Invitation,
+    updated: Invitation,
+    response: InvitationResponse,
+): Invitation => ({
+    ...existing,
+    ...updated,
+    id: existing.id,
+    eventId: updated.eventId || existing.eventId,
+    campaignId: updated.campaignId || existing.campaignId,
+    templateId: updated.templateId || existing.templateId,
+    rsvpDeadline: updated.rsvpDeadline || existing.rsvpDeadline,
+    token: updated.token || existing.token,
+    event: updated.event?.id || updated.event?.name ? updated.event : existing.event,
+    template: updated.template?.id || updated.template?.name ? updated.template : existing.template,
+    campaign: updated.campaign?.id || updated.campaign?.name ? updated.campaign : existing.campaign,
+    status: updated.status || response,
+    rsvpResponse: updated.rsvpResponse || response,
+    respondedAt: updated.respondedAt || existing.respondedAt,
+});
 
 const getInvitationRegistrationMap = (): Record<string, string> =>
     JSON.parse(localStorage.getItem(INVITATION_REGISTRATIONS_KEY) || '{}');
@@ -381,6 +441,9 @@ const getStatusBadge = (status: string) => {
             return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Accepted</Badge>;
         case 'Declined':
             return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Declined</Badge>;
+        case 'Maybe':
+            return <Badge className="bg-status-info-bg text-status-info"><HelpCircle className="h-3 w-3 mr-1" />Maybe</Badge>;
+        case 'Pending':
         case 'Delivered':
         case 'Opened':
         case 'Sent':
@@ -474,177 +537,220 @@ const Invitations: React.FC = () => {
     const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
     const [previewInvitation, setPreviewInvitation] = useState<Invitation | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
+    const [respondingInvitationId, setRespondingInvitationId] = useState<string | null>(null);
 
 
-    useEffect(() => {
-        const fetchData = async () => {
+    const loadInvitations = async (showPageLoader = true) => {
+        if (!participant) return;
+
+        if (showPageLoader) {
             setIsLoading(true);
-            setError(null);
-            try {
-                const identityIds = getParticipantIdentityIds(participant);
+        }
+        setError(null);
+        try {
+            const identityIds = buildParticipantIdentityIds(participant);
 
-                const [invData, regData] = await Promise.all([
-                    getMyInvitations().catch(() => []),
-                    getMyRegistrations().catch(() => []),
-                ]);
-                const participantRegistrations = Array.isArray(regData) ? regData : [];
-                setRegistrations(participantRegistrations);
-                setRegisteredInvitationIds(buildRegisteredInvitationIds(participantRegistrations));
+            const [invData, regData] = await Promise.all([
+                getMyInvitations().catch(() => []),
+                getMyRegistrations().catch(() => []),
+            ]);
+            const participantRegistrations = Array.isArray(regData) ? regData : [];
+            setRegistrations(participantRegistrations);
+            setRegisteredInvitationIds(buildRegisteredInvitationIds(participantRegistrations));
 
-                const remoteInvitations = Array.isArray(invData) ? invData : [];
-                const localInvitations = participant
-                    ? invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant))
-                    : [];
-                const mergedInvitations = [...remoteInvitations];
-                for (const localInvitation of localInvitations) {
-                    if (!mergedInvitations.some(existing => existing.id === localInvitation.id || existing.token === localInvitation.token)) {
-                        mergedInvitations.push(localInvitation as Invitation);
+            const remoteInvitations = Array.isArray(invData) ? invData : [];
+            const localInvitations = invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant));
+            const mergedInvitations = [...remoteInvitations];
+            for (const localInvitation of localInvitations) {
+                if (!mergedInvitations.some(existing => existing.id === localInvitation.id || existing.token === localInvitation.token)) {
+                    mergedInvitations.push(localInvitation as Invitation);
+                }
+            }
+
+            const invitationEmbeddedEvents = mergedInvitations
+                .flatMap(inv => [inv.event, inv.campaign?.event])
+                .filter((event): event is NonNullable<Invitation['event']> => Boolean(event?.id));
+
+            const missingEventIds = [...new Set(
+                mergedInvitations
+                    .map(inv => inv.eventId || inv.event?.id)
+                    .filter((eventId): eventId is string =>
+                        Boolean(eventId) && !invitationEmbeddedEvents.some(event => event.id === eventId),
+                    ),
+            )];
+
+            let baseEvents = [...invitationEmbeddedEvents];
+            if (missingEventIds.length > 0) {
+                const evData = await getEvents().catch(() => eventStore.getAll());
+                const fetchedEvents = Array.isArray(evData) ? evData : eventStore.getAll();
+                for (const event of fetchedEvents) {
+                    if (missingEventIds.includes(event.id) && !baseEvents.some(existing => existing.id === event.id)) {
+                        baseEvents.push(event);
                     }
                 }
+            }
 
-                const invitationEmbeddedEvents = mergedInvitations
-                    .flatMap(inv => [inv.event, inv.campaign?.event])
-                    .filter((event): event is NonNullable<Invitation['event']> => Boolean(event?.id));
+            let allCampaigns: campaignApi.Campaign[] = mergedInvitations
+                .map(inv => inv.campaign)
+                .filter((campaign): campaign is NonNullable<Invitation['campaign']> & { id: string } => Boolean(campaign?.id))
+                .map(campaign => ({
+                    ...(campaign as campaignApi.Campaign),
+                    id: campaign.id as string,
+                    name: campaign.name || '',
+                    subject: (campaign as any).subject || '',
+                    content: (campaign as any).content || '',
+                    status: ((campaign as any).status || 'Sent') as campaignApi.Campaign['status'],
+                    eventId: campaign.eventId || campaign.event?.id || '',
+                    templateId: campaign.templateId || campaign.template?.id || '',
+                    rsvpDeadline: campaign.rsvpDeadline || '',
+                    createdAt: (campaign as any).createdAt || new Date().toISOString(),
+                    updatedAt: (campaign as any).updatedAt || new Date().toISOString(),
+                }));
 
-                const missingEventIds = [...new Set(
-                    mergedInvitations
-                        .map(inv => inv.eventId || inv.event?.id)
-                        .filter((eventId): eventId is string =>
-                            Boolean(eventId) && !invitationEmbeddedEvents.some(event => event.id === eventId),
-                        ),
-                )];
-
-                let baseEvents = [...invitationEmbeddedEvents];
-                if (missingEventIds.length > 0) {
-                    const evData = await getEvents().catch(() => eventStore.getAll());
-                    const fetchedEvents = Array.isArray(evData) ? evData : eventStore.getAll();
-                    for (const event of fetchedEvents) {
-                        if (missingEventIds.includes(event.id) && !baseEvents.some(existing => existing.id === event.id)) {
-                            baseEvents.push(event);
-                        }
-                    }
-                }
-
-                let allCampaigns: campaignApi.Campaign[] = mergedInvitations
-                    .map(inv => inv.campaign)
-                    .filter((campaign): campaign is NonNullable<Invitation['campaign']> & { id: string } => Boolean(campaign?.id))
-                    .map(campaign => ({
-                        ...(campaign as campaignApi.Campaign),
-                        id: campaign.id as string,
-                        name: campaign.name || '',
-                        subject: (campaign as any).subject || '',
-                        content: (campaign as any).content || '',
-                        status: ((campaign as any).status || 'Sent') as campaignApi.Campaign['status'],
-                        eventId: campaign.eventId || campaign.event?.id || '',
-                        templateId: campaign.templateId || campaign.template?.id || '',
-                        rsvpDeadline: campaign.rsvpDeadline || '',
-                        createdAt: (campaign as any).createdAt || new Date().toISOString(),
-                        updatedAt: (campaign as any).updatedAt || new Date().toISOString(),
-                    }));
-
-                if (remoteInvitations.length === 0) {
-                    try {
-                        allCampaigns = await campaignApi.getCampaignsForParticipant(identityIds);
-                    } catch {
-                        allCampaigns = (campaignStore.getAll() as any[]).filter(
-                            (c: campaignApi.Campaign) => campaignApi.isSentCampaignStatus(c.status) && campaignApi.campaignTargetsParticipant(c, identityIds)
-                        );
-                    }
-                }
-
-                const nextCampaignMap: Record<string, campaignApi.Campaign> = {};
-                const nextAudienceMap: Record<string, string[]> = {};
-                const embeddedEvents: any[] = [...invitationEmbeddedEvents];
-                for (const invitation of mergedInvitations) {
-                    const embeddedCampaign = invitation.campaign;
-                    if (embeddedCampaign?.id) {
-                        nextCampaignMap[embeddedCampaign.id] = {
-                            ...(nextCampaignMap[embeddedCampaign.id] || {}),
-                            ...embeddedCampaign,
-                            id: embeddedCampaign.id,
-                            name: embeddedCampaign.name || nextCampaignMap[embeddedCampaign.id]?.name || '',
-                            subject: (embeddedCampaign as any).subject || nextCampaignMap[embeddedCampaign.id]?.subject || '',
-                            content: (embeddedCampaign as any).content || nextCampaignMap[embeddedCampaign.id]?.content || '',
-                            status: (embeddedCampaign as any).status || nextCampaignMap[embeddedCampaign.id]?.status || 'Sent',
-                            eventId: embeddedCampaign.eventId || embeddedCampaign.event?.id || invitation.eventId || '',
-                            templateId: embeddedCampaign.templateId || embeddedCampaign.template?.id || invitation.templateId || '',
-                            rsvpDeadline: embeddedCampaign.rsvpDeadline || invitation.rsvpDeadline || '',
-                            event: embeddedCampaign.event || invitation.event,
-                            template: embeddedCampaign.template || invitation.template,
-                            createdAt: (embeddedCampaign as any).createdAt || new Date().toISOString(),
-                            updatedAt: (embeddedCampaign as any).updatedAt || new Date().toISOString(),
-                        } as campaignApi.Campaign;
-                    }
-                }
-                for (const campaign of allCampaigns) {
-                    if (!campaign?.id) continue;
-                    nextCampaignMap[campaign.id] = campaign;
-                    nextAudienceMap[campaign.id] = getCampaignAudienceIds(campaign);
-                    if (campaign.event?.id) embeddedEvents.push(campaign.event);
-                }
-                const mergedEvents = [...baseEvents];
-                for (const event of embeddedEvents) {
-                    if (!mergedEvents.some(e => e.id === event.id)) mergedEvents.push(event);
-                }
-                setApiEvents(mergedEvents);
-                setCampaignMap(nextCampaignMap);
-                setCampaignAudienceMap(nextAudienceMap);
-
-                const sentCampaigns = allCampaigns.filter(c => campaignApi.isSentCampaignStatus(c.status));
-                const seenKeys = new Set<string>();
-                const finalInvitations: Invitation[] = [];
-                const addInvitation = (inv: Invitation) => {
-                    const key = inv.id || inv.token || `${inv.campaignId || 'direct'}-${inv.participantId || inv.eventId || ''}`;
-                    if (seenKeys.has(key)) return;
-                    seenKeys.add(key);
-                    finalInvitations.push(inv);
-                };
-
-                for (const inv of mergedInvitations) addInvitation(inv);
-
-                for (const c of sentCampaigns) {
-                    if (finalInvitations.some(inv => inv.campaignId === c.id)) continue;
-                    const audienceIds = nextAudienceMap[c.id] || [];
-                    const isParticipantInAudience = participant && (
-                        participantMatchesAudience(identityIds, audienceIds) ||
-                        localInvitations.some(inv => inv.campaignId === c.id && invitationBelongsToParticipant(inv, participant))
+            if (remoteInvitations.length === 0) {
+                try {
+                    allCampaigns = await campaignApi.getCampaignsForParticipant(identityIds);
+                } catch {
+                    allCampaigns = (campaignStore.getAll() as any[]).filter(
+                        (c: campaignApi.Campaign) => campaignApi.isSentCampaignStatus(c.status) && campaignApi.campaignTargetsParticipant(c, identityIds)
                     );
-                    if (isParticipantInAudience) {
-                        addInvitation({
-                            id: `camp-inv-${c.id}`,
-                            campaignId: c.id,
-                            eventId: c.eventId || c.event?.id || '',
-                            participantId: participant?.id,
-                            status: 'Sent',
-                            templateId: c.templateId || c.template?.id || '',
-                            rsvpDeadline: c.rsvpDeadline,
-                            token: c.id,
-                            event: c.event,
-                            template: c.template,
-                            campaign: c,
-                        });
-                    }
                 }
+            }
 
-                setInvitations(finalInvitations);
-            } catch (err: any) {
-                console.error('Failed to load invitations:', err);
-                setError('Could not load invitations. Please try again.');
-                // Fallback to local store
-                if (participant) {
-                    setInvitations(invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant)) as any[]);
+            const nextCampaignMap: Record<string, campaignApi.Campaign> = {};
+            const nextAudienceMap: Record<string, string[]> = {};
+            const embeddedEvents: any[] = [...invitationEmbeddedEvents];
+            for (const invitation of mergedInvitations) {
+                const embeddedCampaign = invitation.campaign;
+                if (embeddedCampaign?.id) {
+                    nextCampaignMap[embeddedCampaign.id] = {
+                        ...(nextCampaignMap[embeddedCampaign.id] || {}),
+                        ...embeddedCampaign,
+                        id: embeddedCampaign.id,
+                        name: embeddedCampaign.name || nextCampaignMap[embeddedCampaign.id]?.name || '',
+                        subject: (embeddedCampaign as any).subject || nextCampaignMap[embeddedCampaign.id]?.subject || '',
+                        content: (embeddedCampaign as any).content || nextCampaignMap[embeddedCampaign.id]?.content || '',
+                        status: (embeddedCampaign as any).status || nextCampaignMap[embeddedCampaign.id]?.status || 'Sent',
+                        eventId: embeddedCampaign.eventId || embeddedCampaign.event?.id || invitation.eventId || '',
+                        templateId: embeddedCampaign.templateId || embeddedCampaign.template?.id || invitation.templateId || '',
+                        rsvpDeadline: embeddedCampaign.rsvpDeadline || invitation.rsvpDeadline || '',
+                        event: embeddedCampaign.event || invitation.event,
+                        template: embeddedCampaign.template || invitation.template,
+                        createdAt: (embeddedCampaign as any).createdAt || new Date().toISOString(),
+                        updatedAt: (embeddedCampaign as any).updatedAt || new Date().toISOString(),
+                    } as campaignApi.Campaign;
                 }
-                setApiEvents(eventStore.getAll());
-                setCampaignMap({});
-                setCampaignAudienceMap({});
-            } finally {
+            }
+            for (const campaign of allCampaigns) {
+                if (!campaign?.id) continue;
+                nextCampaignMap[campaign.id] = campaign;
+                nextAudienceMap[campaign.id] = getCampaignAudienceIds(campaign);
+                if (campaign.event?.id) embeddedEvents.push(campaign.event);
+            }
+            const mergedEvents = [...baseEvents];
+            for (const event of embeddedEvents) {
+                if (!mergedEvents.some(e => e.id === event.id)) mergedEvents.push(event);
+            }
+            setApiEvents(mergedEvents);
+            setCampaignMap(nextCampaignMap);
+            setCampaignAudienceMap(nextAudienceMap);
+
+            const sentCampaigns = allCampaigns.filter(c => campaignApi.isSentCampaignStatus(c.status));
+            const seenKeys = new Set<string>();
+            const finalInvitations: Invitation[] = [];
+            const addInvitation = (inv: Invitation) => {
+                const key = inv.id || inv.token || `${inv.campaignId || 'direct'}-${inv.participantId || inv.eventId || ''}`;
+                if (seenKeys.has(key)) return;
+                seenKeys.add(key);
+                finalInvitations.push(inv);
+            };
+
+            for (const inv of mergedInvitations) addInvitation(inv);
+
+            for (const c of sentCampaigns) {
+                if (finalInvitations.some(inv => inv.campaignId === c.id)) continue;
+                const audienceIds = nextAudienceMap[c.id] || [];
+                const isParticipantInAudience = participant && (
+                    participantMatchesAudience(identityIds, audienceIds) ||
+                    localInvitations.some(inv => inv.campaignId === c.id && invitationBelongsToParticipant(inv, participant))
+                );
+                if (isParticipantInAudience) {
+                    addInvitation({
+                        id: `camp-inv-${c.id}`,
+                        campaignId: c.id,
+                        eventId: c.eventId || c.event?.id || '',
+                        participantId: participant?.id,
+                        status: 'Sent',
+                        templateId: c.templateId || c.template?.id || '',
+                        rsvpDeadline: c.rsvpDeadline,
+                        token: c.id,
+                        event: c.event,
+                        template: c.template,
+                        campaign: c,
+                    });
+                }
+            }
+
+            setInvitations(finalInvitations);
+        } catch (err: any) {
+            console.error('Failed to load invitations:', err);
+            setError('Could not load invitations. Please try again.');
+            if (participant) {
+                setInvitations(invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant)) as any[]);
+            }
+            setApiEvents(eventStore.getAll());
+            setCampaignMap({});
+            setCampaignAudienceMap({});
+        } finally {
+            if (showPageLoader) {
                 setIsLoading(false);
             }
-        };
+        }
+    };
 
-
-        fetchData();
+    useEffect(() => {
+        if (participant) {
+            void loadInvitations(true);
+        }
     }, [participant]);
+
+    const handleRespond = async (invitation: Invitation, response: InvitationResponse) => {
+        if (!canRespondToInvitation(invitation)) return;
+
+        setRespondingInvitationId(invitation.id);
+        try {
+            const updated = await respondToInvitationById(invitation.id, response);
+            const merged = mergeInvitationAfterRespond(invitation, updated, response);
+            setInvitations(prev =>
+                prev.map(item => (item.id === invitation.id ? merged : item)),
+            );
+            if (previewInvitation?.id === invitation.id) {
+                setPreviewInvitation(merged);
+            }
+            toast.success(
+                response === 'Accepted'
+                    ? 'Invitation accepted. You can now register.'
+                    : response === 'Declined'
+                        ? 'Invitation declined.'
+                        : 'Marked as maybe.',
+            );
+        } catch (err: any) {
+            const detail =
+                err?.response?.data?.message ||
+                err?.message ||
+                'Failed to update invitation response';
+            toast.error(detail);
+        } finally {
+            setRespondingInvitationId(null);
+        }
+    };
+
+    const navigateToRegister = (invitation: Invitation) => {
+        const eventId = invitation.eventId || invitation.event?.id || '';
+        const params = new URLSearchParams({ invitationId: invitation.id });
+        if (eventId) params.set('eventId', eventId);
+        navigate(`/register?${params.toString()}`);
+    };
 
 
     const getEventObj = (eventId: string, invitation?: Invitation | null) => {
@@ -747,7 +853,7 @@ const Invitations: React.FC = () => {
                             Invitations ({invitations.length})
                         </CardTitle>
                         <CardDescription>
-                            Click "Preview" to see the full invitation, then RSVP from there.
+                            Accept or decline each invitation, then register once your RSVP is accepted.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -759,7 +865,7 @@ const Invitations: React.FC = () => {
                                         <TableHead>Location</TableHead>
                                         <TableHead>Date</TableHead>
                                         <TableHead>RSVP Deadline</TableHead>
-                                        {/* <TableHead>Status</TableHead> */}
+                                        <TableHead>Status</TableHead>
                                         <TableHead>Actions</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -776,6 +882,10 @@ const Invitations: React.FC = () => {
                                             registeredInvitationIds,
                                             registrations,
                                         );
+                                        const responseStatus = getInvitationResponseStatus(invitation);
+                                        const showRespondActions = canRespondToInvitation(invitation);
+                                        const canRegister = isInvitationAccepted(invitation) && !alreadyRegistered && !isInvitationDeclined(invitation);
+                                        const isResponding = respondingInvitationId === invitation.id;
 
                                         return (
                                             <TableRow key={invitation.id}>
@@ -813,25 +923,68 @@ const Invitations: React.FC = () => {
                                                             : 'N/A'}
                                                     </span>
                                                 </TableCell>
-                                                {/* <TableCell>{getStatusBadge(invitation.status)}</TableCell> */}
-                                                <TableCell className='flex justify-between items-center'>
+                                                <TableCell>{getStatusBadge(responseStatus)}</TableCell>
+                                                <TableCell>
+                                                    <div className="flex flex-col gap-2 min-w-[220px]">
+                                                        <div className="flex items-center gap-2">
+                                                            <Button
+                                                                type="button"
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                className="h-8 w-8"
+                                                                onClick={() => handlePreview(invitation)}
+                                                                title="Preview invitation"
+                                                            >
+                                                                <Eye className="h-4 w-4" />
+                                                            </Button>
 
-                                                    <Eye onClick={() => handlePreview(invitation)} className="h-4 w-4 mr-1 cursor-pointer" />
+                                                            {showRespondActions && (
+                                                                <>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        disabled={isResponding}
+                                                                        onClick={() => void handleRespond(invitation, 'Accepted')}
+                                                                    >
+                                                                        {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept'}
+                                                                    </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        disabled={isResponding}
+                                                                        onClick={() => void handleRespond(invitation, 'Maybe')}
+                                                                    >
+                                                                        Maybe
+                                                                    </Button>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="destructive"
+                                                                        disabled={isResponding}
+                                                                        onClick={() => void handleRespond(invitation, 'Declined')}
+                                                                    >
+                                                                        Decline
+                                                                    </Button>
+                                                                </>
+                                                            )}
+                                                        </div>
 
-                                                    <Button
-                                                        disabled={alreadyRegistered}
-                                                        variant={alreadyRegistered ? 'secondary' : 'default'}
-                                                        onClick={() => {
-                                                            if (alreadyRegistered) return;
-                                                            const eventId = invitation.eventId || invitation.event?.id || '';
-                                                            const params = new URLSearchParams({ invitationId: invitation.id });
-                                                            if (eventId) params.set('eventId', eventId);
-                                                            navigate(`/register?${params.toString()}`);
-                                                        }}
-                                                    >
-                                                        {alreadyRegistered ? 'Registeration Submitted' : 'Register'}
-                                                    </Button>
-
+                                                        <Button
+                                                            disabled={!canRegister}
+                                                            variant={alreadyRegistered ? 'secondary' : canRegister ? 'default' : 'outline'}
+                                                            size="sm"
+                                                            onClick={() => {
+                                                                if (!canRegister) return;
+                                                                navigateToRegister(invitation);
+                                                            }}
+                                                        >
+                                                            {alreadyRegistered
+                                                                ? 'Registration Submitted'
+                                                                : isInvitationDeclined(invitation)
+                                                                    ? 'Declined'
+                                                                    : isInvitationAccepted(invitation)
+                                                                        ? 'Register'
+                                                                        : 'Accept to Register'}
+                                                        </Button>
+                                                    </div>
                                                 </TableCell>
                                             </TableRow>
                                         );
@@ -851,6 +1004,22 @@ const Invitations: React.FC = () => {
                 event={previewInvitation ? getEventObj(previewInvitation.eventId, previewInvitation) : null}
                 participant={participant}
                 rsvpDeadline={previewInvitation?.rsvpDeadline}
+                invitationStatus={previewInvitation ? getInvitationResponseStatus(previewInvitation) : undefined}
+                canRespond={previewInvitation ? canRespondToInvitation(previewInvitation) : false}
+                canRegister={
+                    previewInvitation
+                        ? isInvitationAccepted(previewInvitation)
+                            && !isInvitationRegistered(previewInvitation, registeredInvitationIds, registrations)
+                            && !isInvitationDeclined(previewInvitation)
+                        : false
+                }
+                isResponding={previewInvitation ? respondingInvitationId === previewInvitation.id : false}
+                onRespond={(response) => {
+                    if (previewInvitation) void handleRespond(previewInvitation, response);
+                }}
+                onRegister={() => {
+                    if (previewInvitation) navigateToRegister(previewInvitation);
+                }}
             />
         </div>
     );

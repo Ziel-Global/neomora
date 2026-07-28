@@ -19,6 +19,10 @@ import { getMyDelegations, createDelegation, submitDelegation, updateDelegation,
 import { getEvents } from '@/api/eventApi';
 import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam } from '@/api/teamApi';
 import { EMSEvent } from '@/lib/emsStore';
+import {
+  isTeamUnassigned,
+  MAX_TEAMS_PER_DELEGATION,
+} from '@/lib/delegationTeamRules';
 
 const AIRPORTS = [
   { code: 'RUH', name: 'Riyadh (King Khalid)' },
@@ -319,13 +323,16 @@ const DelegationsPage: React.FC = () => {
     }
   };
 
-  const handleToggleTeam = (teamId: string) => {
-    setSelectedTeamIds(prev =>
-      prev.includes(teamId)
-        ? prev.filter(id => id !== teamId)
-        : [...prev, teamId]
-    );
+  const handleSelectTeam = (teamId: string) => {
+    setSelectedTeamIds(prev => (prev[0] === teamId ? [] : [teamId]));
   };
+
+  const selectableTeamsForDelegation = teams.filter(team => {
+    if (selectedEventId && team.eventId !== selectedEventId && (team as any).event?.id !== selectedEventId) {
+      return false;
+    }
+    return isTeamUnassigned(team);
+  });
 
   const mapCategory = (catId: string) => {
     const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
@@ -344,6 +351,11 @@ const DelegationsPage: React.FC = () => {
     }
     if (!delegationCountry.trim()) {
       toast.error('Please enter a country for the delegation');
+      return;
+    }
+
+    if (selectedTeamIds.length > MAX_TEAMS_PER_DELEGATION) {
+      toast.error(`Each delegation can only include ${MAX_TEAMS_PER_DELEGATION} team.`);
       return;
     }
 
@@ -417,15 +429,19 @@ const DelegationsPage: React.FC = () => {
           return;
         }
 
+        if ((draftDelegation.teamIds || []).length > MAX_TEAMS_PER_DELEGATION) {
+          toast.error(`Each delegation can only include ${MAX_TEAMS_PER_DELEGATION} team.`);
+          return;
+        }
+
         // First create on server
+        const draftTeamIds = (draftDelegation.teamIds || []).slice(0, MAX_TEAMS_PER_DELEGATION);
         const serverDelegation = await createDelegation({
           managerId: manager?.id,
           country: countryToSubmit,
           eventId: draftDelegation.eventId,
-          teamIds: draftDelegation.teamIds || [],
-          team_ids: draftDelegation.teamIds || [],
-          teams: draftDelegation.teamIds || [],
-        } as any);
+          teamIds: draftTeamIds,
+        });
 
         const sDelId = serverDelegation.id ||
           serverDelegation._id ||
@@ -441,10 +457,10 @@ const DelegationsPage: React.FC = () => {
         }
 
         // Update all teams with the new delegationId
-        if (draftDelegation.teamIds && draftDelegation.teamIds.length > 0) {
+        if (draftTeamIds.length > 0) {
           try {
             await Promise.all(
-              draftDelegation.teamIds.map(teamId =>
+              draftTeamIds.map(teamId =>
                 updateTeam(teamId, { delegationId: sDelId, delegation_id: sDelId } as any)
               )
             );
@@ -687,22 +703,20 @@ const DelegationsPage: React.FC = () => {
               </div>
 
               <div className="space-y-2">
-                <Label>Select Teams *</Label>
+                <Label>Select Team (optional)</Label>
                 <p className="text-sm text-muted-foreground mb-2">
-                  Choose which teams to include in this delegation
+                  Each delegation can include only one team. Only unassigned teams are shown.
                 </p>
                 {teams.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No teams created yet</p>
                 ) : (
                   <div className="space-y-2 max-h-60 overflow-y-auto border rounded-lg p-3">
-                    {(teams || [])
-                      .filter(t => !selectedEventId || t.eventId === selectedEventId || (t as any).event?.id === selectedEventId)
-                      .map(team => (
+                    {selectableTeamsForDelegation.map(team => (
                         <div key={team.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded">
                           <Checkbox
                             id={team.id}
-                            checked={selectedTeamIds.includes(team.id)}
-                            onCheckedChange={() => handleToggleTeam(team.id)}
+                            checked={selectedTeamIds[0] === team.id}
+                            onCheckedChange={() => handleSelectTeam(team.id)}
                           />
                           <label htmlFor={team.id} className="flex-1 cursor-pointer text-sm">
                             <p className="font-medium">{team.name}</p>
@@ -712,9 +726,11 @@ const DelegationsPage: React.FC = () => {
                           </label>
                         </div>
                       ))}
-                    {teams.filter(t => !selectedEventId || t.eventId === selectedEventId || (t as any).event?.id === selectedEventId).length === 0 && (
+                    {selectableTeamsForDelegation.length === 0 && (
                       <p className="text-sm text-center py-4 text-muted-foreground">
-                        {selectedEventId ? 'No teams found for this event' : 'Please select an event first'}
+                        {selectedEventId
+                          ? 'No unassigned teams for this event. Create a team first or pick another event.'
+                          : 'Please select an event first'}
                       </p>
                     )}
                   </div>
@@ -773,7 +789,7 @@ const DelegationsPage: React.FC = () => {
                   <div className="flex items-center gap-4 text-sm">
                     <div className="flex items-center gap-1">
                       <Users className="h-4 w-4 text-muted-foreground" />
-                      <span>{(delegation.teamIds || []).length} teams</span>
+                      <span>{Math.min((delegation.teamIds || []).length, MAX_TEAMS_PER_DELEGATION)} team</span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Users className="h-4 w-4 text-muted-foreground" />

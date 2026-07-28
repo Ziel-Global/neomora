@@ -10,7 +10,7 @@ import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, Search, CheckCircle2,
 import { toast } from 'sonner';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Switch } from '@/components/ui/switch';
-import { getMyTeams, addTeamMember, addTeamMembersBulk, listTeamMembers } from '@/api/teamApi';
+import { getMyTeams, addTeamMember, addTeamMembersBulk, listTeamMembers, deleteTeamMember, resolveTeamMembershipId, syncTeamMemberCount } from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
 import { getManagerParticipants } from '@/api/participantApi';
 import {
@@ -21,6 +21,16 @@ import {
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -39,6 +49,32 @@ interface MemberRow {
   search: string;
   dropdownOpen: boolean;
 }
+
+interface CurrentTeamMember {
+  id: string;
+  membershipId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: string;
+}
+
+const mapToCurrentTeamMember = (raw: any): CurrentTeamMember | null => {
+  if (!raw) return null;
+  const membershipId = resolveTeamMembershipId(raw);
+  const source = raw.participant || raw.user || raw;
+  const id = membershipId || String(source.id || source._id || raw.email || '');
+  if (!id) return null;
+
+  return {
+    id,
+    membershipId: membershipId || id,
+    firstName: source.firstName || raw.firstName || 'Unknown',
+    lastName: source.lastName || raw.lastName || '',
+    email: source.email || raw.email || '',
+    role: source.role || raw.role || raw.jobTitle || source.jobTitle || 'Member',
+  };
+};
 
 const emptyRow = (): MemberRow => ({
   participantId: '',
@@ -199,6 +235,10 @@ const AddMembersPage: React.FC = () => {
 
   const [rows, setRows] = useState<MemberRow[]>([emptyRow()]);
   const [isSaving, setIsSaving] = useState(false);
+  const [currentMembers, setCurrentMembers] = useState<CurrentTeamMember[]>([]);
+  const [isLoadingCurrentMembers, setIsLoadingCurrentMembers] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState<CurrentTeamMember | null>(null);
+  const [isRemovingMember, setIsRemovingMember] = useState(false);
 
   const searchRefs = useRef<(HTMLInputElement | null)[]>([]);
 
@@ -262,6 +302,75 @@ const AddMembersPage: React.FC = () => {
 
     setRows([emptyRow()]);
   }, [selectedTeamId, teams, delegations]);
+
+  const loadCurrentMembers = async () => {
+    if (!selectedTeamId) {
+      setCurrentMembers([]);
+      return;
+    }
+
+    setIsLoadingCurrentMembers(true);
+    try {
+      if (selectedTeamId.startsWith('team-')) {
+        const localMembers = teamMemberStore.getByTeam(selectedTeamId);
+        setCurrentMembers(
+          localMembers.map(mapToCurrentTeamMember).filter(Boolean) as CurrentTeamMember[],
+        );
+        return;
+      }
+
+      const teamMembers = await listTeamMembers(selectedTeamId);
+      setCurrentMembers(
+        (Array.isArray(teamMembers) ? teamMembers : [])
+          .map(mapToCurrentTeamMember)
+          .filter(Boolean) as CurrentTeamMember[],
+      );
+    } catch (error) {
+      console.error('Failed to load current team members:', error);
+      setCurrentMembers([]);
+    } finally {
+      setIsLoadingCurrentMembers(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedTeamId && teams.some((entry) => entry.id === selectedTeamId)) {
+      void loadCurrentMembers();
+    } else {
+      setCurrentMembers([]);
+    }
+  }, [selectedTeamId, teams]);
+
+  const handleConfirmRemoveMember = async () => {
+    if (!memberToRemove || !selectedTeamId) return;
+
+    setIsRemovingMember(true);
+    try {
+      if (selectedTeamId.startsWith('team-')) {
+        const removed = teamMemberStore.delete(memberToRemove.id);
+        if (!removed) throw new Error('Member not found');
+      } else {
+        await deleteTeamMember(memberToRemove.membershipId);
+        await syncTeamMemberCount(selectedTeamId).catch(() => undefined);
+      }
+
+      toast.success(`${memberToRemove.firstName} ${memberToRemove.lastName} removed from team`);
+      setMemberToRemove(null);
+
+      await Promise.all([
+        loadCurrentMembers(),
+        loadRegisteredParticipantsForTeam(selectedTeamId).then(setAllParticipants),
+      ]);
+    } catch (error: any) {
+      const detail =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to remove member';
+      toast.error(detail);
+    } finally {
+      setIsRemovingMember(false);
+    }
+  };
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
@@ -414,6 +523,7 @@ const AddMembersPage: React.FC = () => {
 
       const refreshed = await loadRegisteredParticipantsForTeam(selectedTeamId);
         setAllParticipants(refreshed);
+      await loadCurrentMembers();
     } catch (error: any) {
       const detail =
         error?.response?.data?.message ||
@@ -498,6 +608,66 @@ const AddMembersPage: React.FC = () => {
         </Card>
       )}
 */}
+      {selectedTeamId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Current Team Members</CardTitle>
+            <CardDescription>
+              Members already on {selectedTeam?.name}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {isLoadingCurrentMembers ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : currentMembers.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                <p>No members on this team yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {currentMembers.map((member) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center justify-between gap-3 p-3 border rounded-lg"
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>
+                          {(member.firstName[0] || '?').toUpperCase()}
+                          {(member.lastName[0] || '').toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {member.firstName} {member.lastName}
+                        </p>
+                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline">{member.role}</Badge>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        title="Remove from team"
+                        onClick={() => setMemberToRemove(member)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Add Members Form */}
       {selectedTeamId && (
         <Card>
@@ -741,6 +911,39 @@ const AddMembersPage: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      <AlertDialog open={!!memberToRemove} onOpenChange={(open) => !open && !isRemovingMember && setMemberToRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove team member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {memberToRemove
+                ? `${memberToRemove.firstName} ${memberToRemove.lastName} will be removed from ${selectedTeam?.name || 'this team'}. This does not delete their participant registration.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isRemovingMember}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isRemovingMember}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmRemoveMember();
+              }}
+            >
+              {isRemovingMember ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Removing…
+                </>
+              ) : (
+                'Remove'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

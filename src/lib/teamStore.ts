@@ -61,6 +61,7 @@ export interface TeamMember {
 export interface Team {
   id: string;
   managerId: string;
+  delegationId?: string;
   name: string;
   country: string;
   sportCategory: string;

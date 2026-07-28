@@ -130,6 +130,29 @@ export const deleteTeamMember = async (membershipId: string): Promise<void> => {
     await apiClient.delete(`/team-members/${membershipId}`);
 };
 
+/** Team-membership record id for DELETE /team-members/{id} (not participant id). */
+export const resolveTeamMembershipId = (raw: any): string =>
+    String(
+        raw?.membershipId ||
+        raw?.membership_id ||
+        raw?.teamMemberId ||
+        raw?.team_member_id ||
+        raw?.id ||
+        raw?._id ||
+        '',
+    );
+
+export const syncTeamMemberCount = async (teamId: string): Promise<number> => {
+    const members = await listTeamMembers(teamId);
+    const count = members.length;
+    try {
+        await updateTeam(teamId, { memberCount: count });
+    } catch {
+        // Backend may not accept memberCount on PATCH — count is still returned for UI.
+    }
+    return count;
+};
+
 export const addTeamMembersBulk = async (teamId: string, members: any[]): Promise<any> => {
     const results = [];
     for (const member of members) {
