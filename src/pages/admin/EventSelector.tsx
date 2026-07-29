@@ -49,6 +49,7 @@ import {
     AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { validateEventForm, EventFormErrors, EventFormField } from '@/lib/eventFormValidation';
 
 const STATUS_COLORS: Record<string, string> = {
     Published: 'from-emerald-500 to-teal-600',
@@ -120,7 +121,25 @@ const EventSelector: React.FC = () => {
     const [deleteTarget, setDeleteTarget] = useState<EMSEvent | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
+    const [formErrors, setFormErrors] = useState<EventFormErrors>({});
     const logoInputRef = useRef<HTMLInputElement>(null);
+
+    const clearFieldError = (field: EventFormField) => {
+        setFormErrors(prev => {
+            if (!prev[field]) return prev;
+            const next = { ...prev };
+            delete next[field];
+            return next;
+        });
+    };
+
+    const inputErrorClass = (field: EventFormField) =>
+        formErrors[field] ? 'border-destructive focus-visible:ring-destructive' : '';
+
+    const FieldError = ({ field }: { field: EventFormField }) =>
+        formErrors[field] ? (
+            <p className="text-sm text-destructive">{formErrors[field]}</p>
+        ) : null;
 
     const load = async () => {
         try {
@@ -184,6 +203,7 @@ const EventSelector: React.FC = () => {
             toast.success(t('events.created_success', { name: form.name }));
             setCreate(false);
             setForm(emptyForm());
+            setFormErrors({});
             load();
         } catch (error) {
             console.error('Error creating event:', error);
@@ -243,6 +263,7 @@ const EventSelector: React.FC = () => {
             setEdit(false);
             setEditTarget(null);
             setForm(emptyForm());
+            setFormErrors({});
             load();
         } catch (error) {
             console.error('Error updating event:', error);
@@ -293,27 +314,12 @@ const EventSelector: React.FC = () => {
     const todayStr = new Date().toISOString().split('T')[0];
 
     const validateForm = (): boolean => {
-        if (!form.name.trim() || !form.theme.trim() || !form.startDate || !form.endDate || !form.city.trim() || !form.venues.trim() || !form.eventType || !form.status) {
-            toast.error(t('common.fill_required') || 'Please fill in all required fields');
-            return false;
+        const result = validateEventForm(form, t);
+        setFormErrors(result.errors);
+        if (!result.valid && result.firstError) {
+            toast.error(result.firstError);
         }
-
-        if ((form.eventType === 'team-based' || form.eventType === 'hybrid') && form.selectedSports.length === 0) {
-            toast.error('Please select at least one sport category');
-            return false;
-        }
-
-        if (form.endDate < form.startDate) {
-            toast.error('End date cannot be before start date');
-            return false;
-        }
-
-        if (form.startDate < todayStr) {
-            toast.error('Start date cannot be in the past');
-            return false;
-        }
-
-        return true;
+        return result.valid;
     };
 
     /* ─── Shared form fields JSX ─── */
@@ -354,11 +360,25 @@ const EventSelector: React.FC = () => {
 
             <div className="grid gap-2">
                 <RequiredLabel htmlFor="f-name">{t('events.name_label')}</RequiredLabel>
-                <Input id="f-name" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} required />
+                <Input
+                    id="f-name"
+                    value={form.name}
+                    onChange={e => { clearFieldError('name'); setForm(f => ({ ...f, name: e.target.value })); }}
+                    className={inputErrorClass('name')}
+                    required
+                />
+                <FieldError field="name" />
             </div>
             <div className="grid gap-2">
                 <RequiredLabel htmlFor="f-theme">{t('events.theme_label')}</RequiredLabel>
-                <Input id="f-theme" value={form.theme} onChange={e => setForm(f => ({ ...f, theme: e.target.value }))} required />
+                <Input
+                    id="f-theme"
+                    value={form.theme}
+                    onChange={e => { clearFieldError('theme'); setForm(f => ({ ...f, theme: e.target.value })); }}
+                    className={inputErrorClass('theme')}
+                    required
+                />
+                <FieldError field="theme" />
             </div>
             <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
@@ -368,10 +388,12 @@ const EventSelector: React.FC = () => {
                         type="date"
                         value={form.startDate}
                         min={todayStr}
-                        onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))}
+                        onChange={e => { clearFieldError('startDate'); setForm(f => ({ ...f, startDate: e.target.value })); }}
                         onPaste={e => e.preventDefault()}
+                        className={inputErrorClass('startDate')}
                         required
                     />
+                    <FieldError field="startDate" />
                 </div>
                 <div className="grid gap-2">
                     <RequiredLabel htmlFor="f-end">{t('events.end_label')}</RequiredLabel>
@@ -380,30 +402,55 @@ const EventSelector: React.FC = () => {
                         type="date"
                         value={form.endDate}
                         min={form.startDate || todayStr}
-                        onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))}
+                        onChange={e => { clearFieldError('endDate'); setForm(f => ({ ...f, endDate: e.target.value })); }}
                         onPaste={e => e.preventDefault()}
+                        className={inputErrorClass('endDate')}
                         required
                     />
+                    <FieldError field="endDate" />
                 </div>
             </div>
             <div className="grid gap-2">
                 <RequiredLabel htmlFor="f-city">{t('events.city_label')}</RequiredLabel>
-                <Input id="f-city" value={form.city} onChange={e => setForm(f => ({ ...f, city: e.target.value }))} required />
+                <Input
+                    id="f-city"
+                    value={form.city}
+                    onChange={e => { clearFieldError('city'); setForm(f => ({ ...f, city: e.target.value })); }}
+                    className={inputErrorClass('city')}
+                    required
+                />
+                <FieldError field="city" />
             </div>
             <div className="grid gap-2">
                 <RequiredLabel htmlFor="f-venues">{t('events.venues_label')}</RequiredLabel>
-                <Textarea id="f-venues" placeholder={t('events.venues_placeholder')} value={form.venues} onChange={e => setForm(f => ({ ...f, venues: e.target.value }))} required />
+                <Textarea
+                    id="f-venues"
+                    placeholder={t('events.venues_placeholder')}
+                    value={form.venues}
+                    onChange={e => { clearFieldError('venues'); setForm(f => ({ ...f, venues: e.target.value })); }}
+                    className={inputErrorClass('venues')}
+                    required
+                />
+                <FieldError field="venues" />
             </div>
             <div className="grid gap-2">
                 <RequiredLabel>{t('events.type')}</RequiredLabel>
-                <Select value={form.eventType} onValueChange={(v: 'individual' | 'team-based' | 'hybrid') => setForm(f => ({ ...f, eventType: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                    value={form.eventType}
+                    onValueChange={(v: 'individual' | 'team-based' | 'hybrid') => {
+                        clearFieldError('eventType');
+                        clearFieldError('selectedSports');
+                        setForm(f => ({ ...f, eventType: v }));
+                    }}
+                >
+                    <SelectTrigger className={inputErrorClass('eventType')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="individual">{t('events.type_individual')}</SelectItem>
                         <SelectItem value="team-based">{t('events.type_team')}</SelectItem>
                         <SelectItem value="hybrid">{t('events.type_hybrid')}</SelectItem>
                     </SelectContent>
                 </Select>
+                <FieldError field="eventType" />
             </div>
             {(form.eventType === 'team-based' || form.eventType === 'hybrid') && (
                 <>
@@ -417,21 +464,35 @@ const EventSelector: React.FC = () => {
                     </div>
                     <div className="grid gap-2">
                         <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto border rounded-lg p-3">
+                        <div className={`grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto border rounded-lg p-3 ${formErrors.selectedSports ? 'border-destructive' : ''}`}>
                             {SPORT_CATEGORIES.map(sport => (
                                 <div key={sport.id} className="flex items-center gap-2">
-                                    <Checkbox id={sport.id} checked={form.selectedSports.includes(sport.id)} onCheckedChange={() => toggleSport(sport.id)} />
+                                    <Checkbox
+                                        id={sport.id}
+                                        checked={form.selectedSports.includes(sport.id)}
+                                        onCheckedChange={() => {
+                                            clearFieldError('selectedSports');
+                                            toggleSport(sport.id);
+                                        }}
+                                    />
                                     <Label htmlFor={sport.id} className="font-normal text-sm cursor-pointer">{sport.name}</Label>
                                 </div>
                             ))}
                         </div>
+                        <FieldError field="selectedSports" />
                     </div>
                 </>
             )}
             <div className="grid gap-2">
                 <RequiredLabel>{t('events.status_label')}</RequiredLabel>
-                <Select value={form.status} onValueChange={(v: EMSEvent['status']) => setForm(f => ({ ...f, status: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                <Select
+                    value={form.status}
+                    onValueChange={(v: EMSEvent['status']) => {
+                        clearFieldError('status');
+                        setForm(f => ({ ...f, status: v }));
+                    }}
+                >
+                    <SelectTrigger className={inputErrorClass('status')}><SelectValue /></SelectTrigger>
                     <SelectContent>
                         <SelectItem value="Draft">{t('common.draft')}</SelectItem>
                         <SelectItem value="Published">{t('common.published')}</SelectItem>
@@ -439,6 +500,7 @@ const EventSelector: React.FC = () => {
                         <SelectItem value="Closed">{t('common.closed')}</SelectItem>
                     </SelectContent>
                 </Select>
+                <FieldError field="status" />
             </div>
         </div>
     );
@@ -629,7 +691,7 @@ const EventSelector: React.FC = () => {
             </main>
 
             {/* ─── Create Dialog ─── */}
-            <Dialog open={isCreateOpen} onOpenChange={open => { setCreate(open); if (!open) setForm(emptyForm()); }}>
+            <Dialog open={isCreateOpen} onOpenChange={open => { setCreate(open); if (!open) { setForm(emptyForm()); setFormErrors({}); } }}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? 'rtl' : 'ltr'}>
                     <DialogHeader>
                         <DialogTitle className="text-start">{t('events.create_new')}</DialogTitle>
@@ -649,7 +711,7 @@ const EventSelector: React.FC = () => {
             </Dialog>
 
             {/* ─── Edit Dialog ─── */}
-            <Dialog open={isEditOpen} onOpenChange={open => { setEdit(open); if (!open) { setEditTarget(null); setForm(emptyForm()); } }}>
+            <Dialog open={isEditOpen} onOpenChange={open => { setEdit(open); if (!open) { setEditTarget(null); setForm(emptyForm()); setFormErrors({}); } }}>
                 <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? 'rtl' : 'ltr'}>
                     <DialogHeader>
                         <DialogTitle className="text-start">{t('events.edit_event')}</DialogTitle>

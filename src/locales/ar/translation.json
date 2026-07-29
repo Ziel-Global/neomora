@@ -172,7 +172,23 @@
     "upload_logo": "تحميل الشعار",
     "change_logo": "تغيير الشعار",
     "logo_limit": "(اختياري، بحد أقصى ٢ ميجابايت)",
-    "all_events": "جميع الفعاليات"
+    "all_events": "جميع الفعاليات",
+    "validation": {
+      "name_required": "اسم الفعالية مطلوب",
+      "theme_required": "الموضوع مطلوب",
+      "start_date_required": "تاريخ البدء مطلوب",
+      "end_date_required": "تاريخ الانتهاء مطلوب",
+      "city_required": "المدينة مطلوبة",
+      "venues_required": "مكان واحد على الأقل مطلوب",
+      "event_type_required": "نوع الفعالية مطلوب",
+      "status_required": "الحالة مطلوبة",
+      "sport_required": "يرجى اختيار فئة رياضية واحدة على الأقل",
+      "end_before_start": "لا يمكن أن يكون تاريخ الانتهاء قبل تاريخ البدء",
+      "start_in_past": "لا يمكن أن يكون تاريخ البدء في الماضي"
+    },
+    "created_success": "تم إنشاء الفعالية \"{{name}}\" بنجاح",
+    "updated_success": "تم تحديث الفعالية بنجاح",
+    "deleted_success": "تم حذف الفعالية \"{{name}}\""
   },
   "participants": {
     "title": "المشاركون",

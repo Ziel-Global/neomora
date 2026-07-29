@@ -19,6 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
+import { validateEventForm, EventFormErrors, EventFormField } from '@/lib/eventFormValidation';
 
 
 const EventsPage: React.FC = () => {
@@ -30,6 +31,7 @@ const EventsPage: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EMSEvent | null>(null);
+  const [formErrors, setFormErrors] = useState<EventFormErrors>({});
 
   // Form state
   const [formData, setFormData] = useState({
@@ -73,6 +75,7 @@ const EventsPage: React.FC = () => {
       selectedSports: [],
       allowTeamRegistration: false,
     });
+    setFormErrors({});
   };
 
   const handleCreate = async () => {
@@ -269,30 +272,32 @@ const EventsPage: React.FC = () => {
     </Label>
   );
 
+  const clearFieldError = (field: EventFormField) => {
+    setFormErrors(prev => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const inputErrorClass = (field: EventFormField) =>
+    formErrors[field] ? 'border-destructive focus-visible:ring-destructive' : '';
+
+  const FieldError = ({ field }: { field: EventFormField }) =>
+    formErrors[field] ? (
+      <p className="text-sm text-destructive">{formErrors[field]}</p>
+    ) : null;
+
   const todayStr = new Date().toISOString().split('T')[0];
 
   const validateForm = (): boolean => {
-    if (!formData.name.trim() || !formData.theme.trim() || !formData.startDate || !formData.endDate || !formData.city.trim() || !formData.venues.trim() || !formData.eventType || !formData.status) {
-      toast.error('Please fill in all required fields');
-      return false;
+    const result = validateEventForm(formData, t);
+    setFormErrors(result.errors);
+    if (!result.valid && result.firstError) {
+      toast.error(result.firstError);
     }
-
-    if ((formData.eventType === 'team-based' || formData.eventType === 'hybrid') && formData.selectedSports.length === 0) {
-      toast.error('Please select at least one sport category');
-      return false;
-    }
-
-    if (formData.endDate < formData.startDate) {
-      toast.error('End date cannot be before start date');
-      return false;
-    }
-
-    if (formData.startDate < todayStr) {
-      toast.error('Start date cannot be in the past');
-      return false;
-    }
-
-    return true;
+    return result.valid;
   };
 
   const formFieldsJsx = (
@@ -303,9 +308,14 @@ const EventsPage: React.FC = () => {
           id="name"
           placeholder={t('events.name_label')}
           value={formData.name}
-          onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
+          onChange={(e) => {
+            clearFieldError('name');
+            setFormData(prev => ({ ...prev, name: e.target.value }));
+          }}
+          className={inputErrorClass('name')}
           required
         />
+        <FieldError field="name" />
       </div>
       <div className="grid gap-2">
         <RequiredLabel htmlFor="theme">{t('events.theme_label')}</RequiredLabel>
@@ -313,9 +323,14 @@ const EventsPage: React.FC = () => {
           id="theme"
           placeholder={t('events.theme_label')}
           value={formData.theme}
-          onChange={(e) => setFormData(prev => ({ ...prev, theme: e.target.value }))}
+          onChange={(e) => {
+            clearFieldError('theme');
+            setFormData(prev => ({ ...prev, theme: e.target.value }));
+          }}
+          className={inputErrorClass('theme')}
           required
         />
+        <FieldError field="theme" />
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="grid gap-2">
@@ -325,10 +340,15 @@ const EventsPage: React.FC = () => {
             type="date"
             value={formData.startDate}
             min={todayStr}
-            onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))}
+            onChange={(e) => {
+              clearFieldError('startDate');
+              setFormData(prev => ({ ...prev, startDate: e.target.value }));
+            }}
             onPaste={(e) => e.preventDefault()}
+            className={inputErrorClass('startDate')}
             required
           />
+          <FieldError field="startDate" />
         </div>
         <div className="grid gap-2">
           <RequiredLabel htmlFor="endDate">{t('events.end_label')}</RequiredLabel>
@@ -337,10 +357,15 @@ const EventsPage: React.FC = () => {
             type="date"
             value={formData.endDate}
             min={formData.startDate || todayStr}
-            onChange={(e) => setFormData(prev => ({ ...prev, endDate: e.target.value }))}
+            onChange={(e) => {
+              clearFieldError('endDate');
+              setFormData(prev => ({ ...prev, endDate: e.target.value }));
+            }}
             onPaste={(e) => e.preventDefault()}
+            className={inputErrorClass('endDate')}
             required
           />
+          <FieldError field="endDate" />
         </div>
       </div>
       <div className="grid gap-2">
@@ -349,9 +374,14 @@ const EventsPage: React.FC = () => {
           id="city"
           placeholder={t('events.city_label')}
           value={formData.city}
-          onChange={(e) => setFormData(prev => ({ ...prev, city: e.target.value }))}
+          onChange={(e) => {
+            clearFieldError('city');
+            setFormData(prev => ({ ...prev, city: e.target.value }));
+          }}
+          className={inputErrorClass('city')}
           required
         />
+        <FieldError field="city" />
       </div>
       <div className="grid gap-2">
         <RequiredLabel htmlFor="venues">{t('events.venues_label')}</RequiredLabel>
@@ -359,9 +389,14 @@ const EventsPage: React.FC = () => {
           id="venues"
           placeholder={t('events.venues_placeholder')}
           value={formData.venues}
-          onChange={(e) => setFormData(prev => ({ ...prev, venues: e.target.value }))}
+          onChange={(e) => {
+            clearFieldError('venues');
+            setFormData(prev => ({ ...prev, venues: e.target.value }));
+          }}
+          className={inputErrorClass('venues')}
           required
         />
+        <FieldError field="venues" />
       </div>
 
       {/* Event Type */}
@@ -369,9 +404,13 @@ const EventsPage: React.FC = () => {
         <RequiredLabel>{t('events.type')}</RequiredLabel>
         <Select
           value={formData.eventType}
-          onValueChange={(value: 'individual' | 'team-based' | 'hybrid') => setFormData(prev => ({ ...prev, eventType: value }))}
+          onValueChange={(value: 'individual' | 'team-based' | 'hybrid') => {
+            clearFieldError('eventType');
+            clearFieldError('selectedSports');
+            setFormData(prev => ({ ...prev, eventType: value }));
+          }}
         >
-          <SelectTrigger>
+          <SelectTrigger className={inputErrorClass('eventType')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -380,6 +419,7 @@ const EventsPage: React.FC = () => {
             <SelectItem value="hybrid">{t('events.type_hybrid')}</SelectItem>
           </SelectContent>
         </Select>
+        <FieldError field="eventType" />
       </div>
 
       {/* Team Registration Toggle */}
@@ -400,13 +440,16 @@ const EventsPage: React.FC = () => {
           <div className="grid gap-2">
             <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
             <p className="text-sm text-muted-foreground mb-2">{t('events.select_sports')}</p>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+            <div className={`grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3 ${formErrors.selectedSports ? 'border-destructive' : ''}`}>
               {SPORT_CATEGORIES.map(sport => (
                 <div key={sport.id} className="flex items-center space-x-2">
                   <Checkbox
                     id={sport.id}
                     checked={formData.selectedSports.includes(sport.id)}
-                    onCheckedChange={() => handleToggleSport(sport.id)}
+                    onCheckedChange={() => {
+                      clearFieldError('selectedSports');
+                      handleToggleSport(sport.id);
+                    }}
                   />
                   <Label htmlFor={sport.id} className="font-normal text-sm cursor-pointer">
                     {sport.name}
@@ -414,14 +457,21 @@ const EventsPage: React.FC = () => {
                 </div>
               ))}
             </div>
+            <FieldError field="selectedSports" />
           </div>
         </>
       )}
 
       <div className="grid gap-2">
         <RequiredLabel htmlFor="status">{t('events.status_label')}</RequiredLabel>
-        <Select value={formData.status} onValueChange={(value: EMSEvent['status']) => setFormData(prev => ({ ...prev, status: value }))}>
-          <SelectTrigger>
+        <Select
+          value={formData.status}
+          onValueChange={(value: EMSEvent['status']) => {
+            clearFieldError('status');
+            setFormData(prev => ({ ...prev, status: value }));
+          }}
+        >
+          <SelectTrigger className={inputErrorClass('status')}>
             <SelectValue placeholder={t('events.status_label')} />
           </SelectTrigger>
           <SelectContent>
@@ -431,6 +481,7 @@ const EventsPage: React.FC = () => {
             <SelectItem value="Closed">{t('common.closed')}</SelectItem>
           </SelectContent>
         </Select>
+        <FieldError field="status" />
       </div>
     </div>
   );
@@ -441,7 +492,7 @@ const EventsPage: React.FC = () => {
         title={t('events.title')}
         description={t('events.description')}
         action={
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetForm(); }}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) { resetForm(); setFormErrors({}); } }}>
             <DialogTrigger asChild>
               <Button><Plus className="h-4 w-4 me-2" />{t('events.create_event')}</Button>
             </DialogTrigger>
@@ -572,7 +623,7 @@ const EventsPage: React.FC = () => {
       </div>
 
       {/* Edit Dialog */}
-      <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingEvent(null); resetForm(); } }}>
+      <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingEvent(null); resetForm(); setFormErrors({}); } }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t('events.edit_event')}</DialogTitle>

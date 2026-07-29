@@ -177,7 +177,23 @@
     "upload_logo": "Upload Logo",
     "change_logo": "Change Logo",
     "logo_limit": "(optional, max 2 MB)",
-    "all_events": "All Events"
+    "all_events": "All Events",
+    "validation": {
+      "name_required": "Event name is required",
+      "theme_required": "Theme is required",
+      "start_date_required": "Start date is required",
+      "end_date_required": "End date is required",
+      "city_required": "City is required",
+      "venues_required": "At least one venue is required",
+      "event_type_required": "Event type is required",
+      "status_required": "Status is required",
+      "sport_required": "Please select at least one sport category",
+      "end_before_start": "End date cannot be before start date",
+      "start_in_past": "Start date cannot be in the past"
+    },
+    "created_success": "Event \"{{name}}\" created successfully",
+    "updated_success": "Event updated successfully",
+    "deleted_success": "Event \"{{name}}\" deleted"
   },
   "participants": {
     "title": "Participants",
