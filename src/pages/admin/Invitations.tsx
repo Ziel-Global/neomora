@@ -47,6 +47,11 @@ import {
   getManagerDisplayName,
   EMSManager,
 } from '@/api/managerApi';
+import {
+  INTERNATIONAL_PHONE_PLACEHOLDER,
+  sanitizePhoneInput,
+  validateInternationalPhone,
+} from '@/lib/phoneValidation';
 import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
@@ -113,6 +118,7 @@ const InvitationsPage: React.FC = () => {
   const [scheduleCampaignTargetId, setScheduleCampaignTargetId] = useState<string | null>(null);
   const [isCreateManagerOpen, setIsCreateManagerOpen] = useState(false);
   const [isCreatingManager, setIsCreatingManager] = useState(false);
+  const [newManagerPhoneError, setNewManagerPhoneError] = useState('');
   const [newManagerForm, setNewManagerForm] = useState({
     firstName: '',
     lastName: '',
@@ -620,6 +626,7 @@ const InvitationsPage: React.FC = () => {
       organization: '',
       federation: '',
     });
+    setNewManagerPhoneError('');
   };
 
   const handleCreateManager = async () => {
@@ -649,6 +656,18 @@ const InvitationsPage: React.FC = () => {
       });
       return;
     }
+
+    const phoneError = validateInternationalPhone(phone);
+    if (phoneError) {
+      setNewManagerPhoneError(phoneError);
+      toast({
+        title: 'Invalid phone number',
+        description: phoneError,
+        variant: 'destructive',
+      });
+      return;
+    }
+    setNewManagerPhoneError('');
 
     if (!newManagerForm.password) {
       toast({
@@ -2287,6 +2306,7 @@ const InvitationsPage: React.FC = () => {
                 <Label htmlFor="manager-first-name">First Name <RequiredMark /></Label>
                 <Input
                   id="manager-first-name"
+                  placeholder="e.g. Ahmed"
                   value={newManagerForm.firstName}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, firstName: e.target.value }))}
                 />
@@ -2295,6 +2315,7 @@ const InvitationsPage: React.FC = () => {
                 <Label htmlFor="manager-last-name">Last Name <RequiredMark /></Label>
                 <Input
                   id="manager-last-name"
+                  placeholder="e.g. Khan"
                   value={newManagerForm.lastName}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, lastName: e.target.value }))}
                 />
@@ -2305,6 +2326,7 @@ const InvitationsPage: React.FC = () => {
               <Input
                 id="manager-email"
                 type="email"
+                placeholder="e.g. manager@example.com"
                 value={newManagerForm.email}
                 onChange={(e) => setNewManagerForm(prev => ({ ...prev, email: e.target.value }))}
               />
@@ -2315,6 +2337,7 @@ const InvitationsPage: React.FC = () => {
                 <Input
                   id="manager-password"
                   type="password"
+                  placeholder="Enter password"
                   value={newManagerForm.password}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, password: e.target.value }))}
                   autoComplete="new-password"
@@ -2325,6 +2348,7 @@ const InvitationsPage: React.FC = () => {
                 <Input
                   id="manager-confirm-password"
                   type="password"
+                  placeholder="Re-enter password"
                   value={newManagerForm.confirmPassword}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
                   autoComplete="new-password"
@@ -2335,15 +2359,29 @@ const InvitationsPage: React.FC = () => {
               <Label htmlFor="manager-phone">Phone <RequiredMark /></Label>
               <Input
                 id="manager-phone"
+                type="tel"
+                placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
                 value={newManagerForm.phone}
-                onChange={(e) => setNewManagerForm(prev => ({ ...prev, phone: e.target.value }))}
+                onChange={(e) => {
+                  const phone = sanitizePhoneInput(e.target.value);
+                  setNewManagerForm(prev => ({ ...prev, phone }));
+                  if (newManagerPhoneError) {
+                    setNewManagerPhoneError(validateInternationalPhone(phone) || '');
+                  }
+                }}
+                onBlur={() => setNewManagerPhoneError(validateInternationalPhone(newManagerForm.phone) || '')}
+                className={newManagerPhoneError ? 'border-red-500' : undefined}
               />
+              {newManagerPhoneError && (
+                <p className="text-sm text-red-500">{newManagerPhoneError}</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label htmlFor="manager-country">Country <RequiredMark /></Label>
                 <Input
                   id="manager-country"
+                  placeholder="e.g. Pakistan"
                   value={newManagerForm.country}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, country: e.target.value }))}
                 />
@@ -2352,6 +2390,7 @@ const InvitationsPage: React.FC = () => {
                 <Label htmlFor="manager-organization">Organization <RequiredMark /></Label>
                 <Input
                   id="manager-organization"
+                  placeholder="e.g. National Sports Council"
                   value={newManagerForm.organization}
                   onChange={(e) => setNewManagerForm(prev => ({ ...prev, organization: e.target.value }))}
                 />

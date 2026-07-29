@@ -321,17 +321,55 @@ const RegisterPage: React.FC = () => {
           if (!isValidPhone(value)) return 'Phone number must be at least 10 digits';
         }
         return '';
+      case 'emergencyContact':
+        if (!value || value.trim() === '') return 'Emergency contact number is required';
+        if (!isValidPhone(value)) return 'Emergency contact must be at least 10 digits';
+        return '';
+      case 'arrivalDate':
+        return !value || value.trim() === '' ? 'Preferred arrival date is required' : '';
+      case 'departureDate':
+        if (!value || value.trim() === '') return 'Preferred departure date is required';
+        if (formData.arrivalDate && value < formData.arrivalDate) {
+          return 'Departure date cannot be before arrival date';
+        }
+        return '';
       default:
         return '';
     }
   };
 
-  // Validate all fields on current step
-  const validateCurrentStep = (): boolean => {
-    const newErrors: FormErrors = {};
+  const getDocByType = (type: UploadedDoc['type']) =>
+    uploadedDocs.find(d => d.type === type);
+
+  const getRequiredDocumentTypes = (): UploadedDoc['type'][] => {
+    const required: UploadedDoc['type'][] = ['Passport', 'Photo'];
+    if (formData.role === 'Media') {
+      required.push('Press Credentials');
+    }
+    return required;
+  };
+
+  const collectDocumentErrors = (): FormErrors => {
+    const docErrors: FormErrors = {};
+    for (const type of getRequiredDocumentTypes()) {
+      if (!getDocByType(type)) {
+        if (type === 'Passport') {
+          docErrors.passportDoc = 'Passport copy is required';
+        } else if (type === 'Photo') {
+          docErrors.photoDoc = 'Profile photo is required';
+        } else {
+          docErrors.pressCredentialsDoc = 'Press credentials are required for media participants';
+        }
+      }
+    }
+    return docErrors;
+  };
+
+  const collectStepErrors = (stepNumber: number): FormErrors => {
+    const stepErrors: FormErrors = {};
     let fieldsToValidate: string[] = [];
 
-    switch (currentStep) {
+    switch (stepNumber) {
       case 1:
         fieldsToValidate = ['eventId'];
         break;
@@ -339,29 +377,49 @@ const RegisterPage: React.FC = () => {
         fieldsToValidate = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
         break;
       case 3:
-        fieldsToValidate = ['organization', 'jobTitle', 'role'];
+        fieldsToValidate = ['organization', 'jobTitle', 'role', 'emergencyContact'];
         break;
       case 4:
-        fieldsToValidate = [];
+        fieldsToValidate = ['arrivalDate', 'departureDate'];
         if (formData.needsTransport) {
-          fieldsToValidate = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
+          fieldsToValidate.push('originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone');
         }
         break;
       case 5:
-      case 6:
-        // No required validations for documents and review
+        Object.assign(stepErrors, collectDocumentErrors());
+        break;
+      default:
         break;
     }
 
     fieldsToValidate.forEach(field => {
       const error = validateField(field, (formData as any)[field]);
       if (error) {
-        newErrors[field] = error;
+        stepErrors[field] = error;
       }
     });
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return stepErrors;
+  };
+
+  const clearStepErrorKeys = (stepNumber: number, current: FormErrors): FormErrors => {
+    const next = { ...current };
+    const stepFieldKeys: Record<number, string[]> = {
+      1: ['eventId'],
+      2: ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'],
+      3: ['organization', 'jobTitle', 'role', 'emergencyContact'],
+      4: ['arrivalDate', 'departureDate', 'originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'],
+      5: ['passportDoc', 'photoDoc', 'pressCredentialsDoc'],
+    };
+    (stepFieldKeys[stepNumber] || []).forEach(key => delete next[key]);
+    return next;
+  };
+
+  // Validate all fields on current step
+  const validateCurrentStep = (): boolean => {
+    const stepErrors = collectStepErrors(currentStep);
+    setErrors(prev => ({ ...clearStepErrorKeys(currentStep, prev), ...stepErrors }));
+    return Object.keys(stepErrors).length === 0;
   };
 
   // ... updateField, nextStep, prevStep, handleFileUpload, removeDoc, getDocByType ... Use original code
@@ -420,11 +478,18 @@ const RegisterPage: React.FC = () => {
         fieldsToTouch = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
         break;
       case 3:
-        fieldsToTouch = ['organization', 'jobTitle', 'role'];
+        fieldsToTouch = ['organization', 'jobTitle', 'role', 'emergencyContact'];
         break;
       case 4:
+        fieldsToTouch = ['arrivalDate', 'departureDate'];
         if (formData.needsTransport) {
-          fieldsToTouch = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
+          fieldsToTouch.push('originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone');
+        }
+        break;
+      case 5:
+        fieldsToTouch = ['passportDoc', 'photoDoc'];
+        if (formData.role === 'Media') {
+          fieldsToTouch.push('pressCredentialsDoc');
         }
         break;
     }
@@ -447,35 +512,64 @@ const RegisterPage: React.FC = () => {
   };
 
   // Helper to check step errors before they exist in state
-  const getStepErrors = (stepNumber: number): string[] => {
-    const stepErrors: string[] = [];
-    let fieldsToCheck: string[] = [];
+  const getStepErrors = (stepNumber: number): string[] =>
+    Object.values(collectStepErrors(stepNumber));
 
-    switch (stepNumber) {
-      case 1:
-        fieldsToCheck = ['eventId'];
-        break;
-      case 2:
-        fieldsToCheck = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
-        break;
-      case 3:
-        fieldsToCheck = ['organization', 'jobTitle', 'role'];
-        break;
-      case 4:
-        if (formData.needsTransport) {
-          fieldsToCheck = ['originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone'];
-        }
-        break;
+  const validateEntireForm = (): boolean => {
+    let mergedErrors: FormErrors = {};
+    for (let step = 1; step <= 5; step += 1) {
+      mergedErrors = { ...mergedErrors, ...collectStepErrors(step) };
+    }
+    setErrors(mergedErrors);
+
+    if (!formData.agreeTerms) {
+      toast.error('Please agree to the terms and conditions');
+      return false;
     }
 
-    fieldsToCheck.forEach(field => {
-      const error = validateField(field, (formData as any)[field]);
-      if (error) {
-        stepErrors.push(error);
+    if (Object.keys(mergedErrors).length > 0) {
+      toast.error(Object.values(mergedErrors)[0]);
+      const firstInvalidStep = [1, 2, 3, 4, 5].find(
+        step => Object.keys(collectStepErrors(step)).length > 0,
+      );
+      if (firstInvalidStep) {
+        setCurrentStep(firstInvalidStep);
+        let fieldsToTouch: string[] = [];
+        switch (firstInvalidStep) {
+          case 1:
+            fieldsToTouch = ['eventId'];
+            break;
+          case 2:
+            fieldsToTouch = ['firstName', 'lastName', 'email', 'phone', 'nationality', 'passportNumber'];
+            break;
+          case 3:
+            fieldsToTouch = ['organization', 'jobTitle', 'role', 'emergencyContact'];
+            break;
+          case 4:
+            fieldsToTouch = ['arrivalDate', 'departureDate'];
+            if (formData.needsTransport) {
+              fieldsToTouch.push('originCity', 'departureAirport', 'travelEmergencyContact', 'travelEmergencyPhone');
+            }
+            break;
+          case 5:
+            fieldsToTouch = ['passportDoc', 'photoDoc'];
+            if (formData.role === 'Media') {
+              fieldsToTouch.push('pressCredentialsDoc');
+            }
+            break;
+        }
+        setTouched(prev => {
+          const next = { ...prev };
+          fieldsToTouch.forEach(field => {
+            next[field] = true;
+          });
+          return next;
+        });
       }
-    });
+      return false;
+    }
 
-    return stepErrors;
+    return true;
   };
 
   const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, isInvitationLocked ? 2 : 1));
@@ -504,6 +598,15 @@ const RegisterPage: React.FC = () => {
         ...prev.filter(d => d.type !== type),
         { type, fileName: file.name, fileData, docId }
       ]);
+
+      setErrors(prev => {
+        const next = { ...prev };
+        if (type === 'Passport') delete next.passportDoc;
+        if (type === 'Photo') delete next.photoDoc;
+        if (type === 'Press Credentials') delete next.pressCredentialsDoc;
+        return next;
+      });
+
       toast.success(`${type} uploaded successfully`);
     };
     reader.readAsDataURL(file);
@@ -511,18 +614,18 @@ const RegisterPage: React.FC = () => {
 
   const removeDoc = (type: UploadedDoc['type']) => {
     setUploadedDocs(prev => prev.filter(d => d.type !== type));
-  };
-
-  const getDocByType = (type: UploadedDoc['type']) => {
-    return uploadedDocs.find(d => d.type === type);
+    setTouched(prev => ({ ...prev, ...(type === 'Passport' ? { passportDoc: true } : type === 'Photo' ? { photoDoc: true } : { pressCredentialsDoc: true }) }));
+    setErrors(prev => {
+      const next = { ...prev };
+      if (type === 'Passport') next.passportDoc = 'Passport copy is required';
+      if (type === 'Photo') next.photoDoc = 'Profile photo is required';
+      if (type === 'Press Credentials') next.pressCredentialsDoc = 'Press credentials are required for media participants';
+      return next;
+    });
   };
 
   const handleSubmit = async () => {
-    // Check terms agreement first
-    if (!formData.agreeTerms) {
-      toast.error('Please agree to the terms and conditions');
-      return;
-    }
+    if (!validateEntireForm()) return;
 
     setIsSubmitting(true);
 
@@ -867,7 +970,7 @@ const RegisterPage: React.FC = () => {
               )}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="emergency">Emergency Contact Number</Label>
+              <Label htmlFor="emergency">Emergency Contact Number *</Label>
               <Input
                 id="emergency"
                 value={formData.emergencyContact}
@@ -875,8 +978,13 @@ const RegisterPage: React.FC = () => {
                   const value = e.target.value.replace(/[^0-9]/g, '');
                   updateField('emergencyContact', value);
                 }}
+                onBlur={() => setTouched(prev => ({ ...prev, emergencyContact: true }))}
                 placeholder="1234567890"
+                className={cn(touched.emergencyContact && errors.emergencyContact && "border-red-500")}
               />
+              {touched.emergencyContact && errors.emergencyContact && (
+                <p className="text-sm text-red-500">{errors.emergencyContact}</p>
+              )}
             </div>
           </div>
         );
@@ -893,24 +1001,34 @@ const RegisterPage: React.FC = () => {
           <div className="space-y-4">
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="arrival">Preferred Arrival Date</Label>
+                <Label htmlFor="arrival">Preferred Arrival Date *</Label>
                 <Input
                   id="arrival"
                   type="date"
                   min={todayMinDate}
                   value={formData.arrivalDate}
                   onChange={(e) => updateField('arrivalDate', e.target.value)}
+                  onBlur={() => setTouched(prev => ({ ...prev, arrivalDate: true }))}
+                  className={cn(touched.arrivalDate && errors.arrivalDate && "border-red-500")}
                 />
+                {touched.arrivalDate && errors.arrivalDate && (
+                  <p className="text-sm text-red-500">{errors.arrivalDate}</p>
+                )}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="departure">Preferred Departure Date</Label>
+                <Label htmlFor="departure">Preferred Departure Date *</Label>
                 <Input
                   id="departure"
                   type="date"
                   min={departureMinDate}
                   value={formData.departureDate}
                   onChange={(e) => updateField('departureDate', e.target.value)}
+                  onBlur={() => setTouched(prev => ({ ...prev, departureDate: true }))}
+                  className={cn(touched.departureDate && errors.departureDate && "border-red-500")}
                 />
+                {touched.departureDate && errors.departureDate && (
+                  <p className="text-sm text-red-500">{errors.departureDate}</p>
+                )}
               </div>
             </div>
 
@@ -1122,7 +1240,7 @@ const RegisterPage: React.FC = () => {
                     <div className="flex items-center gap-3">
                       <FileText className="h-6 w-6 text-status-success" />
                       <div>
-                        <p className="font-medium">Passport Copy</p>
+                        <p className="font-medium">Passport Copy *</p>
                         <p className="text-sm text-muted-foreground">{getDocByType('Passport')!.fileName}</p>
                       </div>
                     </div>
@@ -1132,13 +1250,19 @@ const RegisterPage: React.FC = () => {
                   </div>
                 ) : (
                   <div
-                    className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                    className={cn(
+                      "border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer",
+                      touched.passportDoc && errors.passportDoc && "border-red-500 bg-red-50/50",
+                    )}
                     onClick={() => passportInputRef.current?.click()}
                   >
                     <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                    <p className="font-medium">Passport Copy</p>
+                    <p className="font-medium">Passport Copy *</p>
                     <p className="text-sm text-muted-foreground">Click to upload or drag and drop</p>
                   </div>
+                )}
+                {touched.passportDoc && errors.passportDoc && (
+                  <p className="text-sm text-red-500 mt-1">{errors.passportDoc}</p>
                 )}
               </div>
 
@@ -1158,7 +1282,7 @@ const RegisterPage: React.FC = () => {
                   <div className="border-2 rounded-lg p-4 bg-status-success-bg border-status-success/30">
                     <div className="flex items-center justify-between mb-3">
                       <div>
-                        <p className="font-medium">Profile Photo</p>
+                        <p className="font-medium">Profile Photo *</p>
                         <p className="text-sm text-muted-foreground">{getDocByType('Photo')!.fileName}</p>
                       </div>
                       <Button variant="ghost" size="sm" onClick={() => removeDoc('Photo')}>
@@ -1179,7 +1303,10 @@ const RegisterPage: React.FC = () => {
                   </div>
                 ) : (
                   <div
-                    className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                    className={cn(
+                      "border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer",
+                      touched.photoDoc && errors.photoDoc && "border-red-500 bg-red-50/50",
+                    )}
                     onClick={() => photoInputRef.current?.click()}
                   >
                     <User className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
@@ -1187,6 +1314,9 @@ const RegisterPage: React.FC = () => {
                     <p className="text-sm text-muted-foreground">This will be used on your accreditation badge</p>
                     <p className="text-xs text-muted-foreground mt-1">JPG or PNG, passport-style photo recommended</p>
                   </div>
+                )}
+                {touched.photoDoc && errors.photoDoc && (
+                  <p className="text-sm text-red-500 mt-1">{errors.photoDoc}</p>
                 )}
               </div>
 
@@ -1208,7 +1338,7 @@ const RegisterPage: React.FC = () => {
                       <div className="flex items-center gap-3">
                         <FileText className="h-6 w-6 text-status-success" />
                         <div>
-                          <p className="font-medium">Press Credentials</p>
+                          <p className="font-medium">Press Credentials *</p>
                           <p className="text-sm text-muted-foreground">{getDocByType('Press Credentials')!.fileName}</p>
                         </div>
                       </div>
@@ -1218,13 +1348,19 @@ const RegisterPage: React.FC = () => {
                     </div>
                   ) : (
                     <div
-                      className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer"
+                      className={cn(
+                        "border-2 border-dashed rounded-lg p-6 text-center hover:border-primary/50 transition-colors cursor-pointer",
+                        touched.pressCredentialsDoc && errors.pressCredentialsDoc && "border-red-500 bg-red-50/50",
+                      )}
                       onClick={() => pressInputRef.current?.click()}
                     >
                       <Upload className="h-8 w-8 mx-auto text-muted-foreground mb-2" />
-                      <p className="font-medium">Press Credentials</p>
+                      <p className="font-medium">Press Credentials *</p>
                       <p className="text-sm text-muted-foreground">Click to upload or drag and drop</p>
                     </div>
+                  )}
+                  {touched.pressCredentialsDoc && errors.pressCredentialsDoc && (
+                    <p className="text-sm text-red-500 mt-1">{errors.pressCredentialsDoc}</p>
                   )}
                 </div>
               )}

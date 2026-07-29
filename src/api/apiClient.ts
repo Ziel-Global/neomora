@@ -41,17 +41,47 @@ apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      // Clear stored auth data on 401
-      localStorage.removeItem('ems_token');
-      localStorage.removeItem('ems_user');
-      localStorage.removeItem('ems_manager_token');
-      localStorage.removeItem('ems_manager_session');
-      localStorage.removeItem('ems_participant_token');
-      localStorage.removeItem('ems_participant_session');
+      const path = window.location.pathname;
+      const isManager = path.startsWith('/manager');
+      const isParticipant = path.startsWith('/portal') || path.startsWith('/participant') || path.startsWith('/register');
+      const isSubadmin = path.startsWith('/subadmin');
+      const isAdmin = path.startsWith('/admin') || path.startsWith('/login/admin');
 
-      // Redirect to home if not already on a login page
-      if (!window.location.pathname.startsWith('/login')) {
-        window.location.href = '/';
+      if (isManager) {
+        localStorage.removeItem('ems_manager_token');
+        localStorage.removeItem('ems_manager_session');
+        if (!path.startsWith('/login')) {
+          window.location.href = '/login/manager';
+        }
+      } else if (isParticipant) {
+        localStorage.removeItem('ems_participant_token');
+        localStorage.removeItem('ems_participant_session');
+        if (!path.startsWith('/login')) {
+          window.location.href = '/login/participant';
+        }
+      } else if (isSubadmin) {
+        localStorage.removeItem('ems_token');
+        localStorage.removeItem('ems_user');
+        if (!path.startsWith('/login')) {
+          window.location.href = '/login/staff';
+        }
+      } else if (isAdmin) {
+        localStorage.removeItem('ems_token');
+        localStorage.removeItem('ems_user');
+        if (!path.startsWith('/login')) {
+          window.location.href = '/login/admin';
+        }
+      } else {
+        localStorage.removeItem('ems_token');
+        localStorage.removeItem('ems_user');
+        localStorage.removeItem('ems_manager_token');
+        localStorage.removeItem('ems_manager_session');
+        localStorage.removeItem('ems_participant_token');
+        localStorage.removeItem('ems_participant_session');
+
+        if (!path.startsWith('/login')) {
+          window.location.href = '/';
+        }
       }
     }
     return Promise.reject(error);

@@ -41,7 +41,14 @@ export const teamManagerLogin = async (
   password: string
 ): Promise<LoginResponse> => {
   const { data } = await apiClient.post('/auth/team-manager/login', { email, password });
-  return data;
+  const token = data?.token || data?.accessToken || data?.access_token || data?.data?.token;
+  const user = data?.user || data?.profile || data?.data?.user || data;
+
+  return {
+    ...data,
+    token,
+    user,
+  };
 };
 
 export const participantLogin = async (

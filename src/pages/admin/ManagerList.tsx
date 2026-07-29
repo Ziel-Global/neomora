@@ -16,6 +16,11 @@ import {
   getManagerDisplayName,
   EMSManager,
 } from '@/api/managerApi';
+import {
+  INTERNATIONAL_PHONE_PLACEHOLDER,
+  sanitizePhoneInput,
+  validateInternationalPhone,
+} from '@/lib/phoneValidation';
 
 const RequiredMark = () => <span className="text-destructive">*</span>;
 
@@ -25,6 +30,7 @@ const ManagerList: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [phoneError, setPhoneError] = useState('');
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -67,6 +73,7 @@ const ManagerList: React.FC = () => {
       organization: '',
       federation: '',
     });
+    setPhoneError('');
   };
 
   const handleCreateManager = async () => {
@@ -83,6 +90,14 @@ const ManagerList: React.FC = () => {
       toast.error('All fields are required');
       return;
     }
+
+    const phoneValidationError = validateInternationalPhone(phone);
+    if (phoneValidationError) {
+      setPhoneError(phoneValidationError);
+      toast.error(phoneValidationError);
+      return;
+    }
+    setPhoneError('');
 
     if (!form.password) {
       toast.error('Password is required');
@@ -254,6 +269,7 @@ const ManagerList: React.FC = () => {
               <div className="space-y-2">
                 <Label>First Name <RequiredMark /></Label>
                 <Input
+                  placeholder="e.g. Ahmed"
                   value={form.firstName}
                   onChange={(e) => setForm(prev => ({ ...prev, firstName: e.target.value }))}
                 />
@@ -261,6 +277,7 @@ const ManagerList: React.FC = () => {
               <div className="space-y-2">
                 <Label>Last Name <RequiredMark /></Label>
                 <Input
+                  placeholder="e.g. Khan"
                   value={form.lastName}
                   onChange={(e) => setForm(prev => ({ ...prev, lastName: e.target.value }))}
                 />
@@ -270,6 +287,7 @@ const ManagerList: React.FC = () => {
               <Label>Email <RequiredMark /></Label>
               <Input
                 type="email"
+                placeholder="e.g. manager@example.com"
                 value={form.email}
                 onChange={(e) => setForm(prev => ({ ...prev, email: e.target.value }))}
               />
@@ -279,6 +297,7 @@ const ManagerList: React.FC = () => {
                 <Label>Password <RequiredMark /></Label>
                 <Input
                   type="password"
+                  placeholder="Enter password"
                   value={form.password}
                   onChange={(e) => setForm(prev => ({ ...prev, password: e.target.value }))}
                   autoComplete="new-password"
@@ -288,6 +307,7 @@ const ManagerList: React.FC = () => {
                 <Label>Confirm Password <RequiredMark /></Label>
                 <Input
                   type="password"
+                  placeholder="Re-enter password"
                   value={form.confirmPassword}
                   onChange={(e) => setForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
                   autoComplete="new-password"
@@ -297,14 +317,28 @@ const ManagerList: React.FC = () => {
             <div className="space-y-2">
               <Label>Phone <RequiredMark /></Label>
               <Input
+                type="tel"
+                placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
                 value={form.phone}
-                onChange={(e) => setForm(prev => ({ ...prev, phone: e.target.value }))}
+                onChange={(e) => {
+                  const nextPhone = sanitizePhoneInput(e.target.value);
+                  setForm(prev => ({ ...prev, phone: nextPhone }));
+                  if (phoneError) {
+                    setPhoneError(validateInternationalPhone(nextPhone) || '');
+                  }
+                }}
+                onBlur={() => setPhoneError(validateInternationalPhone(form.phone) || '')}
+                className={phoneError ? 'border-red-500' : undefined}
               />
+              {phoneError && (
+                <p className="text-sm text-red-500">{phoneError}</p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Country <RequiredMark /></Label>
                 <Input
+                  placeholder="e.g. Pakistan"
                   value={form.country}
                   onChange={(e) => setForm(prev => ({ ...prev, country: e.target.value }))}
                 />
@@ -312,6 +346,7 @@ const ManagerList: React.FC = () => {
               <div className="space-y-2">
                 <Label>Organization <RequiredMark /></Label>
                 <Input
+                  placeholder="e.g. National Sports Council"
                   value={form.organization}
                   onChange={(e) => setForm(prev => ({ ...prev, organization: e.target.value }))}
                 />
