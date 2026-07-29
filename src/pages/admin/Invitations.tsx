@@ -19,7 +19,7 @@ import {
   InvitationStatus,
 } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog, X } from 'lucide-react';
+import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -41,7 +41,12 @@ import { getEvents } from '@/api/eventApi';
 import { getParticipants } from '@/api/participantApi';
 import { getAllDelegations } from '@/api/delegationApi';
 import { extractInvitationTemplatesFromCampaigns } from '@/api/invitationTemplateApi';
-import apiClient from '@/api/apiClient';
+import {
+  getAllManagers,
+  createTeamManager,
+  getManagerDisplayName,
+  EMSManager,
+} from '@/api/managerApi';
 import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
@@ -67,51 +72,9 @@ const getBackendTemplateId = (template: EMSInvitationTemplate | undefined): stri
 
 const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge', 'Media', 'Fan'];
 
-interface InvitationManager {
-  id: string;
-  firstName?: string;
-  lastName?: string;
-  name?: string;
-  email: string;
-  country?: string;
-  organization?: string;
-}
+interface InvitationManager extends EMSManager {}
 
-// UI-only manager list until backend manager API is available.
-const MOCK_MANAGERS: InvitationManager[] = [
-  {
-    id: 'm-1',
-    firstName: 'Ahmed',
-    lastName: 'Hassan',
-    email: 'ahmed.hassan@example.com',
-    country: 'Saudi Arabia',
-    organization: 'Saudi Sports Federation',
-  },
-  {
-    id: 'm-2',
-    firstName: 'John',
-    lastName: 'Doe',
-    email: 'john.doe@example.com',
-    country: 'USA',
-    organization: 'USA Athletics',
-  },
-  {
-    id: 'm-3',
-    name: 'Ali Raza',
-    email: 'ali.raza@example.com',
-    country: 'UAE',
-    organization: 'UAE Olympic Committee',
-  },
-];
-
-const getManagerDisplayName = (manager: Pick<InvitationManager, 'firstName' | 'lastName' | 'name' | 'email'>): string => {
-  if (manager.firstName || manager.lastName) {
-    return `${manager.firstName || ''} ${manager.lastName || ''}`.trim();
-  }
-  if (manager.name) return manager.name;
-  return manager.email || 'Unknown Manager';
-};
-
+const RequiredMark = () => <span className="text-destructive">*</span>;
 
 const InvitationsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -139,8 +102,6 @@ const InvitationsPage: React.FC = () => {
   const [selectedDelegations, setSelectedDelegations] = useState<string[]>([]);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
   const [selectedManagerIds, setSelectedManagerIds] = useState<string[]>([]);
-  const [invitedManagerEmails, setInvitedManagerEmails] = useState<string[]>([]);
-  const [newManagerEmailInput, setNewManagerEmailInput] = useState('');
   const [audienceMode, setAudienceMode] = useState<'role' | 'individual' | 'delegation' | 'manager'>('role');
   const [participantSearchTerm, setParticipantSearchTerm] = useState('');
   const [managerSearchTerm, setManagerSearchTerm] = useState('');
@@ -150,6 +111,19 @@ const InvitationsPage: React.FC = () => {
   const [scheduledAt, setScheduledAt] = useState('');
   const [scheduleDialogOpen, setScheduleDialogOpen] = useState(false);
   const [scheduleCampaignTargetId, setScheduleCampaignTargetId] = useState<string | null>(null);
+  const [isCreateManagerOpen, setIsCreateManagerOpen] = useState(false);
+  const [isCreatingManager, setIsCreatingManager] = useState(false);
+  const [newManagerForm, setNewManagerForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+    phone: '',
+    country: '',
+    organization: '',
+    federation: '',
+  });
 
   type CampaignDeliveryAction = 'draft' | 'send' | 'schedule';
 
@@ -183,36 +157,12 @@ const InvitationsPage: React.FC = () => {
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
-      const fetchManagers = async (): Promise<InvitationManager[]> => {
-        const endpoints = ['/admin/managers', '/team-managers'];
-        for (const endpoint of endpoints) {
-          try {
-            const { data } = await apiClient.get(endpoint);
-            const list = Array.isArray(data) ? data : (data?.data || data?.managers || data?.users || []);
-            if (Array.isArray(list) && list.length > 0) {
-              return list.map((manager: any) => ({
-                id: String(manager.id || manager._id || ''),
-                firstName: manager.firstName || manager.first_name,
-                lastName: manager.lastName || manager.last_name,
-                name: manager.name,
-                email: manager.email || '',
-                country: manager.country,
-                organization: manager.organization || manager.federation,
-              })).filter((manager: InvitationManager) => Boolean(manager.id || manager.email));
-            }
-          } catch {
-            // try next endpoint
-          }
-        }
-        return [];
-      };
-
       const [campaignData, eventData, participantData, delegationData, managerData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
         getParticipants().catch(() => []),
         getAllDelegations().catch(() => []),
-        fetchManagers().catch(() => []),
+        getAllManagers().catch(() => []),
       ]);
       const campaigns = Array.isArray(campaignData) ? campaignData : [];
       const templateData = extractInvitationTemplatesFromCampaigns(campaigns);
@@ -285,7 +235,7 @@ const InvitationsPage: React.FC = () => {
       .filter(Boolean) as InvitationManager[];
 
     if (fromDelegations.length > 0) return fromDelegations;
-    return MOCK_MANAGERS;
+    return [];
   }, [apiManagers, apiDelegations]);
 
   const templates = useMemo(() => {
@@ -486,19 +436,6 @@ const InvitationsPage: React.FC = () => {
       });
     }
 
-    for (const email of invitedManagerEmails) {
-      const normalized = email.toLowerCase().trim();
-      if (!normalized || seenKeys.has(normalized)) continue;
-
-      seenKeys.add(normalized);
-      targets.push({
-        managerId: `email:${normalized}`,
-        managerEmail: normalized,
-        delegationId: `email:${normalized}`,
-        delegationName: 'Manager',
-      });
-    }
-
     return targets;
   };
 
@@ -671,35 +608,108 @@ const InvitationsPage: React.FC = () => {
     );
   };
 
-  const addManagerEmailInvite = () => {
-    const email = newManagerEmailInput.trim().toLowerCase();
-    if (!email) return;
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      toast({ title: 'Invalid email', description: 'Please enter a valid manager email address', variant: 'destructive' });
-      return;
-    }
-
-    const existingManager = managers.find(m => m.email.toLowerCase() === email);
-    if (existingManager) {
-      if (!selectedManagerIds.includes(existingManager.id)) {
-        setSelectedManagerIds(prev => [...prev, existingManager.id]);
-      }
-      setNewManagerEmailInput('');
-      return;
-    }
-
-    if (invitedManagerEmails.includes(email)) {
-      toast({ title: 'Already added', description: 'This email is already in your manager invite list' });
-      return;
-    }
-
-    setInvitedManagerEmails(prev => [...prev, email]);
-    setNewManagerEmailInput('');
+  const resetNewManagerForm = () => {
+    setNewManagerForm({
+      firstName: '',
+      lastName: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      phone: '',
+      country: '',
+      organization: '',
+      federation: '',
+    });
   };
 
-  const removeManagerEmailInvite = (email: string) => {
-    setInvitedManagerEmails(prev => prev.filter(item => item !== email));
+  const handleCreateManager = async () => {
+    const firstName = newManagerForm.firstName.trim();
+    const lastName = newManagerForm.lastName.trim();
+    const email = newManagerForm.email.trim().toLowerCase();
+
+    const phone = newManagerForm.phone.trim();
+    const country = newManagerForm.country.trim();
+    const organization = newManagerForm.organization.trim();
+    const federation = newManagerForm.federation.trim();
+
+    if (!firstName || !lastName || !email || !phone || !country || !organization || !federation) {
+      toast({
+        title: 'Missing fields',
+        description: 'All fields are required.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast({
+        title: 'Invalid email',
+        description: 'Please enter a valid email address.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (!newManagerForm.password) {
+      toast({
+        title: 'Password required',
+        description: 'Please set a password for the manager account.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (newManagerForm.password !== newManagerForm.confirmPassword) {
+      toast({
+        title: 'Passwords do not match',
+        description: 'Password and confirm password must be the same.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setIsCreatingManager(true);
+    try {
+      const created = await createTeamManager({
+        firstName,
+        lastName,
+        email,
+        password: newManagerForm.password,
+        confirmPassword: newManagerForm.confirmPassword,
+        phone,
+        country,
+        organization,
+        federation,
+      });
+
+      setApiManagers(prev => {
+        const map = new Map(prev.map(manager => [manager.email.toLowerCase(), manager]));
+        map.set(created.email.toLowerCase(), created);
+        return Array.from(map.values());
+      });
+
+      setSelectedManagerIds(prev =>
+        prev.includes(created.id) ? prev : [...prev, created.id],
+      );
+
+      toast({
+        title: 'Manager created',
+        description: `${getManagerDisplayName(created)} can log in at /login/manager with their email and password.`,
+      });
+
+      resetNewManagerForm();
+      setIsCreateManagerOpen(false);
+    } catch (error: any) {
+      console.error('Failed to create manager:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Failed to create manager';
+      toast({
+        title: 'Error',
+        description: Array.isArray(msg) ? msg.join(', ') : String(msg),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsCreatingManager(false);
+    }
   };
 
   const resetWizard = () => {
@@ -711,8 +721,6 @@ const InvitationsPage: React.FC = () => {
     setSelectedDelegations([]);
     setSelectedParticipantIds([]);
     setSelectedManagerIds([]);
-    setInvitedManagerEmails([]);
-    setNewManagerEmailInput('');
     setAudienceMode('role');
     setParticipantSearchTerm('');
     setManagerSearchTerm('');
@@ -1326,7 +1334,6 @@ const InvitationsPage: React.FC = () => {
                   setSelectedDelegations([]);
                   setSelectedParticipantIds([]);
                   setSelectedManagerIds([]);
-                  setInvitedManagerEmails([]);
                 }}
               >
                 Filter by Role
@@ -1339,7 +1346,6 @@ const InvitationsPage: React.FC = () => {
                   setSelectedRoles([]);
                   setSelectedParticipantIds([]);
                   setSelectedManagerIds([]);
-                  setInvitedManagerEmails([]);
                 }}
               >
                 {t('invitations.filter_by_delegation')}
@@ -1352,7 +1358,6 @@ const InvitationsPage: React.FC = () => {
                   setSelectedRoles([]);
                   setSelectedDelegations([]);
                   setSelectedManagerIds([]);
-                  setInvitedManagerEmails([]);
                 }}
               >
                 {t('invitations.select_individuals')}
@@ -1534,7 +1539,7 @@ const InvitationsPage: React.FC = () => {
                 <div className="max-h-52 overflow-y-auto border rounded-lg">
                   {filteredManagersForSelection.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-4">
-                      No managers found. Invite a new manager by email below.
+                      No managers found. Create a new manager below.
                     </p>
                   ) : (
                     filteredManagersForSelection.map(manager => (
@@ -1577,43 +1582,18 @@ const InvitationsPage: React.FC = () => {
                 )}
 
                 <div className="border-t pt-4 space-y-3">
-                  <Label>Invite a new manager by email</Label>
-                  <p className="text-xs text-muted-foreground">
-                    Enter an email address to send an invitation to a manager who is not yet in the system.
-                  </p>
-                  <div className="flex gap-2">
-                    <Input
-                      type="email"
-                      placeholder="manager@example.com"
-                      value={newManagerEmailInput}
-                      onChange={(e) => setNewManagerEmailInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addManagerEmailInvite();
-                        }
-                      }}
-                    />
-                    <Button type="button" variant="outline" onClick={addManagerEmailInvite}>
-                      Add Email
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <Label>Create new manager</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Register a team manager, then select them for this campaign.
+                      </p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setIsCreateManagerOpen(true)}>
+                      <UserCog className="h-4 w-4 mr-2" />
+                      New Manager
                     </Button>
                   </div>
-                  {invitedManagerEmails.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {invitedManagerEmails.map(email => (
-                        <Badge key={email} variant="secondary" className="gap-1 pr-1">
-                          {email}
-                          <button
-                            type="button"
-                            className="ml-1 rounded-full hover:bg-muted p-0.5"
-                            onClick={() => removeManagerEmailInvite(email)}
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
                 </div>
               </div>
             )}
@@ -2289,6 +2269,115 @@ const InvitationsPage: React.FC = () => {
       </Tabs>
         </>
       )}
+
+      <Dialog open={isCreateManagerOpen} onOpenChange={(open) => {
+        setIsCreateManagerOpen(open);
+        if (!open) resetNewManagerForm();
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Team Manager</DialogTitle>
+            <DialogDescription>
+              Add a new team manager to the system. They will be selected for this campaign automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="manager-first-name">First Name <RequiredMark /></Label>
+                <Input
+                  id="manager-first-name"
+                  value={newManagerForm.firstName}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, firstName: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manager-last-name">Last Name <RequiredMark /></Label>
+                <Input
+                  id="manager-last-name"
+                  value={newManagerForm.lastName}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, lastName: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="manager-email">Email <RequiredMark /></Label>
+              <Input
+                id="manager-email"
+                type="email"
+                value={newManagerForm.email}
+                onChange={(e) => setNewManagerForm(prev => ({ ...prev, email: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="manager-password">Password <RequiredMark /></Label>
+                <Input
+                  id="manager-password"
+                  type="password"
+                  value={newManagerForm.password}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, password: e.target.value }))}
+                  autoComplete="new-password"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manager-confirm-password">Confirm Password <RequiredMark /></Label>
+                <Input
+                  id="manager-confirm-password"
+                  type="password"
+                  value={newManagerForm.confirmPassword}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                  autoComplete="new-password"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="manager-phone">Phone <RequiredMark /></Label>
+              <Input
+                id="manager-phone"
+                value={newManagerForm.phone}
+                onChange={(e) => setNewManagerForm(prev => ({ ...prev, phone: e.target.value }))}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="manager-country">Country <RequiredMark /></Label>
+                <Input
+                  id="manager-country"
+                  value={newManagerForm.country}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, country: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="manager-organization">Organization <RequiredMark /></Label>
+                <Input
+                  id="manager-organization"
+                  value={newManagerForm.organization}
+                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, organization: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="manager-federation">Sport Federation <RequiredMark /></Label>
+              <Input
+                id="manager-federation"
+                placeholder="e.g. Saudi Sports Federation"
+                value={newManagerForm.federation}
+                onChange={(e) => setNewManagerForm(prev => ({ ...prev, federation: e.target.value }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateManagerOpen(false)} disabled={isCreatingManager}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateManager} disabled={isCreatingManager}>
+              {isCreatingManager ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCog className="h-4 w-4 mr-2" />}
+              Create Manager
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={scheduleDialogOpen} onOpenChange={(open) => {
         setScheduleDialogOpen(open);
