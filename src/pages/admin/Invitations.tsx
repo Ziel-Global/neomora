@@ -1506,6 +1506,7 @@ const InvitationsPage: React.FC = () => {
                         >
                           <Checkbox
                             checked={selectedParticipantIds.includes(p.id)}
+                            onClick={(e) => e.stopPropagation()}
                             onCheckedChange={() => toggleParticipant(p.id)}
                           />
                           <div className="flex-1 min-w-0">
@@ -1570,6 +1571,7 @@ const InvitationsPage: React.FC = () => {
                       >
                         <Checkbox
                           checked={selectedManagerIds.includes(manager.id)}
+                          onClick={(e) => e.stopPropagation()}
                           onCheckedChange={() => toggleManager(manager.id)}
                         />
                         <div className="flex-1 min-w-0">
