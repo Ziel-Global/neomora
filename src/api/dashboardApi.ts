@@ -562,17 +562,88 @@ const normalizeManagerTeam = (raw: any): ManagerDashboardTeam | null => {
 };
 
 const normalizeManagerEvent = (raw: any): ManagerDashboardEvent | null => {
-  const id = raw?.id || raw?._id;
+  const id = raw?.id || raw?._id || raw?.eventId || raw?.event_id;
   if (!id) return null;
 
   return {
     id: String(id),
-    name: String(raw?.name || 'Event'),
+    name: String(raw?.name || raw?.title || raw?.eventName || raw?.event_name || 'Event'),
     city: raw?.city ? String(raw.city) : undefined,
     startDate: raw?.startDate || raw?.start_date ? String(raw.startDate || raw.start_date) : undefined,
     endDate: raw?.endDate || raw?.end_date ? String(raw.endDate || raw.end_date) : undefined,
     status: raw?.status ? String(raw.status) : undefined,
   };
+};
+
+const isManagerAvailableEvent = (raw: any): boolean => {
+  const status = String(raw?.status || '').trim().toLowerCase();
+  if (!status) return true;
+  return ['published', 'ongoing', 'open', 'active'].includes(status);
+};
+
+const extractManagerEventsFromDashboard = (
+  raw: Record<string, unknown>,
+  source: Record<string, unknown>,
+): any[] => {
+  const eventSection = section(raw, 'events', 'availableEvents', 'available_events', 'openEvents', 'open_events');
+  const candidates = [
+    raw.events,
+    source.events,
+    raw.availableEvents,
+    source.availableEvents,
+    raw.available_events,
+    source.available_events,
+    raw.openEvents,
+    raw.open_events,
+    raw.publishedEvents,
+    raw.published_events,
+    raw.registrationEvents,
+    raw.registration_events,
+    eventSection.items,
+    eventSection.data,
+    eventSection.list,
+  ];
+
+  for (const candidate of candidates) {
+    const list = unwrapList(candidate);
+    if (list.length > 0) return list;
+  }
+
+  return [];
+};
+
+const dedupeManagerEvents = (events: ManagerDashboardEvent[]): ManagerDashboardEvent[] => {
+  const seen = new Set<string>();
+  return events.filter(event => {
+    if (!event.id || seen.has(event.id)) return false;
+    seen.add(event.id);
+    return true;
+  });
+};
+
+const fetchFallbackManagerEvents = async (): Promise<ManagerDashboardEvent[]> => {
+  const endpoints = ['/events', '/me/events', '/manager/events'];
+  for (const endpoint of endpoints) {
+    try {
+      const { data } = await apiClient.get(endpoint);
+      const list = unwrapList(data);
+      if (list.length === 0) continue;
+
+      const normalized = list
+        .filter(isManagerAvailableEvent)
+        .map(normalizeManagerEvent)
+        .filter(Boolean) as ManagerDashboardEvent[];
+
+      if (normalized.length > 0) {
+        return dedupeManagerEvents(normalized);
+      }
+    } catch (err: any) {
+      if (err?.response?.status !== 404 && err?.response?.status !== 403) {
+        console.warn(`[dashboardApi] ${endpoint} failed:`, err?.message);
+      }
+    }
+  }
+  return [];
 };
 
 const normalizeManagerDelegation = (raw: any): ManagerDashboardDelegation | null => {
@@ -604,9 +675,11 @@ export const normalizeManagerDashboard = (data: unknown): ManagerDashboardData =
     .map(normalizeManagerDelegation)
     .filter(Boolean) as ManagerDashboardDelegation[];
 
-  const events = unwrapList(raw.events ?? source.events ?? raw.availableEvents ?? source.available_events)
-    .map(normalizeManagerEvent)
-    .filter(Boolean) as ManagerDashboardEvent[];
+  const events = dedupeManagerEvents(
+    extractManagerEventsFromDashboard(raw, source)
+      .map(normalizeManagerEvent)
+      .filter(Boolean) as ManagerDashboardEvent[],
+  );
 
   const pendingApprovalFromTeams = teams.filter(team =>
     ['Submitted', 'Under Review', 'Pending', 'Pending Approval'].includes(team.status),
@@ -687,5 +760,11 @@ export const normalizeManagerDashboard = (data: unknown): ManagerDashboardData =
 
 export const getManagerDashboard = async (): Promise<ManagerDashboardData> => {
   const { data } = await apiClient.get('/me/dashboard');
-  return normalizeManagerDashboard(data);
+  const dashboard = normalizeManagerDashboard(data);
+
+  if (dashboard.events.length === 0) {
+    dashboard.events = await fetchFallbackManagerEvents();
+  }
+
+  return dashboard;
 };
