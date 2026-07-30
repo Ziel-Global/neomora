@@ -52,6 +52,10 @@ import {
   sanitizePhoneInput,
   validateInternationalPhone,
 } from '@/lib/phoneValidation';
+import {
+  getInvitationsByCampaign,
+  Invitation as ApiInvitation,
+} from '@/api/invitationApi';
 import { Loader2 } from 'lucide-react';
 
 // Check if template is VIP based on name/subject
@@ -80,6 +84,132 @@ const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge',
 interface InvitationManager extends EMSManager {}
 
 const RequiredMark = () => <span className="text-destructive">*</span>;
+
+const campaignInvitationKey = (inv: Pick<EMSInvitation, 'id' | 'participantId' | 'managerId'>) => {
+  if (inv.participantId) return `p:${inv.participantId}`;
+  if (inv.managerId) return `m:${inv.managerId}`;
+  return `i:${inv.id}`;
+};
+
+const mapApiInvitationToEms = (inv: ApiInvitation, campaignId: string): EMSInvitation => ({
+  id: inv.id,
+  participantId: inv.participantId || inv.participant_id || '',
+  participantEmail: inv.participantEmail || inv.participant_email || '',
+  managerId: inv.managerId || inv.manager_id || '',
+  managerEmail: inv.managerEmail || inv.manager_email || '',
+  delegationId: inv.delegationId || inv.delegation_id || '',
+  recipientType: inv.recipientType || inv.recipient_type || (inv.managerId || inv.manager_id ? 'manager' : 'participant'),
+  eventId: inv.eventId || inv.event_id || inv.event?.id || '',
+  status: (inv.status || inv.rsvpResponse || 'Pending') as InvitationStatus,
+  rsvpDeadline: inv.rsvpDeadline || inv.rsvp_deadline || '',
+  token: inv.token || '',
+  campaignId: inv.campaignId || inv.campaign_id || campaignId,
+  templateId: inv.templateId || inv.template_id || '',
+  sentAt: inv.sentAt || inv.sent_at || null,
+  deliveredAt: inv.deliveredAt || inv.delivered_at || null,
+  openedAt: inv.openedAt || inv.opened_at || null,
+  respondedAt: inv.respondedAt || inv.responded_at || null,
+  guestCount: 0,
+  notes: inv.notes || '',
+  createdAt: inv.createdAt || inv.created_at || new Date().toISOString(),
+  updatedAt: inv.updatedAt || inv.updated_at || new Date().toISOString(),
+});
+
+const buildAudienceFallbackInvitations = (
+  campaign: campaignApi.Campaign | EMSCampaign,
+  participantList: EMSParticipant[],
+  managerList: InvitationManager[],
+): EMSInvitation[] => {
+  const campaignRecord = campaign as campaignApi.Campaign & EMSCampaign;
+  const audienceIds = [
+    ...(Array.isArray(campaignRecord.audienceIds) ? campaignRecord.audienceIds : []),
+    ...(Array.isArray(campaignRecord.targetParticipantIds) ? campaignRecord.targetParticipantIds : []),
+  ];
+  const managerIds = Array.isArray(campaignRecord.targetManagerIds) ? campaignRecord.targetManagerIds : [];
+  const rows: EMSInvitation[] = [];
+
+  for (const participantId of audienceIds.map(String)) {
+    const participant = participantList.find(item => item.id === participantId);
+    if (!participant) continue;
+
+    rows.push({
+      id: `audience-participant-${participantId}`,
+      participantId,
+      participantEmail: participant.email,
+      eventId: campaignRecord.eventId || '',
+      campaignId: campaignRecord.id,
+      templateId: campaignRecord.templateId || '',
+      token: '',
+      status: 'Pending',
+      rsvpDeadline: campaignRecord.rsvpDeadline || '',
+      sentAt: null,
+      deliveredAt: null,
+      openedAt: null,
+      respondedAt: null,
+      guestCount: 0,
+      notes: '',
+      createdAt: campaignRecord.createdAt || new Date().toISOString(),
+      updatedAt: campaignRecord.updatedAt || new Date().toISOString(),
+    });
+  }
+
+  for (const managerId of managerIds.map(String)) {
+    const manager = managerList.find(item => item.id === managerId);
+    rows.push({
+      id: `audience-manager-${managerId}`,
+      participantId: '',
+      managerId,
+      managerEmail: manager?.email || '',
+      recipientType: 'manager',
+      eventId: campaignRecord.eventId || '',
+      campaignId: campaignRecord.id,
+      templateId: campaignRecord.templateId || '',
+      token: '',
+      status: 'Pending',
+      rsvpDeadline: campaignRecord.rsvpDeadline || '',
+      sentAt: null,
+      deliveredAt: null,
+      openedAt: null,
+      respondedAt: null,
+      guestCount: 0,
+      notes: '',
+      createdAt: campaignRecord.createdAt || new Date().toISOString(),
+      updatedAt: campaignRecord.updatedAt || new Date().toISOString(),
+    });
+  }
+
+  return rows;
+};
+
+const mergeCampaignDetailInvitations = (
+  campaign: campaignApi.Campaign | EMSCampaign,
+  apiInvitations: ApiInvitation[],
+  localInvitations: EMSInvitation[],
+  participantList: EMSParticipant[],
+  managerList: InvitationManager[],
+): EMSInvitation[] => {
+  const merged = new Map<string, EMSInvitation>();
+
+  for (const invitation of apiInvitations) {
+    const mapped = mapApiInvitationToEms(invitation, campaign.id);
+    merged.set(campaignInvitationKey(mapped), mapped);
+  }
+
+  for (const invitation of localInvitations) {
+    const key = campaignInvitationKey(invitation);
+    const existing = merged.get(key);
+    merged.set(key, existing ? { ...existing, ...invitation, id: existing.id } : invitation);
+  }
+
+  for (const invitation of buildAudienceFallbackInvitations(campaign, participantList, managerList)) {
+    const key = campaignInvitationKey(invitation);
+    if (!merged.has(key)) {
+      merged.set(key, invitation);
+    }
+  }
+
+  return Array.from(merged.values());
+};
 
 const InvitationsPage: React.FC = () => {
   const { t } = useTranslation();
@@ -136,6 +266,8 @@ const InvitationsPage: React.FC = () => {
   // View states
   const [selectedCampaign, setSelectedCampaign] = useState<EMSCampaign | null>(null);
   const [viewCampaignOpen, setViewCampaignOpen] = useState(false);
+  const [campaignDetailInvitations, setCampaignDetailInvitations] = useState<EMSInvitation[]>([]);
+  const [isCampaignDetailLoading, setIsCampaignDetailLoading] = useState(false);
 
   // Template preview state
   const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
@@ -1232,16 +1364,48 @@ const InvitationsPage: React.FC = () => {
 
   const handleViewCampaign = async (campaign: EMSCampaign) => {
     setIsActionLoading(true);
+    setIsCampaignDetailLoading(true);
+    setViewCampaignOpen(true);
+
     try {
       const details = await campaignApi.getCampaignById(campaign.id);
-      setSelectedCampaign(details as any as EMSCampaign);
-      setViewCampaignOpen(true);
+      const resolvedCampaign = details as unknown as EMSCampaign;
+      setSelectedCampaign(resolvedCampaign);
+
+      const apiInvitations = await getInvitationsByCampaign(campaign.id).catch(() => [] as ApiInvitation[]);
+      const localInvitations = invitationStore.getByCampaign(campaign.id);
+      setCampaignDetailInvitations(
+        mergeCampaignDetailInvitations(
+          resolvedCampaign,
+          apiInvitations,
+          localInvitations,
+          participants,
+          managers,
+        ),
+      );
     } catch (error) {
       console.error('Failed to fetch campaign details:', error);
       setSelectedCampaign(campaign);
-      setViewCampaignOpen(true);
+      const localInvitations = invitationStore.getByCampaign(campaign.id);
+      setCampaignDetailInvitations(
+        mergeCampaignDetailInvitations(campaign, [], localInvitations, participants, managers),
+      );
     } finally {
       setIsActionLoading(false);
+      setIsCampaignDetailLoading(false);
+    }
+  };
+
+  const refreshCampaignDetailInvitations = async (campaign: EMSCampaign) => {
+    setIsCampaignDetailLoading(true);
+    try {
+      const apiInvitations = await getInvitationsByCampaign(campaign.id).catch(() => [] as ApiInvitation[]);
+      const localInvitations = invitationStore.getByCampaign(campaign.id);
+      setCampaignDetailInvitations(
+        mergeCampaignDetailInvitations(campaign, apiInvitations, localInvitations, participants, managers),
+      );
+    } finally {
+      setIsCampaignDetailLoading(false);
     }
   };
 
@@ -1819,12 +1983,21 @@ const InvitationsPage: React.FC = () => {
   const CampaignDetailDialog = () => {
     if (!selectedCampaign) return null;
 
-    const campInvitations = invitationStore.getByCampaign(selectedCampaign.id);
+    const campInvitations = campaignDetailInvitations;
     const eventName = (selectedCampaign as any)?.event?.name || events.find(e => e.id === selectedCampaign.eventId)?.name;
     const campaignStats = getCampaignStats(selectedCampaign);
 
     return (
-      <Dialog open={viewCampaignOpen} onOpenChange={setViewCampaignOpen}>
+      <Dialog
+        open={viewCampaignOpen}
+        onOpenChange={(open) => {
+          setViewCampaignOpen(open);
+          if (!open) {
+            setSelectedCampaign(null);
+            setCampaignDetailInvitations([]);
+          }
+        }}
+      >
         <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedCampaign.name}</DialogTitle>
@@ -1889,9 +2062,11 @@ const InvitationsPage: React.FC = () => {
                 </Button>
                 <Button
                   disabled={isActionLoading}
-                  onClick={() => {
-                    handleSendCampaign(selectedCampaign.id);
-                    setSelectedCampaign(campaignStore.getById(selectedCampaign.id) || null);
+                  onClick={async () => {
+                    await handleSendCampaign(selectedCampaign.id);
+                    const refreshed = campaignStore.getById(selectedCampaign.id) || selectedCampaign;
+                    setSelectedCampaign(refreshed);
+                    await refreshCampaignDetailInvitations(refreshed);
                   }}
                 >
                   <Send className="h-4 w-4 mr-2" />
@@ -1936,8 +2111,20 @@ const InvitationsPage: React.FC = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {campInvitations.map((inv) => {
-                return (
+              {isCampaignDetailLoading ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center">
+                    <Loader2 className="h-6 w-6 animate-spin text-primary mx-auto" />
+                  </TableCell>
+                </TableRow>
+              ) : campInvitations.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    {t('invitations.no_invitations_yet', { defaultValue: 'No participants found for this campaign.' })}
+                  </TableCell>
+                </TableRow>
+              ) : (
+                campInvitations.map((inv) => (
                   <TableRow key={inv.id}>
                     <TableCell>
                       <div>
@@ -1955,13 +2142,15 @@ const InvitationsPage: React.FC = () => {
                       {inv.respondedAt ? format(new Date(inv.respondedAt), 'MMM d, HH:mm') : '-'}
                     </TableCell>
                     <TableCell>
-                      <Button variant="ghost" size="sm" onClick={() => copyInviteLink(inv.token)}>
-                        <Copy className="h-4 w-4" />
-                      </Button>
+                      {inv.token ? (
+                        <Button variant="ghost" size="sm" onClick={() => copyInviteLink(inv.token)}>
+                          <Copy className="h-4 w-4" />
+                        </Button>
+                      ) : null}
                     </TableCell>
                   </TableRow>
-                );
-              })}
+                ))
+              )}
             </TableBody>
           </Table>
         </DialogContent>

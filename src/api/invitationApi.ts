@@ -376,7 +376,37 @@ export const getInvitationsForDelegations = async (delegationIds: string[]): Pro
 // Fetch all invitations (admin)
 export const getAllInvitations = async (): Promise<Invitation[]> => {
     const { data } = await apiClient.get('/invitations');
-    return Array.isArray(data) ? data : (data?.data || data?.invitations || []);
+    return normalizeInvitationList(data);
+};
+
+/** Admin: invitations for a specific campaign (cross-browser safe). */
+export const getInvitationsByCampaign = async (campaignId: string): Promise<Invitation[]> => {
+    if (!campaignId) return [];
+
+    const scopedEndpoints = [
+        `/campaigns/${campaignId}/invitations`,
+        `/invitations?campaignId=${encodeURIComponent(campaignId)}`,
+    ];
+
+    for (const endpoint of scopedEndpoints) {
+        if (isEndpointBlocked(endpoint)) continue;
+        try {
+            const { data } = await apiClient.get(endpoint);
+            const result = normalizeInvitationList(data).filter(
+                inv => !inv.campaignId || String(inv.campaignId) === String(campaignId),
+            );
+            if (result.length > 0) return result;
+        } catch (err: any) {
+            markEndpointBlocked(endpoint, err?.response?.status);
+        }
+    }
+
+    try {
+        const all = await getAllInvitations();
+        return all.filter(inv => String(inv.campaignId) === String(campaignId));
+    } catch {
+        return [];
+    }
 };
 
 // Get a single invitation by token
