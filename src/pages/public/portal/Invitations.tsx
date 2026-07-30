@@ -503,10 +503,24 @@ const formatEventRecordDates = (eventObj: any): string => {
     const start = eventObj.startDate || eventObj.start_date;
     const end = eventObj.endDate || eventObj.end_date;
     if (!start) return 'N/A';
-    const startLabel = new Date(start).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+    const startDate = new Date(start);
+    if (Number.isNaN(startDate.getTime())) return 'N/A';
+
+    const startLabel = startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
     if (!end || end === start) return startLabel;
-    const endLabel = new Date(end).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-    return `${startLabel} - ${endLabel}`;
+
+    const endDate = new Date(end);
+    if (Number.isNaN(endDate.getTime())) return startLabel;
+
+    if (startDate.getFullYear() === endDate.getFullYear()) {
+        const startPart = startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const endPart = endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        return `${startPart} – ${endPart}`;
+    }
+
+    const endLabel = endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${startLabel} – ${endLabel}`;
 };
 
 const invitationBelongsToParticipant = (
@@ -863,8 +877,8 @@ const Invitations: React.FC = () => {
                                     <TableRow>
                                         <TableHead>Event</TableHead>
                                         <TableHead>Location</TableHead>
-                                        <TableHead>Date</TableHead>
-                                        <TableHead>RSVP Deadline</TableHead>
+                                        <TableHead className="whitespace-nowrap">Date</TableHead>
+                                        <TableHead className="whitespace-nowrap">RSVP Deadline</TableHead>
                                         <TableHead>Status</TableHead>
                                         <TableHead>Actions</TableHead>
                                     </TableRow>
@@ -910,13 +924,13 @@ const Invitations: React.FC = () => {
                                                         {eventObj?.city || 'N/A'}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="whitespace-nowrap">
                                                     <div className="flex items-center gap-1 text-sm">
-                                                        <Calendar className="h-3 w-3 text-muted-foreground" />
+                                                        <Calendar className="h-3 w-3 shrink-0 text-muted-foreground" />
                                                         {formatEventDates(invitation.eventId, invitation)}
                                                     </div>
                                                 </TableCell>
-                                                <TableCell>
+                                                <TableCell className="whitespace-nowrap">
                                                     <span className="text-sm">
                                                         {invitation.rsvpDeadline
                                                             ? new Date(invitation.rsvpDeadline).toLocaleDateString()

@@ -655,7 +655,7 @@ const EventSelector: React.FC = () => {
                                     <p className="text-xs text-muted-foreground truncate mb-2">{ev.theme}</p>
                                 )}
                                 <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-2">
-                                    <span className="flex items-center gap-1.5">
+                                    <span className="flex items-center gap-1.5 whitespace-nowrap">
                                         <Calendar className="h-3.5 w-3.5 shrink-0" />
                                         {ev.startDate} – {ev.endDate}
                                     </span>

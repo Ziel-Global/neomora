@@ -222,6 +222,7 @@ const InvitationsPage: React.FC = () => {
   const [refreshKey, setRefreshKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionLoading, setIsActionLoading] = useState(false);
+  const [pendingCreateAction, setPendingCreateAction] = useState<'draft' | 'send' | 'schedule' | null>(null);
   const [apiCampaigns, setApiCampaigns] = useState<campaignApi.Campaign[]>([]);
   const [apiEvents, setApiEvents] = useState<EMSEvent[]>([]);
   const [apiParticipants, setApiParticipants] = useState<EMSParticipant[]>([]);
@@ -1046,6 +1047,7 @@ const InvitationsPage: React.FC = () => {
       return;
     }
 
+    setPendingCreateAction(delivery);
     setIsActionLoading(true);
     try {
       const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
@@ -1140,6 +1142,7 @@ const InvitationsPage: React.FC = () => {
       toast({ title: 'Error', description: 'Failed to create campaign', variant: 'destructive' });
     } finally {
       setIsActionLoading(false);
+      setPendingCreateAction(null);
     }
   };
 
@@ -2207,6 +2210,9 @@ const InvitationsPage: React.FC = () => {
                       disabled={isActionLoading}
                       onClick={() => handleCreateCampaign('draft')}
                     >
+                      {isActionLoading && pendingCreateAction === 'draft' ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
                       {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
                     </Button>
                     <Button
@@ -2214,11 +2220,19 @@ const InvitationsPage: React.FC = () => {
                       disabled={isActionLoading || !scheduledAt}
                       onClick={() => handleCreateCampaign('schedule')}
                     >
-                      <Clock className="h-4 w-4 mr-2" />
+                      {isActionLoading && pendingCreateAction === 'schedule' ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Clock className="h-4 w-4 mr-2" />
+                      )}
                       {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
                     </Button>
                     <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
-                      <Send className="h-4 w-4 mr-2" />
+                      {isActionLoading && pendingCreateAction === 'send' ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : (
+                        <Send className="h-4 w-4 mr-2" />
+                      )}
                       {t('invitations.send_now')}
                     </Button>
                   </div>

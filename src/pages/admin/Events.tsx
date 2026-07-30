@@ -573,8 +573,8 @@ const EventsPage: React.FC = () => {
                     </div>
                     {event.theme && <p className="text-muted-foreground text-sm">{event.theme}</p>}
                     <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="h-4 w-4" />
+                      <span className="flex items-center gap-1 whitespace-nowrap">
+                        <Calendar className="h-4 w-4 shrink-0" />
                         {event.startDate} - {event.endDate}
                       </span>
                       <span className="flex items-center gap-1">

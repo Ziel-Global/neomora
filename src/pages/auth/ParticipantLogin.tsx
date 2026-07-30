@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useParticipantSession } from '@/contexts/ParticipantSessionContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { User, ArrowLeft, Loader2 } from 'lucide-react';
@@ -89,9 +90,8 @@ const ParticipantLogin: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <Label htmlFor="login-password">Password</Label>
-                <Input
+                <PasswordInput
                   id="login-password"
-                  type="password"
                   placeholder="Enter your password"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
