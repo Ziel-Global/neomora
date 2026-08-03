@@ -375,6 +375,22 @@ const InvitationsPage: React.FC = () => {
     return eventStore.getAll();
   }, [apiEvents, refreshKey]);
 
+  // Keep the audience mode valid for the selected event's type — e.g. switching
+  // to a team-only event while "Filter by Role" (a participant-only option) is
+  // selected would otherwise leave the wizard on a hidden, orphaned tab.
+  useEffect(() => {
+    const eventType = events.find(e => e.id === selectedEventId)?.eventType;
+    if (eventType === 'team-based' && (audienceMode === 'role' || audienceMode === 'individual')) {
+      setAudienceMode('delegation');
+      setSelectedRoles([]);
+      setSelectedParticipantIds([]);
+    } else if (eventType === 'individual' && (audienceMode === 'delegation' || audienceMode === 'manager')) {
+      setAudienceMode('role');
+      setSelectedDelegations([]);
+      setSelectedManagerIds([]);
+    }
+  }, [selectedEventId, events]);
+
   // Individual participant picker uses only GET /admin/participants — no registrations or local store merge.
   const participants = useMemo(() => {
     return [...apiParticipants].sort((a, b) => {
@@ -1550,60 +1566,76 @@ const InvitationsPage: React.FC = () => {
           </div>
         );
       }
-      case 2:
+      case 2: {
+        const selectedEventForAudience = events.find(e => e.id === selectedEventId);
+        const eventTypeForAudience = selectedEventForAudience?.eventType;
+        // A team-only event has no individual participants to target directly;
+        // an individual-only event has no teams/delegations/managers. Hybrid
+        // (or an event whose type isn't known yet) keeps every option visible.
+        const showParticipantOptions = eventTypeForAudience !== 'team-based';
+        const showTeamOptions = eventTypeForAudience !== 'individual';
+
         return (
           <div className="space-y-4">
             <h3 className="font-medium">{t('invitations.step_2_select_audience')}</h3>
             <div className="flex flex-wrap gap-2">
-              <Button
-                variant={audienceMode === 'role' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setAudienceMode('role');
-                  setSelectedDelegations([]);
-                  setSelectedParticipantIds([]);
-                  setSelectedManagerIds([]);
-                }}
-              >
-                Filter by Role
-              </Button>
-              <Button
-                variant={audienceMode === 'delegation' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setAudienceMode('delegation');
-                  setSelectedRoles([]);
-                  setSelectedParticipantIds([]);
-                  setSelectedManagerIds([]);
-                }}
-              >
-                {t('invitations.filter_by_delegation')}
-              </Button>
-              <Button
-                variant={audienceMode === 'individual' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setAudienceMode('individual');
-                  setSelectedRoles([]);
-                  setSelectedDelegations([]);
-                  setSelectedManagerIds([]);
-                }}
-              >
-                {t('invitations.select_individuals')}
-              </Button>
-              <Button
-                variant={audienceMode === 'manager' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setAudienceMode('manager');
-                  setSelectedRoles([]);
-                  setSelectedDelegations([]);
-                  setSelectedParticipantIds([]);
-                }}
-              >
-                <UserCog className="h-4 w-4 mr-1" />
-                Select Manager
-              </Button>
+              {showParticipantOptions && (
+                <Button
+                  variant={audienceMode === 'role' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAudienceMode('role');
+                    setSelectedDelegations([]);
+                    setSelectedParticipantIds([]);
+                    setSelectedManagerIds([]);
+                  }}
+                >
+                  Filter by Role
+                </Button>
+              )}
+              {showTeamOptions && (
+                <Button
+                  variant={audienceMode === 'delegation' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAudienceMode('delegation');
+                    setSelectedRoles([]);
+                    setSelectedParticipantIds([]);
+                    setSelectedManagerIds([]);
+                  }}
+                >
+                  {t('invitations.filter_by_delegation')}
+                </Button>
+              )}
+              {showParticipantOptions && (
+                <Button
+                  variant={audienceMode === 'individual' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAudienceMode('individual');
+                    setSelectedRoles([]);
+                    setSelectedDelegations([]);
+                    setSelectedManagerIds([]);
+                  }}
+                >
+                  {t('invitations.select_individuals')}
+                </Button>
+              )}
+              {showTeamOptions && (
+                <Button
+                  variant={audienceMode === 'manager' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setAudienceMode('manager');
+                    setSelectedRoles([]);
+                    setSelectedDelegations([]);
+                    setSelectedParticipantIds([]);
+                  }}
+                >
+                  <UserCog className="h-4 w-4 mr-1" />
+                  Select Manager
+                </Button>
+              )}
             </div>
 
             {audienceMode === 'role' && (
@@ -1863,6 +1895,7 @@ const InvitationsPage: React.FC = () => {
             </Card>
           </div>
         );
+      }
       case 3:
         const selectedEvent3 = events.find(e => e.id === selectedEventId);
         return (

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -24,7 +23,6 @@ import {
   Download,
   Mail,
   Filter,
-  Eye,
   MoreHorizontal,
   Edit,
   Trash2,
@@ -358,12 +356,6 @@ const ParticipantsPage: React.FC = () => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem asChild>
-              <Link to={`/admin/participants/${row.id}`} className="flex items-center gap-2">
-                <Eye className="h-4 w-4" />
-                {t('participants.view_profile')}
-              </Link>
-            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEdit(row)} className="flex items-center gap-2">
               <Edit className="h-4 w-4" />
               {t('common.edit')}
