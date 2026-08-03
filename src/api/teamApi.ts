@@ -2,8 +2,8 @@ import apiClient from './apiClient';
 import { Team, TeamMember } from '@/lib/teamStore';
 
 export interface CreateTeamPayload {
-    delegationId: string;
-    eventId: string;
+    delegationId?: string;
+    eventId?: string;
     name: string;
     sportCategoryGroup: string;
     subCategory: string;
@@ -11,8 +11,8 @@ export interface CreateTeamPayload {
 
 export const createTeam = async (payload: CreateTeamPayload): Promise<Team> => {
     const body = {
-        delegationId: payload.delegationId,
-        eventId: payload.eventId,
+        ...(payload.delegationId ? { delegationId: payload.delegationId } : {}),
+        ...(payload.eventId ? { eventId: payload.eventId } : {}),
         name: payload.name,
         sportCategoryGroup: payload.sportCategoryGroup,
         subCategory: payload.subCategory,
@@ -46,11 +46,27 @@ export const getMyTeams = async (): Promise<Team[]> => {
 
 export const getAllTeams = async (): Promise<Team[]> => {
     try {
-        console.log('[API] Fetching all teams from registrations/admin/all');
+        const { data } = await apiClient.get('/admin/teams');
+        const teams = Array.isArray(data) ? data : (data?.data || data?.teams || []);
+        if (Array.isArray(teams)) {
+            return teams.map((team: any) => ({
+                ...team,
+                id: team.id || team._id,
+                delegationId: team.delegationId || team.delegation_id || team.delegation?.id,
+                eventId: team.eventId || team.event_id || team.event?.id,
+            })) as Team[];
+        }
+    } catch (err: any) {
+        console.error('[API] Error fetching teams:', {
+            status: err?.response?.status,
+            message: err?.message
+        });
+    }
+
+    try {
+        // Legacy fallback for older backends that do not expose /admin/teams.
         const regsResponse = await apiClient.get('/registrations/admin/all');
         const registrations = Array.isArray(regsResponse.data) ? regsResponse.data : (regsResponse.data?.data || []);
-        console.log('[API] Got registrations:', registrations.length);
-
         // Extract unique teams from registrations
         const teamMap = new Map<string, Team>();
         for (const reg of registrations) {
@@ -86,13 +102,8 @@ export const getAllTeams = async (): Promise<Team[]> => {
         }
 
         const teams = Array.from(teamMap.values());
-        console.log('[API] Extracted teams from registrations:', teams);
         return teams;
     } catch (err: any) {
-        console.error('[API] Error fetching teams from registrations:', {
-            status: err?.response?.status,
-            message: err?.message
-        });
         return [];
     }
 };
@@ -160,4 +171,32 @@ export const addTeamMembersBulk = async (teamId: string, members: any[]): Promis
         results.push(created);
     }
     return results;
+};
+
+export interface PendingTeamMember {
+    id: string;
+    role?: string;
+    status?: string;
+    participant: { id: string; firstName?: string; lastName?: string; email?: string; nationality?: string } | null;
+    team: { id: string; name?: string } | null;
+    delegation: { id: string; country?: string; managerName?: string | null } | null;
+    eventName?: string | null;
+}
+
+// Admin: list team members whose manager has sent the roster for review
+export const getPendingTeamMembers = async (): Promise<PendingTeamMember[]> => {
+    const { data } = await apiClient.get('/team-members/pending');
+    return Array.isArray(data) ? data : (data?.data || []);
+};
+
+// Admin: approve a single team member (delegates to the standard registration approval)
+export const approveTeamMember = async (memberId: string): Promise<any> => {
+    const { data } = await apiClient.post(`/team-members/${memberId}/approve`);
+    return data;
+};
+
+// Admin: reject a single team member with a reason
+export const rejectTeamMember = async (memberId: string, reason: string): Promise<any> => {
+    const { data } = await apiClient.post(`/team-members/${memberId}/reject`, { reason });
+    return data;
 };

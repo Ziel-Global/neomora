@@ -1,310 +1,5 @@
-// import React, { useState, useEffect } from 'react';
-// import { Card, CardContent } from '@/components/ui/card';
-// import { Button } from '@/components/ui/button';
-// import { Badge } from '@/components/ui/badge';
-// import { useParticipantSession } from '@/contexts/ParticipantSessionContext';
-// import { useNavigate } from 'react-router-dom';
-// import {
-//     eventStore,
-//     templateStore,
-//     invitationStore,
-//     campaignStore,
-//     EMSInvitationTemplate
-// } from '@/lib/emsStore';
-// import { StatusBadge } from '@/components/common/StatusBadge';
-// import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
-// import { InvitationTemplatePreview } from '@/components/invitations/InvitationTemplatePreview';
-// import { Calendar, Crown, Star, Eye, Mail, Loader2 } from 'lucide-react';
-// import { getMyInvitations, Invitation } from '@/api/invitationApi';
-// import { getEvents } from '@/api/eventApi';
-// import * as campaignApi from '@/api/campaignApi';
-
-
-// const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
-//     const name = template.name.toLowerCase();
-//     const subject = template.subject.toLowerCase();
-//     return name.includes('vip') || name.includes('exclusive') ||
-//         subject.includes('vip') || subject.includes('exclusive');
-// };
-
-
-// const Invitations: React.FC = () => {
-//     const { participant } = useParticipantSession();
-//     const navigate = useNavigate();
-//     const [invitations, setInvitations] = useState<Invitation[]>([]);
-//     const [isLoading, setIsLoading] = useState(true);
-//     const [error, setError] = useState<string | null>(null);
-//     const [apiEvents, setApiEvents] = useState<any[]>([]);
-//     const [campaignMap, setCampaignMap] = useState<Record<string, campaignApi.Campaign>>({});
-//     const [campaignAudienceMap, setCampaignAudienceMap] = useState<Record<string, string[]>>({});
-
-
-//     // Modal state
-//     const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
-//     const [previewInvitation, setPreviewInvitation] = useState<Invitation | null>(null);
-//     const [previewOpen, setPreviewOpen] = useState(false);
-
-
-//     useEffect(() => {
-//         const fetchData = async () => {
-//             setIsLoading(true);
-//             setError(null);
-//             try {
-//                 const [invData, evData] = await Promise.all([
-//                     getMyInvitations(),
-//                     getEvents().catch(() => eventStore.getAll())
-//                 ]);
-//                 const remoteInvitations = Array.isArray(invData) ? invData : [];
-//                 const localInvitations = participant
-//                     ? invitationStore.getAll().filter(i =>
-//                         i.participantId === participant.id ||
-//                         (participant.email && i.participantEmail?.toLowerCase() === participant.email.toLowerCase())
-//                     )
-//                     : [];
-//                 const mergedInvitations = [...remoteInvitations];
-//                 for (const localInvitation of localInvitations) {
-//                     if (!mergedInvitations.some(existing => existing.id === localInvitation.id || existing.token === localInvitation.token)) {
-//                         mergedInvitations.push(localInvitation);
-//                     }
-//                 }
-//                 setApiEvents(Array.isArray(evData) ? evData : eventStore.getAll());
-
-
-//                 let allCampaigns: campaignApi.Campaign[] = [];
-//                 try {
-//                     allCampaigns = await campaignApi.getCampaigns();
-//                 } catch (e) {
-//                     allCampaigns = campaignStore.getAll() as any[];
-//                 }
-
-
-//                 const nextCampaignMap: Record<string, campaignApi.Campaign> = {};
-//                 const nextAudienceMap: Record<string, string[]> = {};
-//                 for (const campaign of allCampaigns) {
-//                     if (campaign && campaign.id) {
-//                         nextCampaignMap[campaign.id] = campaign;
-//                         nextAudienceMap[campaign.id] = Array.isArray(campaign.audienceIds)
-//                             ? campaign.audienceIds
-//                             : Array.isArray(campaign.targetParticipantIds)
-//                                 ? campaign.targetParticipantIds
-//                                 : [];
-//                     }
-//                 }
-//                 setCampaignMap(nextCampaignMap);
-//                 setCampaignAudienceMap(nextAudienceMap);
-
-
-//                 const sentCampaigns = allCampaigns.filter(c => c.status?.toLowerCase() === 'sent');
-
-
-//                 const finalInvitations: any[] = [...mergedInvitations.filter(inv => !inv.campaignId)];
-
-
-//                 for (const c of sentCampaigns) {
-//                     const realInv = mergedInvitations.find(inv => inv.campaignId === c.id);
-
-//                     // Check if participant is in audience for this campaign
-//                     const audienceIds = nextAudienceMap[c.id] || [];
-//                     const isParticipantInAudience = participant && (
-//                         audienceIds.includes(participant.id) ||
-//                         (participant.email && localInvitations.some(inv =>
-//                             inv.campaignId === c.id && inv.participantEmail?.toLowerCase() === participant.email.toLowerCase()
-//                         ))
-//                     );
-
-//                     if (realInv) {
-//                         finalInvitations.push(realInv);
-//                     } else if (isParticipantInAudience) {
-//                         finalInvitations.push({
-//                             id: `camp-inv-${c.id}`,
-//                             campaignId: c.id,
-//                             eventId: c.eventId,
-//                             status: 'Sent',
-//                             templateId: c.templateId,
-//                             rsvpDeadline: c.rsvpDeadline,
-//                             token: c.id
-//                         });
-//                     }
-//                 }
-
-
-//                 setInvitations(finalInvitations);
-//             } catch (err: any) {
-//                 console.error('Failed to load invitations:', err);
-//                 setError('Could not load invitations. Please try again.');
-//                 // Fallback to local store
-//                 if (participant) {
-//                     const localInvs = invitationStore.getAll().filter(i =>
-//                         i.participantId === participant.id ||
-//                         (participant.email && i.participantEmail?.toLowerCase() === participant.email.toLowerCase())
-//                     );
-//                     setInvitations(localInvs as any[]);
-//                 }
-//                 setApiEvents(eventStore.getAll());
-//                 setCampaignMap({});
-//                 setCampaignAudienceMap({});
-//             } finally {
-//                 setIsLoading(false);
-//             }
-//         };
-
-
-//         fetchData();
-//     }, [participant]);
-
-
-//     const getEventName = (eventId: string) => {
-//         const apiEvent = apiEvents.find(e => e.id === eventId);
-//         if (apiEvent) return apiEvent.name;
-//         return eventStore.getById(eventId)?.name || 'Unknown Event';
-//     };
-
-
-//     const getCampaignDetails = (campaignId?: string) => {
-//         if (!campaignId) return null;
-//         return campaignMap[campaignId] || campaignStore.getById(campaignId) || null;
-//     };
-
-
-//     const campaignMatchesParticipant = (campaignId?: string) => {
-//         if (!campaignId || !participant) return false;
-//         const audienceIds = campaignAudienceMap[campaignId] || (campaignStore.getById(campaignId) as any)?.audienceIds || [];
-//         const participantIdMatch = audienceIds.includes(participant.id);
-//         const participantEmailMatch = !!participant.email && invitationStore.getAll().some(inv =>
-//             inv.campaignId === campaignId && inv.participantEmail?.toLowerCase() === participant.email.toLowerCase()
-//         );
-//         return participantIdMatch || participantEmailMatch;
-//     };
-
-
-//     if (!participant) return null;
-
-
-//     return (
-//         <div className="space-y-6">
-//             <div>
-//                 <h1 className="text-3xl font-bold mb-2">My Invitations</h1>
-//                 <p className="text-muted-foreground">Manage your event invitations and RSVPs.</p>
-//             </div>
-
-
-//             {isLoading ? (
-//                 <div className="flex justify-center py-16">
-//                     <Loader2 className="h-10 w-10 animate-spin text-primary" />
-//                 </div>
-//             ) : error ? (
-//                 <Card>
-//                     <CardContent className="pt-10 pb-10 text-center text-destructive">
-//                         <p>{error}</p>
-//                         <Button variant="outline" className="mt-4" onClick={() => window.location.reload()}>
-//                             Retry
-//                         </Button>
-//                     </CardContent>
-//                 </Card>
-//             ) : invitations.length === 0 ? (
-//                 <Card>
-//                     <CardContent className="pt-10 pb-10 text-center text-muted-foreground">
-//                         <Mail className="h-12 w-12 mx-auto mb-4 opacity-20" />
-//                         <p>You have no invitations at this time.</p>
-//                     </CardContent>
-//                 </Card>
-//             ) : (
-//                 <div className="space-y-4">
-//                     {invitations.map((invitation) => {
-//                         const campaign = getCampaignDetails(invitation.campaignId as any);
-//                         const template = templateStore.getById(invitation.templateId as any) || campaign?.template;
-//                         const isVIP = template ? isVIPTemplate(template as any) : false;
-
-
-//                         const eventObj = apiEvents.find(e => e.id === invitation.eventId) || eventStore.getById(invitation.eventId);
-
-//                         return (
-//                             <div key={invitation.id} className="flex flex-col gap-3 pb-6 border-b last:border-b-0 last:pb-0">
-//                                 {template ? (
-//                                     <InvitationTemplatePreview
-//                                         template={template}
-//                                         event={eventObj}
-//                                         participant={participant}
-//                                         rsvpDeadline={invitation.rsvpDeadline}
-//                                     />
-//                                 ) : (
-//                                     <Card className={`${isVIP ? 'border-amber-200 bg-amber-50/30' : ''}`}>
-//                                         <CardContent className="pt-6">
-//                                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-//                                                 <div className="flex items-start gap-4">
-//                                                     <div className={`p-2 rounded-full ${isVIP ? 'bg-amber-100 text-amber-600' : 'bg-muted text-muted-foreground'}`}>
-//                                                         <Calendar className="h-6 w-6" />
-//                                                     </div>
-//                                                     <div>
-//                                                         {campaign && (
-//                                                             <div className="mb-2">
-//                                                                 <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
-//                                                                     Campaign: {campaign.name}
-//                                                                 </Badge>
-//                                                             </div>
-//                                                         )}
-//                                                         <div className="flex items-center gap-2 mb-1">
-//                                                             <h3 className="font-bold text-lg">{getEventName(invitation.eventId)}</h3>
-//                                                             {isVIP && (
-//                                                                 <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
-//                                                                     <Crown className="h-3 w-3 mr-1" /> VIP
-//                                                                 </Badge>
-//                                                             )}
-//                                                         </div>
-//                                                         <p className="text-sm text-muted-foreground">
-//                                                             RSVP Deadline: {invitation.rsvpDeadline || 'N/A'}
-//                                                         </p>
-//                                                     </div>
-//                                                 </div>
-//                                             </div>
-//                                         </CardContent>
-//                                     </Card>
-//                                 )}
-
-//                                 {/* <div className="flex justify-end gap-2 px-2">
-//                                     {['Pending', 'Delivered', 'Opened', 'Sent'].includes(invitation.status) && (
-//                                         <Button variant="default" className="bg-red-500 hover:bg-red-600" onClick={() => navigate(`/invite/${invitation.token}`)}>
-//                                             Reject
-//                                         </Button>
-//                                     )}
-//                                     {['Pending', 'Delivered', 'Opened', 'Sent'].includes(invitation.status) && (
-//                                         <Button
-//                                             variant="default"
-//                                             className="bg-green-500 hover:bg-green-600"
-//                                             onClick={() => navigate(`/register?invitationId=${invitation.id}`)}
-//                                         >
-//                                             Approve
-//                                         </Button>
-//                                     )}
-//                                 </div> */}
-//                             </div>
-//                         );
-//                     })}
-//                 </div>
-//             )}
-
-
-//             <InvitationPreviewModal
-//                 open={previewOpen}
-//                 onOpenChange={setPreviewOpen}
-//                 template={previewTemplate}
-//                 event={previewInvitation ? (apiEvents.find(e => e.id === previewInvitation.eventId) || eventStore.getById(previewInvitation.eventId)) : null}
-//                 participant={participant}
-//                 rsvpDeadline={previewInvitation?.rsvpDeadline}
-//             />
-//         </div>
-//     );
-// };
-
-
-// export default Invitations;
-
-
-
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useParticipantSession } from '@/contexts/ParticipantSessionContext';
 import { useNavigate } from 'react-router-dom';
@@ -316,7 +11,23 @@ import {
     EMSInvitationTemplate
 } from '@/lib/emsStore';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
-import { Calendar, Crown, Eye, Mail, Loader2, MapPin, Clock, CheckCircle, X, AlertCircle, HelpCircle } from 'lucide-react';
+import {
+    Calendar,
+    Crown,
+    Eye,
+    Mail,
+    Loader2,
+    MapPin,
+    Clock,
+    CheckCircle2,
+    X,
+    AlertCircle,
+    HelpCircle,
+    ArrowRight,
+    LayoutGrid,
+    List,
+    Sparkles,
+} from 'lucide-react';
 import {
     getMyInvitations,
     Invitation,
@@ -327,8 +38,12 @@ import { getEvents } from '@/api/eventApi';
 import { getMyRegistrations, Registration } from '@/api/registrationApi';
 import * as campaignApi from '@/api/campaignApi';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 const INVITATION_REGISTRATIONS_KEY = 'ems_invitation_registrations';
+const VIEW_MODE_KEY = 'ems_invitations_view_mode';
+
+type ViewMode = 'cards' | 'table';
 
 const REGISTERED_INVITATION_STATUSES = new Set([
     'registered',
@@ -346,7 +61,7 @@ const PENDING_INVITATION_STATUSES = new Set([
 ]);
 
 const isRealInvitationId = (id: string): boolean =>
-    Boolean(id) && !id.startsWith('camp-inv-');
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
 const getInvitationResponseStatus = (invitation: Invitation): string => {
     const raw = String(invitation.rsvpResponse || invitation.status || '').trim();
@@ -399,7 +114,7 @@ const buildRegisteredInvitationIds = (registrations: Registration[]): Set<string
     const ids = new Set<string>(Object.keys(getInvitationRegistrationMap()));
 
     for (const reg of registrations) {
-        const invitationId = reg.invitationId || reg.invitation_id;
+        const invitationId = reg.invitationId || reg.invitation_id || (reg as any).invitation?.id;
         if (invitationId) ids.add(String(invitationId));
     }
 
@@ -417,16 +132,14 @@ const isInvitationRegistered = (
     if (REGISTERED_INVITATION_STATUSES.has(status)) return true;
 
     const eventId = invitation.eventId || invitation.event?.id;
-    if (!eventId) return false;
 
     return registrations.some(reg => {
-        const regEventId = reg.eventId || (reg as any).event?.id;
-        const regInvitationId = reg.invitationId || reg.invitation_id;
-        if (regInvitationId && regInvitationId === invitation.id) return true;
-        return regEventId === eventId;
+        const regInvitationId = reg.invitationId || reg.invitation_id || (reg as any).invitation?.id;
+        if (regInvitationId && String(regInvitationId) === String(invitation.id)) return true;
+        const registrationEventId = reg.eventId || (reg as any).event?.id;
+        return Boolean(eventId && String(registrationEventId) === String(eventId));
     });
 };
-
 
 const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
     const name = template.name.toLowerCase();
@@ -435,27 +148,89 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
         subject.includes('vip') || subject.includes('exclusive');
 };
 
-const getStatusBadge = (status: string) => {
-    switch (status) {
-        case 'Accepted':
-            return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Accepted</Badge>;
-        case 'Declined':
-            return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Declined</Badge>;
-        case 'Maybe':
-            return <Badge className="bg-status-info-bg text-status-info"><HelpCircle className="h-3 w-3 mr-1" />Maybe</Badge>;
-        case 'Pending':
-        case 'Delivered':
-        case 'Opened':
-        case 'Sent':
-        case 'Pending':
-            return <Badge className="bg-status-warning-bg text-status-warning"><Clock className="h-3 w-3 mr-1" />Pending Response</Badge>;
-        case 'Expired':
-            return <Badge className="bg-muted text-muted-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>;
-        default:
-            return <Badge variant="secondary">{status}</Badge>;
+const formatDeadline = (deadline?: string | null): string => {
+    if (!deadline) return 'No deadline';
+    const date = new Date(deadline);
+    if (Number.isNaN(date.getTime())) return 'No deadline';
+    return date.toLocaleDateString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+};
+
+const readStoredViewMode = (): ViewMode => {
+    try {
+        const stored = localStorage.getItem(VIEW_MODE_KEY);
+        return stored === 'table' ? 'table' : 'cards';
+    } catch {
+        return 'cards';
     }
 };
 
+const StatusPill = ({ status }: { status: string }) => {
+    const config: Record<string, { label: string; className: string; icon: React.ElementType }> = {
+        Accepted: {
+            label: 'Accepted',
+            className: 'bg-status-success-bg text-status-success ring-status-success/20',
+            icon: CheckCircle2,
+        },
+        Declined: {
+            label: 'Declined',
+            className: 'bg-status-error-bg text-status-error ring-status-error/20',
+            icon: X,
+        },
+        Maybe: {
+            label: 'Maybe',
+            className: 'bg-status-info-bg text-status-info ring-status-info/20',
+            icon: HelpCircle,
+        },
+        Pending: {
+            label: 'Pending Response',
+            className: 'bg-status-warning-bg text-status-warning ring-status-warning/25',
+            icon: Clock,
+        },
+        Delivered: {
+            label: 'Pending Response',
+            className: 'bg-status-warning-bg text-status-warning ring-status-warning/25',
+            icon: Clock,
+        },
+        Opened: {
+            label: 'Pending Response',
+            className: 'bg-status-warning-bg text-status-warning ring-status-warning/25',
+            icon: Clock,
+        },
+        Sent: {
+            label: 'Pending Response',
+            className: 'bg-status-warning-bg text-status-warning ring-status-warning/25',
+            icon: Clock,
+        },
+        Expired: {
+            label: 'Expired',
+            className: 'bg-muted text-muted-foreground ring-border',
+            icon: AlertCircle,
+        },
+    };
+
+    const item = config[status] || {
+        label: status,
+        className: 'bg-muted text-muted-foreground ring-border',
+        icon: AlertCircle,
+    };
+    const Icon = item.icon;
+
+    return (
+        <span
+            className={cn(
+                'inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset',
+                item.className,
+            )}
+        >
+            <Icon className="h-3.5 w-3.5" />
+            {item.label}
+        </span>
+    );
+};
 
 const getCampaignAudienceIds = (campaign: campaignApi.Campaign): string[] => {
     const fromAudience = Array.isArray(campaign.audienceIds) ? campaign.audienceIds
@@ -533,6 +308,21 @@ const invitationBelongsToParticipant = (
     return !!participant.email && invitation.participantEmail?.toLowerCase() === participant.email.toLowerCase();
 };
 
+type InvitationRowModel = {
+    invitation: Invitation;
+    campaign: campaignApi.Campaign | null;
+    isVIP: boolean;
+    eventObj: any;
+    alreadyRegistered: boolean;
+    responseStatus: string;
+    showRespondActions: boolean;
+    canRegister: boolean;
+    isResponding: boolean;
+    locationLabel: string;
+    dateLabel: string;
+    deadlineLabel: string;
+    eventName: string;
+};
 
 const Invitations: React.FC = () => {
     const { participant } = useParticipantSession();
@@ -542,17 +332,23 @@ const Invitations: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [apiEvents, setApiEvents] = useState<any[]>([]);
     const [campaignMap, setCampaignMap] = useState<Record<string, campaignApi.Campaign>>({});
-    const [campaignAudienceMap, setCampaignAudienceMap] = useState<Record<string, string[]>>({});
     const [registrations, setRegistrations] = useState<Registration[]>([]);
     const [registeredInvitationIds, setRegisteredInvitationIds] = useState<Set<string>>(new Set());
+    const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
-
-    // Modal state
     const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
     const [previewInvitation, setPreviewInvitation] = useState<Invitation | null>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [respondingInvitationId, setRespondingInvitationId] = useState<string | null>(null);
 
+    const setViewModeAndPersist = (mode: ViewMode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem(VIEW_MODE_KEY, mode);
+        } catch {
+            // ignore storage failures
+        }
+    };
 
     const loadInvitations = async (showPageLoader = true) => {
         if (!participant) return;
@@ -562,8 +358,6 @@ const Invitations: React.FC = () => {
         }
         setError(null);
         try {
-            const identityIds = buildParticipantIdentityIds(participant);
-
             const [invData, regData] = await Promise.all([
                 getMyInvitations().catch(() => []),
                 getMyRegistrations().catch(() => []),
@@ -572,14 +366,12 @@ const Invitations: React.FC = () => {
             setRegistrations(participantRegistrations);
             setRegisteredInvitationIds(buildRegisteredInvitationIds(participantRegistrations));
 
-            const remoteInvitations = Array.isArray(invData) ? invData : [];
-            const localInvitations = invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant));
+            // RSVP actions must only ever operate on invitation records issued
+            // by the API. Local campaign previews have synthetic IDs and cannot
+            // be accepted or registered against.
+            const remoteInvitations = (Array.isArray(invData) ? invData : [])
+                .filter(invitation => isRealInvitationId(invitation.id));
             const mergedInvitations = [...remoteInvitations];
-            for (const localInvitation of localInvitations) {
-                if (!mergedInvitations.some(existing => existing.id === localInvitation.id || existing.token === localInvitation.token)) {
-                    mergedInvitations.push(localInvitation as Invitation);
-                }
-            }
 
             const invitationEmbeddedEvents = mergedInvitations
                 .flatMap(inv => [inv.event, inv.campaign?.event])
@@ -621,18 +413,7 @@ const Invitations: React.FC = () => {
                     updatedAt: (campaign as any).updatedAt || new Date().toISOString(),
                 }));
 
-            if (remoteInvitations.length === 0) {
-                try {
-                    allCampaigns = await campaignApi.getCampaignsForParticipant(identityIds);
-                } catch {
-                    allCampaigns = (campaignStore.getAll() as any[]).filter(
-                        (c: campaignApi.Campaign) => campaignApi.isSentCampaignStatus(c.status) && campaignApi.campaignTargetsParticipant(c, identityIds)
-                    );
-                }
-            }
-
             const nextCampaignMap: Record<string, campaignApi.Campaign> = {};
-            const nextAudienceMap: Record<string, string[]> = {};
             const embeddedEvents: any[] = [...invitationEmbeddedEvents];
             for (const invitation of mergedInvitations) {
                 const embeddedCampaign = invitation.campaign;
@@ -658,7 +439,6 @@ const Invitations: React.FC = () => {
             for (const campaign of allCampaigns) {
                 if (!campaign?.id) continue;
                 nextCampaignMap[campaign.id] = campaign;
-                nextAudienceMap[campaign.id] = getCampaignAudienceIds(campaign);
                 if (campaign.event?.id) embeddedEvents.push(campaign.event);
             }
             const mergedEvents = [...baseEvents];
@@ -667,9 +447,7 @@ const Invitations: React.FC = () => {
             }
             setApiEvents(mergedEvents);
             setCampaignMap(nextCampaignMap);
-            setCampaignAudienceMap(nextAudienceMap);
 
-            const sentCampaigns = allCampaigns.filter(c => campaignApi.isSentCampaignStatus(c.status));
             const seenKeys = new Set<string>();
             const finalInvitations: Invitation[] = [];
             const addInvitation = (inv: Invitation) => {
@@ -681,40 +459,13 @@ const Invitations: React.FC = () => {
 
             for (const inv of mergedInvitations) addInvitation(inv);
 
-            for (const c of sentCampaigns) {
-                if (finalInvitations.some(inv => inv.campaignId === c.id)) continue;
-                const audienceIds = nextAudienceMap[c.id] || [];
-                const isParticipantInAudience = participant && (
-                    participantMatchesAudience(identityIds, audienceIds) ||
-                    localInvitations.some(inv => inv.campaignId === c.id && invitationBelongsToParticipant(inv, participant))
-                );
-                if (isParticipantInAudience) {
-                    addInvitation({
-                        id: `camp-inv-${c.id}`,
-                        campaignId: c.id,
-                        eventId: c.eventId || c.event?.id || '',
-                        participantId: participant?.id,
-                        status: 'Sent',
-                        templateId: c.templateId || c.template?.id || '',
-                        rsvpDeadline: c.rsvpDeadline,
-                        token: c.id,
-                        event: c.event,
-                        template: c.template,
-                        campaign: c,
-                    });
-                }
-            }
-
             setInvitations(finalInvitations);
         } catch (err: any) {
             console.error('Failed to load invitations:', err);
             setError('Could not load invitations. Please try again.');
-            if (participant) {
-                setInvitations(invitationStore.getAll().filter(i => invitationBelongsToParticipant(i, participant)) as any[]);
-            }
+            setInvitations([]);
             setApiEvents(eventStore.getAll());
             setCampaignMap({});
-            setCampaignAudienceMap({});
         } finally {
             if (showPageLoader) {
                 setIsLoading(false);
@@ -763,9 +514,13 @@ const Invitations: React.FC = () => {
         const eventId = invitation.eventId || invitation.event?.id || '';
         const params = new URLSearchParams({ invitationId: invitation.id });
         if (eventId) params.set('eventId', eventId);
-        navigate(`/register?${params.toString()}`);
+        navigate(`/portal/register?${params.toString()}`);
     };
 
+    const getCampaignDetails = (campaignId?: string) => {
+        if (!campaignId) return null;
+        return campaignMap[campaignId] || campaignStore.getById(campaignId) || null;
+    };
 
     const getEventObj = (eventId: string, invitation?: Invitation | null) => {
         if (invitation?.event?.id) return invitation.event;
@@ -804,212 +559,521 @@ const Invitations: React.FC = () => {
         return fromStore || null;
     };
 
-
-    const getCampaignDetails = (campaignId?: string) => {
-        if (!campaignId) return null;
-        return campaignMap[campaignId] || campaignStore.getById(campaignId) || null;
-    };
-
-
-    const campaignMatchesParticipant = (campaignId?: string) => {
-        if (!campaignId || !participant) return false;
-        const audienceIds = campaignAudienceMap[campaignId]
-            || getCampaignAudienceIds(campaignMap[campaignId] || (campaignStore.getById(campaignId) as any) || {});
-        return participantMatchesAudience(getParticipantIdentityIds(participant), audienceIds) ||
-            (!!participant.email && invitationStore.getAll().some(inv =>
-                inv.campaignId === campaignId && invitationBelongsToParticipant(inv, participant)
-            ));
-    };
-
     const handlePreview = (invitation: Invitation) => {
         setPreviewTemplate(getInvitationTemplate(invitation));
         setPreviewInvitation(invitation);
         setPreviewOpen(true);
     };
 
+    const pendingCount = invitations.filter(inv => {
+        const status = getInvitationResponseStatus(inv);
+        return status === 'Pending' || status === 'Maybe' || status === 'Sent' || status === 'Delivered' || status === 'Opened';
+    }).length;
+    const acceptedCount = invitations.filter(inv => isInvitationAccepted(inv)).length;
+    const registeredCount = invitations.filter(inv =>
+        isInvitationRegistered(inv, registeredInvitationIds, registrations),
+    ).length;
+
+    const rows: InvitationRowModel[] = invitations.map((invitation) => {
+        const campaign = (getCampaignDetails(invitation.campaignId as any) as campaignApi.Campaign | null)
+            || (invitation.campaign as unknown as campaignApi.Campaign | undefined)
+            || null;
+        const template = getInvitationTemplate(invitation);
+        const isVIP = template ? isVIPTemplate(template) : false;
+        const eventObj: any = getEventObj(invitation.eventId, invitation);
+        const alreadyRegistered = isInvitationRegistered(
+            invitation,
+            registeredInvitationIds,
+            registrations,
+        );
+        const responseStatus = getInvitationResponseStatus(invitation);
+        return {
+            invitation,
+            campaign,
+            isVIP,
+            eventObj,
+            alreadyRegistered,
+            responseStatus,
+            showRespondActions: canRespondToInvitation(invitation),
+            canRegister: isInvitationAccepted(invitation) && !alreadyRegistered && !isInvitationDeclined(invitation),
+            isResponding: respondingInvitationId === invitation.id,
+            locationLabel: eventObj?.city || eventObj?.location || 'Location TBD',
+            dateLabel: formatEventDates(invitation.eventId, invitation),
+            deadlineLabel: formatDeadline(invitation.rsvpDeadline),
+            eventName: getEventName(invitation.eventId, invitation),
+        };
+    });
+
+    const renderRespondControls = (row: InvitationRowModel, variant: 'card' | 'table' = 'card') => {
+        if (!row.showRespondActions) return null;
+
+        if (variant === 'table') {
+            return (
+                <div className="flex h-8 w-full items-center overflow-hidden rounded-md border border-border/80 bg-background">
+                    <button
+                        type="button"
+                        disabled={row.isResponding}
+                        onClick={() => void handleRespond(row.invitation, 'Accepted')}
+                        className="inline-flex h-full flex-1 items-center justify-center gap-1 whitespace-nowrap bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+                    >
+                        {row.isResponding && <Loader2 className="h-3 w-3 animate-spin" />}
+                        Accept
+                    </button>
+                    <button
+                        type="button"
+                        disabled={row.isResponding}
+                        onClick={() => void handleRespond(row.invitation, 'Maybe')}
+                        className="inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 px-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60"
+                    >
+                        Maybe
+                    </button>
+                    <button
+                        type="button"
+                        disabled={row.isResponding}
+                        onClick={() => void handleRespond(row.invitation, 'Declined')}
+                        className="inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 px-1.5 text-[11px] font-medium text-status-error transition-colors hover:bg-status-error-bg disabled:opacity-60"
+                    >
+                        Decline
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="flex items-center overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+                <Button
+                    size="sm"
+                    disabled={row.isResponding}
+                    className="h-8 rounded-none border-0 px-3 shadow-none"
+                    onClick={() => void handleRespond(row.invitation, 'Accepted')}
+                >
+                    {row.isResponding ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                        <>
+                            <CheckCircle2 className="mr-1 h-3.5 w-3.5" />
+                            Accept
+                        </>
+                    )}
+                </Button>
+                <div className="h-8 w-px bg-border" />
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={row.isResponding}
+                    className="h-8 rounded-none px-3 text-muted-foreground hover:text-foreground"
+                    onClick={() => void handleRespond(row.invitation, 'Maybe')}
+                >
+                    Maybe
+                </Button>
+                <div className="h-8 w-px bg-border" />
+                <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={row.isResponding}
+                    className="h-8 rounded-none px-3 text-status-error hover:bg-status-error-bg hover:text-status-error"
+                    onClick={() => void handleRespond(row.invitation, 'Declined')}
+                >
+                    Decline
+                </Button>
+            </div>
+        );
+    };
+
+    const renderRegisterControl = (row: InvitationRowModel, variant: 'card' | 'table' = 'card') => {
+        const isTable = variant === 'table';
+
+        if (row.alreadyRegistered) {
+            return (
+                <span
+                    title="Registration complete"
+                    className={cn(
+                        'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-md bg-status-success-bg px-2.5 text-[11px] font-semibold text-status-success ring-1 ring-inset ring-status-success/15',
+                        isTable && 'w-full justify-center px-2',
+                    )}
+                >
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                    {isTable ? 'Registered' : 'Registration complete'}
+                </span>
+            );
+        }
+        if (isInvitationDeclined(row.invitation)) {
+            return (
+                <span
+                    className={cn(
+                        'inline-flex h-8 items-center whitespace-nowrap rounded-md bg-muted px-2.5 text-[11px] font-medium text-muted-foreground',
+                        isTable && 'w-full justify-center px-2',
+                    )}
+                >
+                    Declined
+                </span>
+            );
+        }
+        if (row.canRegister) {
+            return (
+                <Button
+                    size="sm"
+                    className={cn(
+                        'h-8 gap-1.5 whitespace-nowrap px-3 shadow-sm',
+                        isTable && 'w-full justify-center px-2',
+                    )}
+                    onClick={() => navigateToRegister(row.invitation)}
+                >
+                    Register
+                    <ArrowRight className="h-3.5 w-3.5 shrink-0" />
+                </Button>
+            );
+        }
+        if (variant === 'table') {
+            return null;
+        }
+        return (
+            <span className="inline-flex h-8 items-center rounded-lg border border-dashed border-border px-3 text-[11px] font-medium text-muted-foreground">
+                Accept to unlock registration
+            </span>
+        );
+    };
+
+    const renderTableActions = (row: InvitationRowModel) => (
+        <div className="flex items-center gap-2">
+            <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shrink-0 border-border/80 bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => handlePreview(row.invitation)}
+                title="Preview invitation"
+            >
+                <Eye className="h-3.5 w-3.5" />
+            </Button>
+            <div className="min-w-0 flex-1">
+                {row.showRespondActions
+                    ? renderRespondControls(row, 'table')
+                    : renderRegisterControl(row, 'table')}
+            </div>
+        </div>
+    );
 
     if (!participant) return null;
 
+    const showListToolbar = !isLoading && !error && invitations.length > 0;
 
     return (
-        <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold mb-2">My Invitations</h1>
-                <p className="text-muted-foreground">Manage your event invitations and RSVPs.</p>
-            </div>
+        <div className="space-y-8">
+            <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+                <div
+                    className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl"
+                    aria-hidden
+                />
+                <div
+                    className="pointer-events-none absolute -bottom-24 left-1/3 h-40 w-40 rounded-full bg-accent/10 blur-3xl"
+                    aria-hidden
+                />
+                <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                    <div className="max-w-xl space-y-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+                            Participant portal
+                        </p>
+                        <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                            My Invitations
+                        </h1>
+                        <p className="text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
+                            Review each invitation, respond to your RSVP, then complete registration when accepted.
+                        </p>
+                    </div>
 
+                    {showListToolbar && (
+                        <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                            {[
+                                { label: 'Awaiting', value: pendingCount, tone: 'text-status-warning' },
+                                { label: 'Accepted', value: acceptedCount, tone: 'text-status-success' },
+                                { label: 'Registered', value: registeredCount, tone: 'text-primary' },
+                            ].map((stat) => (
+                                <div
+                                    key={stat.label}
+                                    className="min-w-[88px] rounded-xl border border-border/70 bg-card/80 px-3.5 py-3 shadow-sm backdrop-blur-sm"
+                                >
+                                    <p className={cn('text-2xl font-semibold tabular-nums tracking-tight', stat.tone)}>
+                                        {stat.value}
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                                        {stat.label}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </header>
 
             {isLoading ? (
-                <div className="flex justify-center py-16">
-                    <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-24">
+                    <Loader2 className="h-9 w-9 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">Loading your invitations…</p>
                 </div>
             ) : error ? (
-                <Card>
-                    <CardContent className="pt-10 pb-10 text-center text-destructive">
-                        <p>{error}</p>
-                        <Button variant="outline" className="mt-4" onClick={() => window.location.reload()}>
-                            Retry
-                        </Button>
-                    </CardContent>
-                </Card>
+                <div className="rounded-2xl border border-status-error/20 bg-status-error-bg/40 px-6 py-14 text-center">
+                    <AlertCircle className="mx-auto mb-3 h-10 w-10 text-status-error/70" />
+                    <p className="text-sm font-medium text-status-error">{error}</p>
+                    <Button variant="outline" className="mt-5" onClick={() => window.location.reload()}>
+                        Retry
+                    </Button>
+                </div>
             ) : invitations.length === 0 ? (
-                <Card>
-                    <CardContent className="pt-10 pb-10 text-center text-muted-foreground">
-                        <Mail className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                        <p>You have no invitations at this time.</p>
-                    </CardContent>
-                </Card>
+                <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                        <Mail className="h-7 w-7 text-muted-foreground/50" />
+                    </div>
+                    <h2 className="text-lg font-semibold text-foreground">No invitations yet</h2>
+                    <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+                        When you are invited to an event, it will appear here for you to RSVP and register.
+                    </p>
+                </div>
             ) : (
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Mail className="h-5 w-5" />
-                            Invitations ({invitations.length})
-                        </CardTitle>
-                        <CardDescription>
-                            Accept or decline each invitation, then register once your RSVP is accepted.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Event</TableHead>
-                                        <TableHead>Location</TableHead>
-                                        <TableHead className="whitespace-nowrap">Date</TableHead>
-                                        <TableHead className="whitespace-nowrap">RSVP Deadline</TableHead>
-                                        <TableHead>Status</TableHead>
-                                        <TableHead>Actions</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {invitations.map((invitation) => {
-                                        const campaign = (getCampaignDetails(invitation.campaignId as any) as campaignApi.Campaign | null)
-                                            || (invitation.campaign as unknown as campaignApi.Campaign | undefined)
-                                            || null;
-                                        const template = getInvitationTemplate(invitation);
-                                        const isVIP = template ? isVIPTemplate(template) : false;
-                                        const eventObj: any = getEventObj(invitation.eventId, invitation);
-                                        const alreadyRegistered = isInvitationRegistered(
-                                            invitation,
-                                            registeredInvitationIds,
-                                            registrations,
-                                        );
-                                        const responseStatus = getInvitationResponseStatus(invitation);
-                                        const showRespondActions = canRespondToInvitation(invitation);
-                                        const canRegister = isInvitationAccepted(invitation) && !alreadyRegistered && !isInvitationDeclined(invitation);
-                                        const isResponding = respondingInvitationId === invitation.id;
+                <section className="space-y-4 pb-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-0.5">
+                        <div className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4 text-primary/60" />
+                            <h2 className="text-sm font-semibold text-foreground">
+                                Invitations
+                                <span className="ml-1.5 font-normal text-muted-foreground">
+                                    ({invitations.length})
+                                </span>
+                            </h2>
+                        </div>
 
-                                        return (
-                                            <TableRow key={invitation.id}>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-2">
-                                                        <p className="font-medium">{getEventName(invitation.eventId, invitation)}</p>
-                                                        {isVIP && (
-                                                            <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
-                                                                <Crown className="h-3 w-3 mr-1" /> VIP
-                                                            </Badge>
+                        <div
+                            className="inline-flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm"
+                            role="group"
+                            aria-label="Display mode"
+                        >
+                            <button
+                                type="button"
+                                onClick={() => setViewModeAndPersist('cards')}
+                                className={cn(
+                                    'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                                    viewMode === 'cards'
+                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                                aria-pressed={viewMode === 'cards'}
+                            >
+                                <LayoutGrid className="h-3.5 w-3.5" />
+                                Cards
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setViewModeAndPersist('table')}
+                                className={cn(
+                                    'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                                    viewMode === 'table'
+                                        ? 'bg-primary text-primary-foreground shadow-sm'
+                                        : 'text-muted-foreground hover:text-foreground',
+                                )}
+                                aria-pressed={viewMode === 'table'}
+                            >
+                                <List className="h-3.5 w-3.5" />
+                                Table
+                            </button>
+                        </div>
+                    </div>
+
+                    {viewMode === 'cards' ? (
+                        <div className="space-y-4">
+                            {rows.map((row) => (
+                                <article
+                                    key={row.invitation.id}
+                                    className={cn(
+                                        'group relative overflow-hidden rounded-2xl border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)] transition-all duration-300',
+                                        'hover:shadow-[0_1px_2px_rgba(15,23,42,0.05),0_16px_40px_-16px_rgba(15,23,42,0.14)]',
+                                        row.isVIP
+                                            ? 'border-amber-200/80'
+                                            : row.responseStatus === 'Accepted'
+                                                ? 'border-status-success/20'
+                                                : 'border-border/80',
+                                    )}
+                                >
+                                    <div
+                                        className={cn(
+                                            'absolute inset-y-0 left-0 w-1',
+                                            row.isVIP
+                                                ? 'bg-gradient-to-b from-amber-400 to-amber-600'
+                                                : row.responseStatus === 'Accepted'
+                                                    ? 'bg-status-success'
+                                                    : row.responseStatus === 'Declined'
+                                                        ? 'bg-status-error'
+                                                        : 'bg-primary/40',
+                                        )}
+                                        aria-hidden
+                                    />
+
+                                    <div className="pl-4 sm:pl-5">
+                                        <div className="flex flex-col gap-5 p-5 sm:p-6">
+                                            <div className="flex flex-wrap items-start justify-between gap-3">
+                                                <div className="space-y-2">
+                                                    <div className="flex flex-wrap items-center gap-2.5">
+                                                        <h3 className="text-xl font-semibold tracking-tight text-foreground">
+                                                            {row.eventName}
+                                                        </h3>
+                                                        {row.isVIP && (
+                                                            <span className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white shadow-sm shadow-amber-500/25">
+                                                                <Crown className="h-3 w-3" />
+                                                                VIP
+                                                            </span>
                                                         )}
                                                     </div>
-                                                    {campaign && (
-                                                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs mt-1">
-                                                            Campaign: {campaign.name}
-                                                        </Badge>
+                                                    {row.campaign?.name && (
+                                                        <p className="text-xs text-muted-foreground">
+                                                            <span className="font-medium text-foreground/70">Campaign</span>
+                                                            <span className="mx-1.5 text-border">·</span>
+                                                            {row.campaign.name}
+                                                        </p>
                                                     )}
-                                                </TableCell>
-                                                <TableCell>
-                                                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                                                        <MapPin className="h-3 w-3" />
-                                                        {eventObj?.city || 'N/A'}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="whitespace-nowrap">
-                                                    <div className="flex items-center gap-1 text-sm">
-                                                        <Calendar className="h-3 w-3 shrink-0 text-muted-foreground" />
-                                                        {formatEventDates(invitation.eventId, invitation)}
-                                                    </div>
-                                                </TableCell>
-                                                <TableCell className="whitespace-nowrap">
-                                                    <span className="text-sm">
-                                                        {invitation.rsvpDeadline
-                                                            ? new Date(invitation.rsvpDeadline).toLocaleDateString()
-                                                            : 'N/A'}
-                                                    </span>
-                                                </TableCell>
-                                                <TableCell>{getStatusBadge(responseStatus)}</TableCell>
-                                                <TableCell>
-                                                    <div className="flex flex-col gap-2 min-w-[220px]">
-                                                        <div className="flex items-center gap-2">
-                                                            <Button
-                                                                type="button"
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                className="h-8 w-8"
-                                                                onClick={() => handlePreview(invitation)}
-                                                                title="Preview invitation"
-                                                            >
-                                                                <Eye className="h-4 w-4" />
-                                                            </Button>
+                                                </div>
+                                                <StatusPill status={row.responseStatus} />
+                                            </div>
 
-                                                            {showRespondActions && (
-                                                                <>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        disabled={isResponding}
-                                                                        onClick={() => void handleRespond(invitation, 'Accepted')}
-                                                                    >
-                                                                        {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept'}
-                                                                    </Button>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="outline"
-                                                                        disabled={isResponding}
-                                                                        onClick={() => void handleRespond(invitation, 'Maybe')}
-                                                                    >
-                                                                        Maybe
-                                                                    </Button>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        variant="destructive"
-                                                                        disabled={isResponding}
-                                                                        onClick={() => void handleRespond(invitation, 'Declined')}
-                                                                    >
-                                                                        Decline
-                                                                    </Button>
-                                                                </>
+                                            <div className="grid gap-3 sm:grid-cols-3">
+                                                <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                                                    <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                                            Location
+                                                        </p>
+                                                        <p className="truncate text-sm font-medium text-foreground">
+                                                            {row.locationLabel}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                                                    <Calendar className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                                            Event dates
+                                                        </p>
+                                                        <p className="text-sm font-medium text-foreground">
+                                                            {row.dateLabel}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                                                    <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                                                    <div className="min-w-0">
+                                                        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                                            RSVP by
+                                                        </p>
+                                                        <p className="text-sm font-medium text-foreground">
+                                                            {row.deadlineLabel}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="flex flex-col gap-3 border-t border-border/70 bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
+                                                    onClick={() => handlePreview(row.invitation)}
+                                                >
+                                                    <Eye className="h-4 w-4" />
+                                                    Preview
+                                                </Button>
+                                                {renderRespondControls(row)}
+                                            </div>
+                                            <div className="flex items-center gap-2 sm:shrink-0">
+                                                {renderRegisterControl(row)}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </article>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+                            <div className="overflow-x-auto">
+                                <Table className="w-full table-fixed">
+                                    <TableHeader>
+                                        <TableRow className="hover:bg-transparent">
+                                            <TableHead className="h-11 min-w-0 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Event</TableHead>
+                                            <TableHead className="h-11 w-[140px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Location</TableHead>
+                                            <TableHead className="h-11 w-[150px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Date</TableHead>
+                                            <TableHead className="h-11 w-[105px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">RSVP by</TableHead>
+                                            <TableHead className="h-11 w-[125px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Status</TableHead>
+                                            <TableHead className="h-11 w-[235px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Actions</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {rows.map((row) => (
+                                            <TableRow key={row.invitation.id} className="border-border/60 transition-colors hover:bg-muted/25">
+                                                <TableCell className="min-w-0 py-3">
+                                                    <div className="flex items-center gap-3">
+                                                        <div
+                                                            className={cn(
+                                                                'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold ring-1 ring-inset',
+                                                                row.isVIP
+                                                                    ? 'bg-gradient-to-br from-amber-400/25 to-amber-500/5 text-amber-600 ring-amber-500/25'
+                                                                    : 'bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-primary/10',
+                                                            )}
+                                                        >
+                                                            {row.isVIP ? (
+                                                                <Crown className="h-4 w-4" />
+                                                            ) : (
+                                                                row.eventName.charAt(0).toUpperCase()
                                                             )}
                                                         </div>
-
-                                                        <Button
-                                                            disabled={!canRegister}
-                                                            variant={alreadyRegistered ? 'secondary' : canRegister ? 'default' : 'outline'}
-                                                            size="sm"
-                                                            onClick={() => {
-                                                                if (!canRegister) return;
-                                                                navigateToRegister(invitation);
-                                                            }}
-                                                        >
-                                                            {alreadyRegistered
-                                                                ? 'Registration Submitted'
-                                                                : isInvitationDeclined(invitation)
-                                                                    ? 'Declined'
-                                                                    : isInvitationAccepted(invitation)
-                                                                        ? 'Register'
-                                                                        : 'Accept to Register'}
-                                                        </Button>
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <p className="truncate text-sm font-semibold text-foreground">
+                                                                    {row.eventName}
+                                                                </p>
+                                                                {row.isVIP && (
+                                                                    <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 ring-1 ring-inset ring-amber-500/20">
+                                                                        VIP
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {row.campaign?.name && (
+                                                                <p className="truncate text-xs text-muted-foreground">
+                                                                    {row.campaign.name}
+                                                                </p>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </TableCell>
+                                                <TableCell className="min-w-0 py-3">
+                                                    <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                                                        <MapPin className="h-3.5 w-3.5 shrink-0" />
+                                                        <span className="truncate">{row.locationLabel}</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="min-w-0 py-3">
+                                                    <div className="flex items-center gap-1.5 text-sm">
+                                                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                                        <span className="truncate">{row.dateLabel}</span>
+                                                    </div>
+                                                </TableCell>
+                                                <TableCell className="min-w-0 py-3 text-sm text-muted-foreground">
+                                                    <span className="block truncate">{row.deadlineLabel}</span>
+                                                </TableCell>
+                                                <TableCell className="py-3">
+                                                    <StatusPill status={row.responseStatus} />
+                                                </TableCell>
+                                                <TableCell className="py-3">
+                                                    {renderTableActions(row)}
+                                                </TableCell>
                                             </TableRow>
-                                        );
-                                    })}
-                                </TableBody>
-                            </Table>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
                         </div>
-                    </CardContent>
-                </Card>
+                    )}
+                </section>
             )}
-
 
             <InvitationPreviewModal
                 open={previewOpen}
@@ -1038,6 +1102,5 @@ const Invitations: React.FC = () => {
         </div>
     );
 };
-
 
 export default Invitations;

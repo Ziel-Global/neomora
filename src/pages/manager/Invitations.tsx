@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
 import { eventStore, invitationStore, participantStore, registrationStore, templateStore, campaignStore, EMSInvitation, EMSEvent, EMSInvitationTemplate } from '@/lib/emsStore';
 import { teamMemberStore, teamStore, delegationStore } from '@/lib/teamStore';
@@ -10,12 +9,24 @@ import { getMyTeams } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
 import { getMyInvitations, getInvitationsForDelegations, normalizeInvitation, respondToInvitationById, InvitationResponse, Invitation } from '@/api/invitationApi';
 import { getCampaignsForManager, getCampaignDelegationIds, getCampaignManagerRoleIds, isSentCampaignStatus, Campaign } from '@/api/campaignApi';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { InvitationPreviewModal } from '@/components/invitations/InvitationPreviewModal';
-import { Mail, Check, X, Users, Calendar, MapPin, CheckCircle, Clock, AlertCircle, Loader2, Crown, Eye, Flag } from 'lucide-react';
+import { Mail, X, Calendar, MapPin, Clock, AlertCircle, Loader2, Crown, Eye, Flag, CheckCircle2, HelpCircle, ArrowRight, Sparkles, LayoutGrid, List } from 'lucide-react';
 import { toast } from 'sonner';
 import { useNavigate } from 'react-router-dom';
+import { cn } from '@/lib/utils';
+
+const VIEW_MODE_KEY = 'ems_manager_invitations_view_mode';
+type ViewMode = 'cards' | 'table';
+
+const readStoredViewMode = (): ViewMode => {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'table' ? 'table' : 'cards';
+  } catch {
+    return 'cards';
+  }
+};
 
 interface DelegationInvitation {
   invitation: EMSInvitation;
@@ -33,6 +44,15 @@ interface DelegationNotice {
   teamCount: number;
   status: 'Draft' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected';
   rejectionReason?: string;
+}
+
+interface InvitationsQueryData {
+  invitations: DelegationInvitation[];
+  delegationNotices: DelegationNotice[];
+  managerCampaigns: Campaign[];
+  managerDelegations: any[];
+  registeredEventIds: Set<string>;
+  invitationSources: Record<string, any>;
 }
 
 const PENDING_INVITATION_STATUSES = new Set([
@@ -357,32 +377,43 @@ const normalizedToStoreInvitation = (normalized: any): EMSInvitation => ({
 const ManagerInvitationsPage: React.FC = () => {
   const { manager } = useManagerSession();
   const navigate = useNavigate();
-  const [invitations, setInvitations] = useState<DelegationInvitation[]>([]);
-  const [delegationNotices, setDelegationNotices] = useState<DelegationNotice[]>([]);
+  const queryClient = useQueryClient();
   const [selectedInvitation, setSelectedInvitation] = useState<DelegationInvitation | null>(null);
   const [isAcceptDialogOpen, setIsAcceptDialogOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [managerCampaigns, setManagerCampaigns] = useState<Campaign[]>([]);
-  const [managerDelegations, setManagerDelegations] = useState<any[]>([]);
-  const [registeredEventIds, setRegisteredEventIds] = useState<Set<string>>(new Set());
   const [previewTemplate, setPreviewTemplate] = useState<EMSInvitationTemplate | null>(null);
   const [previewInvitation, setPreviewInvitation] = useState<EMSInvitation | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [invitationSources, setInvitationSources] = useState<Record<string, any>>({});
   const [respondingInvitationId, setRespondingInvitationId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
-  useEffect(() => {
-    if (manager) {
-      loadInvitations();
+  const setViewModeAndPersist = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      // ignore storage failures
     }
-  }, [manager]);
+  };
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ['manager', 'invitations'],
+    queryFn: fetchInvitationsData,
+    enabled: !!manager,
+  });
+
+  const invitations = data?.invitations ?? [];
+  const delegationNotices = data?.delegationNotices ?? [];
+  const managerCampaigns = data?.managerCampaigns ?? [];
+  const managerDelegations = data?.managerDelegations ?? [];
+  const registeredEventIds = data?.registeredEventIds ?? new Set<string>();
+  const invitationSources = data?.invitationSources ?? {};
 
   useEffect(() => {
     if (!manager) return;
 
     const handleRefresh = () => {
-      loadInvitations();
+      void refetch();
     };
 
     window.addEventListener('storage', handleRefresh);
@@ -392,13 +423,21 @@ const ManagerInvitationsPage: React.FC = () => {
       window.removeEventListener('storage', handleRefresh);
       window.removeEventListener('delegation-status-updated', handleRefresh as EventListener);
     };
-  }, [manager]);
+  }, [manager, refetch]);
 
-  const loadInvitations = async () => {
-    if (!manager) return;
+  async function fetchInvitationsData(): Promise<InvitationsQueryData> {
+    if (!manager) {
+      return {
+        invitations: [],
+        delegationNotices: [],
+        managerCampaigns: [],
+        managerDelegations: [],
+        registeredEventIds: new Set(),
+        invitationSources: {},
+      };
+    }
 
-    setIsLoading(true);
-    try {
+    {
       // Fetch everything from the server in parallel, including this manager's
       // invitations via getMyInvitations(). IMPORTANT: getMyInvitations() in
       // invitationApi.ts must check the manager's auth token
@@ -412,19 +451,16 @@ const ManagerInvitationsPage: React.FC = () => {
         getMyInvitations().catch(() => []),
       ]);
 
-      // Build the set of delegation IDs owned by this manager
+      // Build the set of delegation IDs owned by this manager. Server data only —
+      // the local delegationStore cache can outlive deleted server records (e.g.
+      // after a DB reset during testing) and must never override live truth here.
       const managerDelegationIds = new Set<string>();
       for (const del of serverDelegations) {
         const delId = del.id || del._id;
         if (delId) managerDelegationIds.add(String(delId));
       }
-      for (const del of delegationStore.getByManager(manager.id)) {
-        if (del.id) managerDelegationIds.add(String(del.id));
-      }
 
       const delegationCampaigns = await getCampaignsForManager(Array.from(managerDelegationIds), manager.id).catch(() => []);
-      setManagerCampaigns(delegationCampaigns);
-      setManagerDelegations(Array.isArray(serverDelegations) ? serverDelegations : []);
 
       for (const campaign of delegationCampaigns) {
         syncTemplateToStore(campaign.template);
@@ -457,8 +493,6 @@ const ManagerInvitationsPage: React.FC = () => {
           registeredEvents.add(eventId);
         }
       }
-      setRegisteredEventIds(registeredEvents);
-
       const delegationScopedInvitations = await getInvitationsForDelegations(Array.from(managerDelegationIds)).catch(() => []);
       const serverInvitationsMerged = [
         ...(Array.isArray(serverInvitations) ? serverInvitations : []),
@@ -624,8 +658,6 @@ const ManagerInvitationsPage: React.FC = () => {
         syncTemplateToStore(campaign.template);
       }
 
-      setInvitationSources(sourceMap);
-
       const delegationInvitations: DelegationInvitation[] = [];
       const seenInvitationKeys = new Set<string>();
 
@@ -669,8 +701,6 @@ const ManagerInvitationsPage: React.FC = () => {
           appendInvitationRow({ ...normalized, id: sourceId }, normalized);
         }
       }
-
-      setInvitations(delegationInvitations);
 
       // Synchronize remote events to the local eventStore
       if (Array.isArray(serverEvents)) {
@@ -902,38 +932,75 @@ const ManagerInvitationsPage: React.FC = () => {
       }
 
       const filteredNotices = Array.from(noticeMap.values()).filter(notice => notice.status !== 'Draft');
-      setDelegationNotices(filteredNotices);
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
-  const getStatusBadge = (status: string) => {
+      return {
+        invitations: delegationInvitations,
+        delegationNotices: filteredNotices,
+        managerCampaigns: delegationCampaigns,
+        managerDelegations: Array.isArray(serverDelegations) ? serverDelegations : [],
+        registeredEventIds: registeredEvents,
+        invitationSources: sourceMap,
+      };
+    }
+  }
+
+  const getStatusStyle = (status: string) => {
     switch (status) {
       case 'Accepted':
-        return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Accepted</Badge>;
+        return {
+          label: 'Accepted',
+          pill: 'bg-status-success-bg text-status-success ring-status-success/20',
+          accent: 'bg-status-success',
+          border: 'border-status-success/20',
+          icon: CheckCircle2,
+        };
       case 'Declined':
-        return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Declined</Badge>;
+        return {
+          label: 'Declined',
+          pill: 'bg-status-error-bg text-status-error ring-status-error/20',
+          accent: 'bg-status-error',
+          border: 'border-status-error/20',
+          icon: X,
+        };
       case 'Maybe':
-        return <Badge className="bg-status-info-bg text-status-info"><Clock className="h-3 w-3 mr-1" />Maybe</Badge>;
-      case 'Pending':
-      case 'Delivered':
-      case 'Opened':
-        return <Badge className="bg-status-warning-bg text-status-warning"><Clock className="h-3 w-3 mr-1" />Pending Response</Badge>;
+        return {
+          label: 'Maybe',
+          pill: 'bg-status-info-bg text-status-info ring-status-info/20',
+          accent: 'bg-status-info',
+          border: 'border-status-info/20',
+          icon: HelpCircle,
+        };
       case 'Expired':
-        return <Badge className="bg-muted text-muted-foreground"><AlertCircle className="h-3 w-3 mr-1" />Expired</Badge>;
+        return {
+          label: 'Expired',
+          pill: 'bg-muted text-muted-foreground ring-border',
+          accent: 'bg-muted-foreground/40',
+          border: 'border-border/80',
+          icon: AlertCircle,
+        };
       default:
-        return <Badge variant="secondary">{status}</Badge>;
+        return {
+          label: 'Awaiting your reply',
+          pill: 'bg-status-warning-bg text-status-warning ring-status-warning/25',
+          accent: 'bg-status-warning',
+          border: 'border-status-warning/30',
+          icon: Clock,
+        };
     }
   };
 
   const updateInvitationEntry = (entry: DelegationInvitation, mergedInvitation: EMSInvitation) => {
-    setInvitations(prev =>
-      prev.map(item =>
-        item.invitation.id === entry.invitation.id
-          ? { ...item, invitation: mergedInvitation }
-          : item,
-      ),
+    queryClient.setQueryData<InvitationsQueryData>(['manager', 'invitations'], prev =>
+      prev
+        ? {
+            ...prev,
+            invitations: prev.invitations.map(item =>
+              item.invitation.id === entry.invitation.id
+                ? { ...item, invitation: mergedInvitation }
+                : item,
+            ),
+          }
+        : prev,
     );
     if (previewInvitation?.id === entry.invitation.id) {
       setPreviewInvitation(mergedInvitation);
@@ -968,19 +1035,6 @@ const ManagerInvitationsPage: React.FC = () => {
     }
   };
 
-  const getDelegationStatusBadge = (status: string) => {
-    switch (status) {
-      case 'Approved':
-        return <Badge className="bg-status-success-bg text-status-success"><CheckCircle className="h-3 w-3 mr-1" />Approved</Badge>;
-      case 'Rejected':
-        return <Badge className="bg-status-error-bg text-status-error"><X className="h-3 w-3 mr-1" />Rejected</Badge>;
-      case 'Submitted':
-        return <Badge className="bg-status-warning-bg text-status-warning"><Clock className="h-3 w-3 mr-1" />Under Review</Badge>;
-      default:
-        return <Badge variant="secondary">Draft</Badge>;
-    }
-  };
-
   const handlePreview = (inv: DelegationInvitation) => {
     const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
     const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
@@ -1000,14 +1054,9 @@ const ManagerInvitationsPage: React.FC = () => {
     const targetEventId = String(eventId);
     if (!targetEventId) return false;
 
-    const fromServer = managerDelegations.some(
+    // Server data only — see the comment on managerDelegationIds above.
+    return managerDelegations.some(
       (delegation) => resolveDelegationEventId(delegation) === targetEventId,
-    );
-    if (fromServer) return true;
-
-    if (!manager?.id) return false;
-    return delegationStore.getByManager(manager.id).some(
-      (delegation) => String(delegation.eventId || '') === targetEventId,
     );
   };
 
@@ -1101,252 +1150,352 @@ const ManagerInvitationsPage: React.FC = () => {
   const acceptedCount = invitations.filter(inv => isInvitationAccepted(inv.invitation)).length;
   const displayInvitations = dedupeInvitations(invitations);
 
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold">Delegation Invitations</h1>
-          <p className="text-muted-foreground mt-1">
-            View and respond to invitations for your {manager?.country} delegation
-          </p>
+  const buildRow = (inv: DelegationInvitation) => {
+    const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
+    const campaign = getCampaignForInvitation(inv.invitation, managerCampaigns, rawSource);
+    const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
+    const responseStatus = getInvitationResponseStatus(inv.invitation);
+    const status = getStatusStyle(responseStatus);
+    const deadline =
+      inv.invitation.rsvpDeadline
+        ? new Date(inv.invitation.rsvpDeadline).toLocaleDateString(undefined, {
+            day: 'numeric',
+            month: 'short',
+            year: 'numeric',
+          })
+        : campaign?.rsvpDeadline
+          ? new Date(campaign.rsvpDeadline).toLocaleDateString(undefined, {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })
+          : 'No deadline';
+
+    return {
+      inv,
+      campaign,
+      template,
+      isVIP: template ? isVIPTemplate(template) : false,
+      responseStatus,
+      status,
+      showRespondActions: canRespondToInvitation(inv.invitation),
+      canContinue: isInvitationAccepted(inv.invitation) && !isInvitationDeclined(inv.invitation),
+      isResponding: respondingInvitationId === inv.invitation.id,
+      needsDelegation: invitationNeedsDelegation(inv) && !hasManagerDelegationForEvent(inv.event.id),
+      deadline,
+      campaignLabel: campaign?.name || campaign?.subject || null,
+      locationLabel: inv.event.city || manager?.country || 'To be confirmed',
+      dateLabel: formatEventDates(inv.event),
+    };
+  };
+
+  const renderPrimaryAction = (
+    row: ReturnType<typeof buildRow>,
+    variant: 'card' | 'table' = 'card',
+  ) => {
+    const isTable = variant === 'table';
+
+    if (row.showRespondActions) {
+      return (
+        <div
+          className={cn(
+            'flex h-8 overflow-hidden rounded-md border border-border/80 bg-card',
+            isTable ? 'w-full' : 'h-9 rounded-lg shadow-sm',
+          )}
+        >
+          <button
+            type="button"
+            disabled={row.isResponding}
+            onClick={() => void handleRespond(row.inv, 'Accepted')}
+            className={cn(
+              'inline-flex h-full flex-1 items-center justify-center gap-1 whitespace-nowrap bg-primary text-[11px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60',
+              isTable ? 'px-1.5' : 'gap-1.5 px-3.5 text-xs',
+            )}
+          >
+            {row.isResponding ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              !isTable && <CheckCircle2 className="h-3.5 w-3.5" />
+            )}
+            Accept
+          </button>
+          <button
+            type="button"
+            disabled={row.isResponding}
+            onClick={() => void handleRespond(row.inv, 'Maybe')}
+            className={cn(
+              'inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-60',
+              isTable ? 'px-1.5' : 'px-3 text-xs',
+            )}
+          >
+            Maybe
+          </button>
+          <button
+            type="button"
+            disabled={row.isResponding}
+            onClick={() => void handleRespond(row.inv, 'Declined')}
+            className={cn(
+              'inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 text-[11px] font-medium text-status-error transition-colors hover:bg-status-error-bg disabled:opacity-60',
+              isTable ? 'px-1.5' : 'px-3 text-xs',
+            )}
+          >
+            Decline
+          </button>
         </div>
-     {/*   {pendingCount > 0 && (
-          <Button onClick={handleBulkAccept} disabled={isLoading}>
-            <Check className="h-4 w-4 mr-2" />
-            Accept All ({pendingCount})
-          </Button>
-        )} */}
-      </div>
+      );
+    }
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                <Mail className="h-6 w-6 text-primary" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{invitations.length}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Total Invitations</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-status-warning-bg flex items-center justify-center">
-                <Clock className="h-6 w-6 text-status-warning" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{pendingCount}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Pending Response</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-4">
-              <div className="h-12 w-12 rounded-full bg-status-success-bg flex items-center justify-center">
-                <CheckCircle className="h-6 w-6 text-status-success" />
-              </div>
-              <div>
-                {isLoading ? (
-                  <div className="h-8 w-10 rounded bg-muted animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold">{acceptedCount}</p>
-                )}
-                <p className="text-sm text-muted-foreground">Accepted</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+    if (row.needsDelegation) {
+      return (
+        <Button
+          size="sm"
+          className={cn('h-8 gap-1.5 shadow-sm', isTable ? 'w-full px-2 text-xs' : 'h-9')}
+          disabled={!row.canContinue}
+          title={!row.canContinue ? 'Accept the invitation first' : undefined}
+          onClick={() => {
+            if (!row.canContinue) {
+              toast.error('Please accept the invitation before creating a delegation.');
+              return;
+            }
+            handleCreateDelegationForInvitation(row.inv);
+          }}
+        >
+          <Flag className="h-3.5 w-3.5 shrink-0" />
+          {isTable ? 'Create' : 'Create Delegation'}
+          {!isTable && <ArrowRight className="h-3.5 w-3.5" />}
+        </Button>
+      );
+    }
 
-      {/* Invitations Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Mail className="h-5 w-5" />
-            Invitations ({invitations.length})
-          </CardTitle>
-          <CardDescription>
-            Preview your invitation, then register your delegation for the event
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-12">
-              <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-primary" />
-              <p className="text-muted-foreground">Loading invitations...</p>
+    return (
+      <Button
+        size="sm"
+        className={cn('h-8 gap-1.5 shadow-sm', isTable ? 'w-full px-2 text-xs' : 'h-9')}
+        disabled={!row.canContinue}
+        onClick={() => void handleRegister(row.inv)}
+      >
+        {isInvitationDeclined(row.inv.invitation)
+          ? 'Declined'
+          : row.canContinue
+            ? isTable
+              ? 'Continue'
+              : 'Continue to Delegation'
+            : isTable
+              ? 'Accept first'
+              : 'Accept to continue'}
+        {row.canContinue && !isTable && <ArrowRight className="h-3.5 w-3.5" />}
+      </Button>
+    );
+  };
+
+  return (
+    <div className="space-y-8">
+      {/* Hero */}
+      <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl" aria-hidden />
+        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-40 w-40 rounded-full bg-accent/10 blur-3xl" aria-hidden />
+
+        <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-xl space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+              Team manager portal
+            </p>
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+              Delegation Invitations
+            </h1>
+            <p className="text-sm leading-relaxed text-muted-foreground sm:text-[15px]">
+              View and respond to invitations for your {manager?.country || ''} delegation, then continue to registration.
+            </p>
+          </div>
+
+          {!isLoading && invitations.length > 0 && (
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              {[
+                { label: 'Total', value: invitations.length, tone: 'text-foreground' },
+                { label: 'Awaiting reply', value: pendingCount, tone: 'text-status-warning' },
+                { label: 'Accepted', value: acceptedCount, tone: 'text-status-success' },
+              ].map((stat) => (
+                <div
+                  key={stat.label}
+                  className="min-w-[88px] rounded-xl border border-border/70 bg-card/80 px-3.5 py-3 shadow-sm backdrop-blur-sm"
+                >
+                  <p className={cn('text-2xl font-semibold tabular-nums tracking-tight', stat.tone)}>
+                    {stat.value}
+                  </p>
+                  <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {stat.label}
+                  </p>
+                </div>
+              ))}
             </div>
-          ) : displayInvitations.length === 0 ? (
-            <div className="text-center py-12">
-              <Mail className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-              <p className="text-muted-foreground">No invitations for your delegation yet</p>
+          )}
+        </div>
+      </header>
+
+      {/* List */}
+      <section className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-0.5">
+          <div className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary/60" />
+            <h2 className="text-sm font-semibold text-foreground">
+              Invitations
+              <span className="ml-1.5 font-normal text-muted-foreground">({displayInvitations.length})</span>
+            </h2>
+          </div>
+
+          {!isLoading && displayInvitations.length > 0 && (
+            <div
+              className="inline-flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm"
+              role="group"
+              aria-label="Display mode"
+            >
+              <button
+                type="button"
+                onClick={() => setViewModeAndPersist('cards')}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                  viewMode === 'cards'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                aria-pressed={viewMode === 'cards'}
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+                Cards
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewModeAndPersist('table')}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                  viewMode === 'table'
+                    ? 'bg-primary text-primary-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+                aria-pressed={viewMode === 'table'}
+              >
+                <List className="h-3.5 w-3.5" />
+                Table
+              </button>
             </div>
-          ) : (
+          )}
+        </div>
+
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-24">
+            <Loader2 className="h-9 w-9 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Loading invitations…</p>
+          </div>
+        ) : displayInvitations.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+              <Mail className="h-7 w-7 text-muted-foreground/50" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground">No invitations yet</h3>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+              When organisers invite your delegation, they will appear here for you to respond.
+            </p>
+          </div>
+        ) : viewMode === 'table' ? (
+          <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
             <div className="overflow-x-auto">
-              <Table>
+              <Table className="w-full table-fixed">
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>RSVP Deadline</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead className="h-11 min-w-0 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Event</TableHead>
+                    <TableHead className="h-11 w-[130px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Location</TableHead>
+                    <TableHead className="h-11 w-[150px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Date</TableHead>
+                    <TableHead className="h-11 w-[110px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">RSVP by</TableHead>
+                    <TableHead className="h-11 w-[145px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Status</TableHead>
+                    <TableHead className="h-11 w-[250px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {displayInvitations.map((inv) => {
-                    const rawSource = inv.rawSource || invitationSources[inv.invitation.id];
-                    const campaign = getCampaignForInvitation(inv.invitation, managerCampaigns, rawSource);
-                    const template = getInvitationTemplate(inv.invitation, rawSource, managerCampaigns);
-                    const isVIP = template ? isVIPTemplate(template) : false;
-                    const responseStatus = getInvitationResponseStatus(inv.invitation);
-                    const showRespondActions = canRespondToInvitation(inv.invitation);
-                    const canContinue = isInvitationAccepted(inv.invitation) && !isInvitationDeclined(inv.invitation);
-                    const isResponding = respondingInvitationId === inv.invitation.id;
+                    const row = buildRow(inv);
+                    const StatusIcon = row.status.icon;
 
                     return (
-                      <TableRow key={`${inv.invitation.id}-${inv.delegationName}`}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <p className="font-medium">{inv.event.name}</p>
-                            {isVIP && (
-                              <Badge variant="default" className="bg-amber-500 hover:bg-amber-600 text-white text-xs">
-                                <Crown className="h-3 w-3 mr-1" /> VIP
-                              </Badge>
-                            )}
-                          </div>
-                          {invitationHasDelegation(inv) && inv.delegationName && (
-                            <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-xs mt-1">
-                              Delegation: {inv.delegationName}
-                            </Badge>
-                          )}
-                          {campaign && (campaign.name || campaign.subject) && (
-                            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs mt-1 ml-1">
-                              Campaign: {campaign.name || campaign.subject}
-                            </Badge>
-                          )}
-                          {template && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Template: {template.name}
-                            </p>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                            <MapPin className="h-3 w-3" />
-                            {inv.event.city || manager?.country || 'N/A'}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex items-center gap-1 text-sm">
-                            <Calendar className="h-3 w-3 text-muted-foreground" />
-                            {formatEventDates(inv.event)}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm">
-                            {inv.invitation.rsvpDeadline
-                              ? new Date(inv.invitation.rsvpDeadline).toLocaleDateString()
-                              : campaign?.rsvpDeadline
-                                ? new Date(campaign.rsvpDeadline).toLocaleDateString()
-                                : 'N/A'}
-                          </span>
-                        </TableCell>
-                        <TableCell>{getStatusBadge(responseStatus)}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-2 min-w-[220px]">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                onClick={() => handlePreview(inv)}
-                                title="Preview invitation"
-                              >
-                                <Eye className="h-4 w-4" />
-                              </Button>
-
-                              {showRespondActions && (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    disabled={isResponding}
-                                    onClick={() => void handleRespond(inv, 'Accepted')}
-                                  >
-                                    {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Accept'}
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    disabled={isResponding}
-                                    onClick={() => void handleRespond(inv, 'Maybe')}
-                                  >
-                                    Maybe
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="destructive"
-                                    disabled={isResponding}
-                                    onClick={() => void handleRespond(inv, 'Declined')}
-                                  >
-                                    Decline
-                                  </Button>
-                                </>
+                      <TableRow
+                        key={`${inv.invitation.id}-${inv.delegationName}`}
+                        className="border-border/60 transition-colors hover:bg-muted/25"
+                      >
+                        <TableCell className="min-w-0 py-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={cn(
+                                'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold ring-1 ring-inset',
+                                row.isVIP
+                                  ? 'bg-gradient-to-br from-amber-400/25 to-amber-500/5 text-amber-600 ring-amber-500/25'
+                                  : 'bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-primary/10',
+                              )}
+                            >
+                              {row.isVIP ? (
+                                <Crown className="h-4 w-4" />
+                              ) : (
+                                inv.event.name.charAt(0).toUpperCase()
                               )}
                             </div>
-
-                            {invitationNeedsDelegation(inv) ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={isCreateDelegationDisabled(inv) || !canContinue}
-                                title={
-                                  isCreateDelegationDisabled(inv)
-                                    ? 'Delegation already created for this event'
-                                    : !canContinue
-                                      ? 'Accept the invitation first'
-                                      : undefined
-                                }
-                                onClick={() => {
-                                  if (!canContinue) {
-                                    toast.error('Please accept the invitation before creating a delegation.');
-                                    return;
-                                  }
-                                  handleCreateDelegationForInvitation(inv);
-                                }}
-                              >
-                                <Flag className="h-3 w-3 mr-1" />
-                                Create Delegation
-                              </Button>
-                            ) : (
-                              <Button
-                                size="sm"
-                                disabled={!canContinue}
-                                onClick={() => void handleRegister(inv)}
-                              >
-                                {isInvitationDeclined(inv.invitation)
-                                  ? 'Declined'
-                                  : canContinue
-                                    ? 'Continue to Delegation'
-                                    : 'Accept to Continue'}
-                              </Button>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="truncate text-sm font-semibold text-foreground">
+                                  {inv.event.name}
+                                </p>
+                                {row.isVIP && (
+                                  <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 ring-1 ring-inset ring-amber-500/20">
+                                    VIP
+                                  </span>
+                                )}
+                              </div>
+                              {row.campaignLabel && (
+                                <p className="truncate text-xs text-muted-foreground">
+                                  {row.campaignLabel}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="min-w-0 py-3">
+                          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                            <MapPin className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{row.locationLabel}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="min-w-0 py-3">
+                          <div className="flex items-center gap-1.5 text-sm">
+                            <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            <span className="truncate">{row.dateLabel}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="min-w-0 py-3 text-sm text-muted-foreground">
+                          <span className="block truncate">{row.deadline}</span>
+                        </TableCell>
+                        <TableCell className="py-3">
+                          <span
+                            className={cn(
+                              'inline-flex max-w-full items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset',
+                              row.status.pill,
                             )}
+                          >
+                            <StatusIcon className="h-3.5 w-3.5 shrink-0" />
+                            <span className="truncate">{row.status.label}</span>
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-3">
+                          <div className="flex items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 border-border/80 bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={() => handlePreview(inv)}
+                              title="Preview invitation"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </Button>
+                            <div className="min-w-0 flex-1">
+                              {renderPrimaryAction(row, 'table')}
+                            </div>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1355,118 +1504,161 @@ const ManagerInvitationsPage: React.FC = () => {
                 </TableBody>
               </Table>
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {displayInvitations.map((inv) => {
+              const row = buildRow(inv);
+              const StatusIcon = row.status.icon;
 
-      {/* <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Delegation Review Status
-          </CardTitle>
-          <CardDescription>
-            Latest admin decisions for your delegation submissions
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="text-center py-12">
-              <Loader2 className="h-8 w-8 mx-auto mb-4 animate-spin text-primary" />
-              <p className="text-muted-foreground">Loading delegation status...</p>
-            </div>
-          ) : delegationNotices.length === 0 ? (
-            <div className="text-center py-12">
-              <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-              <p className="text-muted-foreground">No delegation submissions found yet</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Delegation</TableHead>
-                    <TableHead>Event</TableHead>
-                    <TableHead>Teams</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Notes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {delegationNotices.map(notice => (
-                    <TableRow key={notice.id}>
-                      <TableCell>
-                        <p className="font-medium">{notice.delegationName}</p>
-                      </TableCell>
-                      <TableCell>{notice.eventName}</TableCell>
-                      <TableCell>{notice.teamCount}</TableCell>
-                      <TableCell>{getDelegationStatusBadge(notice.status)}</TableCell>
-                      <TableCell>
-                        {notice.status === 'Approved' ? (
-                          <span className="text-sm text-status-success">Delegation approved by admin</span>
-                        ) : notice.status === 'Rejected' ? (
-                          <span className="text-sm text-status-error">
-                            Delegation rejected{notice.rejectionReason ? `: ${notice.rejectionReason}` : ''}
-                          </span>
-                        ) : notice.status === 'Submitted' ? (
-                          <span className="text-sm text-muted-foreground">Awaiting admin review</span>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">Draft delegation</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card> */}
+              return (
+                <article
+                  key={`${inv.invitation.id}-${inv.delegationName}`}
+                  className={cn(
+                    'group relative overflow-hidden rounded-2xl border bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)] transition-all duration-300',
+                    'hover:shadow-[0_1px_2px_rgba(15,23,42,0.05),0_16px_40px_-16px_rgba(15,23,42,0.14)]',
+                    row.status.border,
+                  )}
+                >
+                  <div className={cn('absolute inset-y-0 left-0 w-1', row.status.accent)} aria-hidden />
+
+                  <div className="pl-4 sm:pl-5">
+                    <div className="space-y-5 p-5 sm:p-6">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-xl font-semibold tracking-tight text-foreground">
+                              {inv.event.name}
+                            </h3>
+                            {row.isVIP && (
+                              <span className="inline-flex items-center gap-1 rounded-md bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 ring-1 ring-inset ring-amber-500/20">
+                                <Crown className="h-3 w-3" />
+                                VIP
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            {row.campaignLabel && (
+                              <span className="truncate">Campaign · {row.campaignLabel}</span>
+                            )}
+                            {row.template?.name && (
+                              <span className="truncate">Template · {row.template.name}</span>
+                            )}
+                            {invitationHasDelegation(inv) && inv.delegationName && (
+                              <span className="truncate">Delegation · {inv.delegationName}</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <span
+                          className={cn(
+                            'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset',
+                            row.status.pill,
+                          )}
+                        >
+                          <StatusIcon className="h-3.5 w-3.5" />
+                          {row.status.label}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                          <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Location
+                            </p>
+                            <p className="truncate text-sm font-medium text-foreground">
+                              {row.locationLabel}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                          <Calendar className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Event dates
+                            </p>
+                            <p className="text-sm font-medium text-foreground">{row.dateLabel}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                          <Clock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/60" />
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              RSVP by
+                            </p>
+                            <p className="truncate text-sm font-medium text-foreground">{row.deadline}</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-3 border-t border-border/70 bg-muted/20 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9 gap-1.5 border-border/80 bg-card text-muted-foreground hover:text-foreground"
+                        onClick={() => handlePreview(inv)}
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                        Preview
+                      </Button>
+
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        {renderPrimaryAction(row, 'card')}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* Accept Confirmation Dialog */}
       <Dialog open={isAcceptDialogOpen} onOpenChange={setIsAcceptDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Accept Invitation</DialogTitle>
-            <DialogDescription>
+        <DialogContent className="max-w-lg overflow-hidden rounded-2xl p-0">
+          <DialogHeader className="space-y-0 border-b bg-gradient-to-br from-primary/[0.06] via-card to-card px-5 py-4 pe-12 text-start">
+            <DialogTitle className="text-lg tracking-tight">Accept Invitation</DialogTitle>
+            <DialogDescription className="text-xs">
               You are accepting this invitation on behalf of {selectedInvitation?.participantName}
             </DialogDescription>
           </DialogHeader>
           {selectedInvitation && (
-            <div className="space-y-4 py-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Participant</p>
-                  <p className="font-medium">{selectedInvitation.participantName}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Event</p>
-                  <p className="font-medium">{selectedInvitation.event.name}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Location</p>
-                  <p className="font-medium">{selectedInvitation.event.city}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Dates</p>
-                  <p className="font-medium">
-                    {new Date(selectedInvitation.event.startDate).toLocaleDateString()} - {new Date(selectedInvitation.event.endDate).toLocaleDateString()}
-                  </p>
-                </div>
+            <div className="space-y-4 px-5 py-4">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { label: 'Participant', value: selectedInvitation.participantName },
+                  { label: 'Event', value: selectedInvitation.event.name },
+                  { label: 'Location', value: selectedInvitation.event.city || '—' },
+                  {
+                    label: 'Dates',
+                    value: `${new Date(selectedInvitation.event.startDate).toLocaleDateString()} – ${new Date(selectedInvitation.event.endDate).toLocaleDateString()}`,
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl bg-muted/40 px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {item.label}
+                    </p>
+                    <p className="mt-0.5 text-sm font-medium text-foreground">{item.value}</p>
+                  </div>
+                ))}
               </div>
-              <div className="bg-muted/50 rounded-lg p-4">
-                <p className="text-sm">
-                  After accepting, you can proceed to complete the registration with travel preferences and required documents.
-                </p>
-              </div>
+              <p className="rounded-xl border border-border/70 bg-muted/20 px-3.5 py-3 text-sm text-muted-foreground">
+                After accepting, you can continue to complete the delegation with travel preferences and required documents.
+              </p>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="border-t bg-muted/20 px-5 py-3">
             <Button variant="outline" onClick={() => setIsAcceptDialogOpen(false)} disabled={isProcessing}>
               Cancel
             </Button>
-            <Button onClick={handleConfirmAccept} disabled={isProcessing}>
-              {isProcessing ? 'Processing...' : 'Accept & Continue'}
+            <Button onClick={handleConfirmAccept} disabled={isProcessing} className="gap-1.5">
+              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {isProcessing ? 'Processing…' : 'Accept & Continue'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1503,5 +1695,6 @@ const ManagerInvitationsPage: React.FC = () => {
     </div>
   );
 };
+
 
 export default ManagerInvitationsPage;

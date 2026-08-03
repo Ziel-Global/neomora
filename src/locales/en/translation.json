@@ -66,6 +66,7 @@
     "filters": "Filters",
     "export": "Export",
     "gender": "Gender",
+    "phone": "Phone",
     "male": "Male",
     "female": "Female",
     "other": "Other",
@@ -218,6 +219,16 @@
     "clear_filters": "Clear Filters",
     "dietary": "Dietary Requirements",
     "accessibility": "Accessibility Needs",
+    "added": "Added",
+    "not_registered": "Not registered",
+    "contact_information": "Contact information",
+    "contact_information_desc": "Identity and contact details for this member.",
+    "participant_details": "Participant details",
+    "participant_details_desc": "Role, nationality, and professional information.",
+    "additional_needs": "Additional needs",
+    "additional_needs_desc": "Optional notes to help provide the right experience.",
+    "required_hint": "Fields marked with * are required.",
+    "send_portal_invite": "Send portal invite",
     "send_message": "Send Message",
     "view_profile": "View Profile",
     "roles": {
@@ -235,7 +246,8 @@
     "add_member": "Add Member",
     "edit_member": "Edit Member",
     "no_members": "No members yet",
-    "no_members_desc": "Add your first member to start managing global records."
+    "no_members_desc": "Add your first member to start managing global records.",
+    "newest_first": "Newest members first"
   },
   "invitations": {
     "title": "Invitations",
@@ -245,6 +257,7 @@
     "delivered": "Delivered",
     "accepted": "Accepted",
     "campaigns": "Campaigns",
+    "search_placeholder": "Search campaigns by name or event...",
     "campaign_name": "Campaign Name",
     "rsvp_deadline": "RSVP Deadline",
     "send_now": "Send Now",

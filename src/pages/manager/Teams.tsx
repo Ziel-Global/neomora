@@ -1,526 +1,129 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES } from '@/lib/teamStore';
-import { Plus, Users, Trash2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { createTeam, deleteTeam, getMyTeams, listTeamMembers } from '@/api/teamApi';
+import { Team, SPORT_CATEGORIES } from '@/lib/teamStore';
+import { Loader2, Plus, Trash2, UserPlus, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { useNavigate } from 'react-router-dom';
-import { getMyTeams, createTeam, deleteTeam, listTeamMembers } from '@/api/teamApi';
-import { getMyDelegations } from '@/api/delegationApi';
-import { getEvents } from '@/api/eventApi';
-import { EMSEvent } from '@/lib/emsStore';
-import { Loader2 } from 'lucide-react';
-import {
-  countTeamsForDelegation,
-  delegationHasTeam,
-  MAX_TEAMS_PER_DELEGATION,
-} from '@/lib/delegationTeamRules';
 
-interface EventSportCategoryOption {
-  key: string;
-  sportName: string;
-  group: string;
-  label: string;
-}
+const teamSport = (team: any) => String(
+  team.sportName || team.subCategory || team.sportCategory?.subCategory || team.sportCategory || 'Sport not set',
+);
 
-const KNOWN_SPORT_GROUPS = new Set(['team-based-games', 'individual-games', 'hybrid-games']);
-
-const inferSportCategoryGroup = (sportName: string): string => {
-  const cat = SPORT_CATEGORIES.find(
-    (c) => c.name.toLowerCase() === sportName.toLowerCase(),
-  );
-  if (!cat) return 'hybrid-games';
-
-  const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
-  const individualGames = ['athletics', 'swimming', 'tennis', 'gymnastics', 'equestrian'];
-  if (teamGames.includes(cat.id)) return 'team-based-games';
-  if (individualGames.includes(cat.id)) return 'individual-games';
-  return 'hybrid-games';
-};
-
-const normalizeEventSportCategories = (event?: EMSEvent | null): EventSportCategoryOption[] => {
-  const raw = (event as any)?.sportCategories || (event as any)?.sport_categories || [];
-  if (!Array.isArray(raw)) return [];
-
-  const options = new Map<string, EventSportCategoryOption>();
-
-  raw.forEach((category: any, index: number) => {
-    const rawName = String(category.name || category.sportCategory || category.sport_category || '').trim();
-    const rawSubCategory = String(category.subCategory || category.sub_category || '').trim();
-    const rawGroup = String(
-      category.group ||
-      category.sportCategoryGroup ||
-      category.sport_category_group ||
-      '',
-    ).trim();
-
-    // API uses subCategory for sport name (e.g. Football) and sportCategoryGroup for group.
-    let sportName = rawName;
-    let group = rawGroup;
-
-    if (KNOWN_SPORT_GROUPS.has(rawName) && rawSubCategory) {
-      sportName = rawSubCategory;
-      group = rawName;
-    } else if (!group && sportName) {
-      group = inferSportCategoryGroup(sportName);
-    }
-
-    if (!sportName || !group) return;
-
-    const key = `${group}::${sportName}`;
-    if (options.has(key)) return;
-
-    const detailLabel =
-      rawSubCategory && rawSubCategory.toLowerCase() !== sportName.toLowerCase()
-        ? `${sportName} (${rawSubCategory})`
-        : sportName;
-
-    options.set(key, {
-      key,
-      sportName,
-      group,
-      label: detailLabel,
-    });
-  });
-
-  return Array.from(options.values());
-};
+const teamDelegation = (team: any) => team.delegation?.country || team.delegationId || team.delegation_id;
 
 const TeamsPage: React.FC = () => {
   const navigate = useNavigate();
-  const { manager } = useManagerSession();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [selectedSportOptionKey, setSelectedSportOptionKey] = useState('');
-  const [formData, setFormData] = useState({
-    name: '',
-    delegationId: '',
-    eventId: '',
+  const [saving, setSaving] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState('');
+  const [sport, setSport] = useState('');
+
+  const { data: teams = [], isLoading: loading, error, refetch } = useQuery({
+    queryKey: ['manager', 'teams'],
+    queryFn: async () => {
+      const result = await getMyTeams();
+      const withCounts = await Promise.all(result.map(async (team: any) => {
+        try {
+          const members = await listTeamMembers(team.id);
+          return { ...team, memberCount: members.length };
+        } catch {
+          return team;
+        }
+      }));
+      return withCounts as Team[];
+    },
   });
-  const [isLoading, setIsLoading] = useState(false);
-  const [isActionLoading, setIsActionLoading] = useState(false);
-  const [events, setEvents] = useState<EMSEvent[]>([]);
-  const [delegations, setDelegations] = useState<any[]>([]);
 
   useEffect(() => {
-    if (manager) {
-      initialLoad();
+    if (error) {
+      console.error(error);
+      toast.error('Could not load your teams');
     }
-  }, [manager]);
+  }, [error]);
 
-  const initialLoad = async () => {
-    setIsLoading(true);
-    try {
-      const [eventsData] = await Promise.all([
-        getEvents(),
-        refreshDelegations(),
-      ]);
-      setEvents(eventsData.filter(e => e.status === 'Published' || e.status === 'Ongoing'));
-      await refreshTeams(teamStore.getByManager(manager?.id || ''));
-    } catch (error: any) {
-      console.error('Failed to load initial teams data:', error);
-      const msg = error?.response?.data?.message || error?.message || 'Unknown error';
-      toast.error(`Failed to load teams or events: ${msg}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const refreshDelegations = async () => {
-    try {
-      const delegationsData = await getMyDelegations();
-      setDelegations(delegationsData);
-    } catch (error) {
-      console.error('Failed to refresh delegations:', error);
-    }
-  };
-
-  const refreshTeams = async (localTeamsOverride?: Team[]) => {
-    try {
-      const serverTeams = await getMyTeams();
-      const localTeams = localTeamsOverride || teamStore.getByManager(manager?.id || '');
-
-      const memberCountsByTeam = new Map<string, number>();
-      await Promise.all(
-        serverTeams.map(async (team: any) => {
-          try {
-            const members = await listTeamMembers(team.id);
-            memberCountsByTeam.set(team.id, members.length);
-          } catch {
-            memberCountsByTeam.set(team.id, 0);
-          }
-        }),
-      );
-
-      const merged = serverTeams.map((t: any) => {
-        const countFromServer = t.memberCount || t.member_count || 0;
-        const countFromMembers = memberCountsByTeam.get(t.id) || 0;
-
-        return {
-          ...t,
-          memberCount: Math.max(countFromServer, countFromMembers),
-        };
-      });
-
-      for (const lt of localTeams) {
-        if (!merged.find(st => st.id === lt.id)) {
-          const localCount = teamMemberStore.getByTeam(lt.id).length;
-          merged.push({ ...lt, memberCount: localCount });
-        }
-      }
-
-      setTeams(merged);
-    } catch (error) {
-      console.error('Failed to refresh teams:', error);
-    }
-  };
-
-  const selectedDelegation = useMemo(
-    () => delegations.find(d => (d.id || d._id) === formData.delegationId),
-    [delegations, formData.delegationId],
+  const selectedSport = useMemo(
+    () => SPORT_CATEGORIES.find((category) => category.name === sport),
+    [sport],
   );
 
-  const selectedDelegationTeamCount = useMemo(() => {
-    if (!formData.delegationId) return 0;
-    return countTeamsForDelegation(formData.delegationId, teams, selectedDelegation);
-  }, [formData.delegationId, teams, selectedDelegation]);
-
-  const availableDelegationsForNewTeam = useMemo(
-    () => delegations.filter(d => {
-      const id = d.id || d._id;
-      return id && !delegationHasTeam(String(id), teams, d);
-    }),
-    [delegations, teams],
-  );
-
-  const selectedEvent = useMemo(
-    () => events.find(e => e.id === formData.eventId),
-    [events, formData.eventId],
-  );
-
-  const eventSportOptions = useMemo(
-    () => normalizeEventSportCategories(selectedEvent),
-    [selectedEvent],
-  );
-
-  const selectedSportOption = useMemo(
-    () => eventSportOptions.find(option => option.key === selectedSportOptionKey),
-    [eventSportOptions, selectedSportOptionKey],
-  );
-
-  const resolveDelegationEventId = (delegation: any): string =>
-    delegation?.eventId || delegation?.event_id || delegation?.event?.id || delegation?.event?._id || '';
-
-  const getDelegationLabel = (delegation: any): string => {
-    const name = delegation.name || delegation.country || 'Delegation';
-    const eventId = resolveDelegationEventId(delegation);
-    const eventName = events.find(e => e.id === eventId)?.name;
-    return eventName ? `${name} (${eventName})` : name;
-  };
-
-  const resetCreateForm = () => {
-    setFormData({ name: '', delegationId: '', eventId: '' });
-    setSelectedSportOptionKey('');
-  };
-
-  const handleDelegationChange = (delegationId: string) => {
-    const delegation = delegations.find(d => (d.id || d._id) === delegationId);
-    const eventId = delegation ? resolveDelegationEventId(delegation) : '';
-    setSelectedSportOptionKey('');
-    setFormData(prev => ({
-      ...prev,
-      delegationId,
-      eventId,
-    }));
-  };
-
-  const handleCreateTeam = async () => {
-    if (!manager) return;
-
-    if (!formData.delegationId) {
-      toast.error('Please select a delegation');
+  const create = async () => {
+    if (!name.trim() || !selectedSport) {
+      toast.error('Enter a team name and choose its sport');
       return;
     }
-
-    if (!formData.name.trim() || !formData.eventId) {
-      toast.error('Please fill in all required fields');
-      return;
-    }
-
-    if (!selectedSportOption) {
-      toast.error('Please select a sport category configured for this event');
-      return;
-    }
-
-    if (delegationHasTeam(formData.delegationId, teams, selectedDelegation)) {
-      toast.error(`This delegation already has a team. Each delegation can only have ${MAX_TEAMS_PER_DELEGATION} team.`);
-      return;
-    }
-
-    setIsActionLoading(true);
+    setSaving(true);
     try {
       await createTeam({
-        delegationId: formData.delegationId,
-        eventId: formData.eventId,
-        name: formData.name.trim(),
-        sportCategoryGroup: selectedSportOption.group,
-        subCategory: selectedSportOption.sportName,
+        name: name.trim(),
+        sportCategoryGroup: selectedSport.id === 'football' || selectedSport.id === 'basketball' || selectedSport.id === 'volleyball' || selectedSport.id === 'esports' ? 'team-based-games' : 'individual-games',
+        subCategory: selectedSport.name,
       });
-      toast.success('Team created successfully!');
-
-      resetCreateForm();
-      setIsCreateOpen(false);
-      refreshTeams();
+      toast.success('Team created. You can now build its roster.');
+      setName('');
+      setSport('');
+      setOpen(false);
+      await refetch();
     } catch (error: any) {
-      console.error('Failed to create team:', error);
-      const msg = error?.response?.data?.message || error?.message || 'Failed to create team';
-      toast.error(Array.isArray(msg) ? msg.join(', ') : msg);
+      toast.error(error?.response?.data?.message || 'Could not create team');
     } finally {
-      setIsActionLoading(false);
+      setSaving(false);
     }
   };
 
-  const handleDeleteTeam = async (teamId: string) => {
-    if (confirm('Are you sure you want to delete this team?')) {
-      try {
-        if (teamId.startsWith('team-')) {
-          teamStore.delete(teamId);
-        } else {
-          await deleteTeam(teamId);
-        }
-        toast.success('Team deleted');
-        refreshTeams();
-      } catch (error) {
-        console.error('Failed to delete team:', error);
-        toast.error('Failed to delete team');
-      }
-    }
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Approved': return 'bg-green-100 text-green-800';
-      case 'Submitted': return 'bg-blue-100 text-blue-800';
-      case 'Under Review': return 'bg-yellow-100 text-yellow-800';
-      case 'Rejected': return 'bg-red-100 text-red-800';
-      default: return 'bg-gray-100 text-gray-800';
+  const remove = async (team: Team) => {
+    if (!confirm(`Delete ${team.name}? This cannot be undone.`)) return;
+    try {
+      await deleteTeam(team.id);
+      toast.success('Team deleted');
+      await refetch();
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || 'Could not delete team');
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-start">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">My Teams</h1>
-          <p className="text-muted-foreground mt-1">
-            Create one team per delegation
-          </p>
+          <p className="text-sm font-medium text-primary">Step 2 of 3 · Organise</p>
+          <h1 className="text-3xl font-bold tracking-tight">Teams</h1>
+          <p className="mt-1 text-muted-foreground">Build reusable teams first, then send eligible teams in a delegation.</p>
         </div>
-        <Dialog
-          open={isCreateOpen}
-          onOpenChange={(open) => {
-            setIsCreateOpen(open);
-            if (open) {
-              refreshDelegations();
-            } else {
-              resetCreateForm();
-            }
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Team
-            </Button>
-          </DialogTrigger>
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogTrigger asChild><Button><Plus className="mr-2 h-4 w-4" />Create team</Button></DialogTrigger>
           <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create New Team</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
+            <DialogHeader><DialogTitle>Create a team</DialogTitle></DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2"><Label>Team name</Label><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Falcons FC" /></div>
               <div className="space-y-2">
-                <Label>Delegation *</Label>
-                {delegations.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No delegations yet. Create one from the Delegations page first.
-                  </p>
-                ) : availableDelegationsForNewTeam.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    All delegations already have a team. Each delegation can only have one team.
-                  </p>
-                ) : (
-                  <Select
-                    value={formData.delegationId}
-                    onValueChange={handleDelegationChange}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select delegation" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableDelegationsForNewTeam.map(d => {
-                        const id = d.id || d._id;
-                        return (
-                          <SelectItem key={id} value={id}>{getDelegationLabel(d)}</SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                )}
-                {formData.delegationId && selectedDelegationTeamCount > 0 && (
-                  <p className="text-xs text-destructive">
-                    This delegation already has a team and cannot accept another.
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Team Name *</Label>
-                <Input
-                  placeholder="e.g., Saudi Athletics Team"
-                  value={formData.name}
-                  onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Event *</Label>
-                <Select
-                  value={formData.eventId}
-                  onValueChange={(v) => {
-                    setSelectedSportOptionKey('');
-                    setFormData(prev => ({ ...prev, eventId: v }));
-                  }}
-                  disabled={!!formData.delegationId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select event" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {events.map(e => (
-                      <SelectItem key={e.id} value={e.id}>{e.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {formData.delegationId && (
-                  <p className="text-xs text-muted-foreground">
-                    Event is set from the selected delegation
-                  </p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>Sport Category *</Label>
-                {!formData.eventId ? (
-                  <p className="text-sm text-muted-foreground">Select a delegation or event first</p>
-                ) : eventSportOptions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No sport categories configured for this event. Ask admin to add them on the event.
-                  </p>
-                ) : (
-                  <Select
-                    value={selectedSportOptionKey}
-                    onValueChange={setSelectedSportOptionKey}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select sport category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {eventSportOptions.map(option => (
-                        <SelectItem key={option.key} value={option.key}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+                <Label>Sport</Label>
+                <Select value={sport} onValueChange={setSport}><SelectTrigger><SelectValue placeholder="Choose the team sport" /></SelectTrigger><SelectContent>
+                  {SPORT_CATEGORIES.map((category) => <SelectItem key={category.id} value={category.name}>{category.name}</SelectItem>)}
+                </SelectContent></Select>
+                <p className="text-xs text-muted-foreground">The team will only be available for events that offer this sport.</p>
               </div>
             </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsCreateOpen(false)} disabled={isActionLoading}>Cancel</Button>
-              <Button
-                onClick={handleCreateTeam}
-                disabled={
-                  isActionLoading ||
-                  availableDelegationsForNewTeam.length === 0 ||
-                  !formData.delegationId ||
-                  selectedDelegationTeamCount > 0 ||
-                  eventSportOptions.length === 0
-                }
-              >
-                {isActionLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                Create Team
-              </Button>
-            </DialogFooter>
+            <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button><Button onClick={create} disabled={saving}>{saving ? 'Creating…' : 'Create team'}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
 
-      {isLoading ? (
-        <div className="flex justify-center items-center py-24">
-          <Loader2 className="h-10 w-10 animate-spin text-primary" />
-        </div>
-      ) : teams.length === 0 ? (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-            <h3 className="font-semibold mb-2">No teams yet</h3>
-            <p className="text-muted-foreground mb-4">Create a delegation first, then add your first team</p>
-            <Button onClick={() => setIsCreateOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Team
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {teams.map(team => (
-            <Card key={team.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-lg">{team.name}</CardTitle>
-                    <CardDescription>
-                      {typeof team.sportCategory === 'string' ? team.sportCategory : (team.sportCategory as any)?.name}
-                      {team.subCategory && ` • ${typeof team.subCategory === 'string' ? team.subCategory : (team.subCategory as any)?.name}`}
-                    </CardDescription>
-                  </div>
-                  <Badge className={getStatusColor(team.status)}>{team.status}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground mb-4">
-                  <Users className="h-4 w-4" />
-                  <span>{team.memberCount} members</span>
-                </div>
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="flex-1"
-                    onClick={() => navigate(`/manager/register-list?teamId=${team.id}`)}
-                  >
-                    <Plus className="h-4 w-4 mr-1" />
-                    Add Members
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleDeleteTeam(team.id)}
-                  >
-                    <Trash2 className="h-4 w-4 text-destructive" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      <Card className="border-primary/15 bg-primary/[0.03]"><CardContent className="flex gap-3 py-4 text-sm text-muted-foreground"><Users className="mt-0.5 h-5 w-5 shrink-0 text-primary" />Add people once in <button className="font-medium text-primary underline-offset-4 hover:underline" onClick={() => navigate('/manager/members')}>Members</button>, or create a person directly from a team. A team does not belong to an event until you select it in a delegation.</CardContent></Card>
+
+      {loading ? <div className="flex justify-center py-16"><Loader2 className="h-7 w-7 animate-spin text-primary" /></div> : teams.length === 0 ? (
+        <Card><CardContent className="py-16 text-center"><Users className="mx-auto mb-4 h-12 w-12 text-muted-foreground/40" /><h2 className="font-semibold">No teams yet</h2><p className="mt-1 text-sm text-muted-foreground">Create a team, then add members whenever you are ready.</p><Button className="mt-5" onClick={() => setOpen(true)}>Create your first team</Button></CardContent></Card>
+      ) : <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{teams.map((team: any) => {
+        const assigned = teamDelegation(team);
+        return <Card key={team.id} className="transition-shadow hover:shadow-md"><CardHeader className="pb-3"><div className="flex items-start justify-between gap-3"><div><CardTitle className="text-lg">{team.name}</CardTitle><CardDescription className="mt-1">{teamSport(team)}</CardDescription></div><Badge variant={assigned ? 'secondary' : 'outline'}>{assigned ? 'In delegation' : 'Ready to send'}</Badge></div></CardHeader><CardContent className="space-y-4"><div className="flex items-center gap-2 text-sm text-muted-foreground"><Users className="h-4 w-4" />{team.memberCount || 0} member{Number(team.memberCount) === 1 ? '' : 's'}</div><div className="flex gap-2"><Button size="sm" className="flex-1" onClick={() => navigate(`/manager/members?teamId=${team.id}`)}><UserPlus className="mr-2 h-4 w-4" />Add member</Button><Button size="sm" variant="outline" onClick={() => navigate(`/manager/add-members?teamId=${team.id}`)}>Manage</Button><Button size="icon" variant="ghost" className="text-muted-foreground hover:text-destructive" onClick={() => remove(team)} aria-label={`Delete ${team.name}`}><Trash2 className="h-4 w-4" /></Button></div></CardContent></Card>;
+      })}</div>}
     </div>
   );
 };

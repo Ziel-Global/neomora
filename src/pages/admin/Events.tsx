@@ -6,6 +6,8 @@ import { StatusBadge } from '@/components/common/StatusBadge';
 import { invitationStore, registrationStore, EMSEvent } from '@/lib/emsStore';
 import { getEvents, createEvent, updateEvent, deleteEvent } from '@/api/eventApi';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
+import { getSportsBoardsForEvent } from '@/lib/sportsBoards';
 import { Calendar, MapPin, Users, Plus, Search, Eye, Edit, MoreHorizontal, Trash2, Flag, Medal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +34,7 @@ const EventsPage: React.FC = () => {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<EMSEvent | null>(null);
   const [formErrors, setFormErrors] = useState<EventFormErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -40,6 +43,7 @@ const EventsPage: React.FC = () => {
     startDate: '',
     endDate: '',
     city: '',
+    country: '',
     venues: '',
     status: 'Draft' as EMSEvent['status'],
     eventType: 'individual' as 'individual' | 'team-based' | 'hybrid',
@@ -69,6 +73,7 @@ const EventsPage: React.FC = () => {
       startDate: '',
       endDate: '',
       city: '',
+      country: '',
       venues: '',
       status: 'Draft',
       eventType: 'individual',
@@ -80,6 +85,8 @@ const EventsPage: React.FC = () => {
 
   const handleCreate = async () => {
     if (!validateForm()) return;
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
     const mapCategoryGroup = (catId: string) => {
       const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
@@ -94,23 +101,22 @@ const EventsPage: React.FC = () => {
       const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
       if (cat) {
         const groupName = mapCategoryGroup(sportId);
-        if (cat.subCategories && cat.subCategories.length > 0) {
-          cat.subCategories.forEach(sub => {
-            sportCategoriesApi.push({ name: cat.name, subCategory: sub, group: groupName });
-          });
-        } else {
-          sportCategoriesApi.push({ name: cat.name, subCategory: 'Any', group: groupName });
-        }
+        // Backend stores one row per (group, sport): { name: <group>, subCategory: <sport name> }.
+        // There's no field for finer divisions like Men/Women/Youth, so we send one entry per sport.
+        sportCategoriesApi.push({ name: groupName, subCategory: cat.name });
       }
     });
 
     try {
+      const cities = formData.city.split('\n').map(c => c.trim()).filter(Boolean);
       await createEvent({
         name: formData.name,
         theme: formData.theme,
         startDate: formData.startDate,
         endDate: formData.endDate,
-        city: formData.city,
+        city: cities.join(', '),
+        country: formData.country,
+        cities,
         venues: formData.venues.split('\n').filter(v => v.trim()),
         status: formData.status,
         eventType: formData.eventType,
@@ -125,6 +131,8 @@ const EventsPage: React.FC = () => {
       console.error('Failed to create event', error);
       const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
       toast.error('Failed to create event: ' + detail);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -146,7 +154,8 @@ const EventsPage: React.FC = () => {
       theme: event.theme,
       startDate: event.startDate,
       endDate: event.endDate,
-      city: event.city,
+      city: (event.cities && event.cities.length > 0 ? event.cities : [event.city]).filter(Boolean).join('\n'),
+      country: event.country || '',
       venues: event.venues.join('\n'),
       status: event.status,
       eventType: event.eventType || 'individual',
@@ -159,6 +168,8 @@ const EventsPage: React.FC = () => {
   const handleUpdate = async () => {
     if (!editingEvent) return;
     if (!validateForm()) return;
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
     const mapCategoryGroup = (catId: string) => {
       const teamGames = ['football', 'basketball', 'volleyball', 'esports'];
@@ -173,15 +184,13 @@ const EventsPage: React.FC = () => {
       const cat = SPORT_CATEGORIES.find(c => c.id === sportId);
       if (cat) {
         const groupName = mapCategoryGroup(sportId);
-        if (cat.subCategories && cat.subCategories.length > 0) {
-          cat.subCategories.forEach(sub => {
-            sportCategoriesApi.push({ name: cat.name, subCategory: sub, group: groupName });
-          });
-        } else {
-          sportCategoriesApi.push({ name: cat.name, subCategory: 'Any', group: groupName });
-        }
+        // Backend stores one row per (group, sport): { name: <group>, subCategory: <sport name> }.
+        // There's no field for finer divisions like Men/Women/Youth, so we send one entry per sport.
+        sportCategoriesApi.push({ name: groupName, subCategory: cat.name });
       }
     });
+
+    const updateCities = formData.city.split('\n').map(c => c.trim()).filter(Boolean);
 
     try {
       await updateEvent(editingEvent.id, {
@@ -189,7 +198,9 @@ const EventsPage: React.FC = () => {
         theme: formData.theme,
         startDate: formData.startDate,
         endDate: formData.endDate,
-        city: formData.city,
+        city: updateCities.join(', '),
+        country: formData.country,
+        cities: updateCities,
         venues: formData.venues.split('\n').filter(v => v.trim()),
         status: formData.status,
         eventType: formData.eventType,
@@ -205,6 +216,8 @@ const EventsPage: React.FC = () => {
       console.error('Failed to update event', error);
       const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
       toast.error('Failed to update event: ' + detail);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -369,16 +382,30 @@ const EventsPage: React.FC = () => {
         </div>
       </div>
       <div className="grid gap-2">
+        <RequiredLabel htmlFor="country">Country</RequiredLabel>
+        <CountryCombobox
+          id="country"
+          value={formData.country}
+          onChange={(value) => {
+            clearFieldError('country');
+            setFormData(prev => ({ ...prev, country: value }));
+          }}
+          error={Boolean(formErrors.country)}
+        />
+        <FieldError field="country" />
+      </div>
+      <div className="grid gap-2">
         <RequiredLabel htmlFor="city">{t('events.city_label')}</RequiredLabel>
-        <Input
+        <Textarea
           id="city"
-          placeholder={t('events.city_label')}
+          placeholder="List cities (one per line)"
           value={formData.city}
           onChange={(e) => {
             clearFieldError('city');
             setFormData(prev => ({ ...prev, city: e.target.value }));
           }}
           className={inputErrorClass('city')}
+          rows={3}
           required
         />
         <FieldError field="city" />
@@ -459,6 +486,23 @@ const EventsPage: React.FC = () => {
             </div>
             <FieldError field="selectedSports" />
           </div>
+
+          {/* Sports Boards — computed from Country + selected sports, display only */}
+          {formData.country && formData.selectedSports.length > 0 && (
+            <div className="grid gap-2">
+              <Label className="text-sm font-medium">Sports Boards</Label>
+              <div className="flex flex-wrap gap-2">
+                {getSportsBoardsForEvent(
+                  formData.country,
+                  formData.selectedSports
+                    .map(id => SPORT_CATEGORIES.find(s => s.id === id)?.name)
+                    .filter((name): name is string => Boolean(name)),
+                ).map(board => (
+                  <Badge key={board} variant="secondary">{board}</Badge>
+                ))}
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -504,7 +548,9 @@ const EventsPage: React.FC = () => {
               {formFieldsJsx}
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => { setIsCreateOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
-                <Button onClick={handleCreate}>{t('events.create_event')}</Button>
+                <Button onClick={handleCreate} disabled={isSubmitting}>
+                  {isSubmitting ? 'Creating...' : t('events.create_event')}
+                </Button>
               </div>
             </DialogContent>
           </Dialog>
@@ -632,7 +678,9 @@ const EventsPage: React.FC = () => {
           {formFieldsJsx}
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => { setIsEditOpen(false); setEditingEvent(null); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button onClick={handleUpdate}>{t('common.save_changes')}</Button>
+            <Button onClick={handleUpdate} disabled={isSubmitting}>
+              {isSubmitting ? 'Saving...' : t('common.save_changes')}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

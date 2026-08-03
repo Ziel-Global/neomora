@@ -20,6 +20,7 @@ import {
     DialogHeader,
     DialogTitle,
     DialogDescription,
+    DialogFooter,
 } from '@/components/ui/dialog';
 import {
     Select,
@@ -47,9 +48,22 @@ import {
     X,
     Loader2,
     AlertTriangle,
+    Image as ImageIcon,
+    Sparkles,
+    Users,
+    Flag,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 import { validateEventForm, EventFormErrors, EventFormField } from '@/lib/eventFormValidation';
+import { getSportsBoardsForEvent } from '@/lib/sportsBoards';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
+
+const EVENT_TYPE_GROUP: Record<string, string> = {
+    individual: 'individual-games',
+    'team-based': 'team-based-games',
+    hybrid: 'hybrid-games',
+};
 
 const STATUS_COLORS: Record<string, string> = {
     Published: 'from-emerald-500 to-teal-600',
@@ -93,6 +107,7 @@ const emptyForm = () => ({
     theme: '',
     startDate: '',
     endDate: '',
+    country: '',
     city: '',
     venues: '',
     status: 'Draft' as EMSEvent['status'],
@@ -101,6 +116,48 @@ const emptyForm = () => ({
     allowTeamRegistration: false,
     logo: '',
 });
+
+/* Stable form helpers — must live outside EventSelector or inputs remount on every keystroke */
+const RequiredLabel = ({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) => (
+    <Label htmlFor={htmlFor} className="text-[13px] font-semibold text-foreground">
+        {children}
+        <span className="ms-1 text-destructive">*</span>
+    </Label>
+);
+
+const FieldHint = ({ children }: { children: React.ReactNode }) => (
+    <p className="text-[11px] leading-relaxed text-muted-foreground">{children}</p>
+);
+
+const FieldError = ({ message }: { message?: string }) =>
+    message ? <p className="text-sm text-destructive">{message}</p> : null;
+
+const FormSection = ({
+    icon: Icon,
+    title,
+    description,
+    children,
+}: {
+    icon: React.ElementType;
+    title: string;
+    description?: string;
+    children: React.ReactNode;
+}) => (
+    <section className="space-y-3.5 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex items-start gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-primary/10">
+                <Icon className="h-4 w-4" />
+            </span>
+            <div className="min-w-0 pt-0.5">
+                <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
+                {description && (
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+                )}
+            </div>
+        </div>
+        <div className="space-y-3.5">{children}</div>
+    </section>
+);
 
 const EventSelector: React.FC = () => {
     const { t, i18n } = useTranslation();
@@ -135,11 +192,6 @@ const EventSelector: React.FC = () => {
 
     const inputErrorClass = (field: EventFormField) =>
         formErrors[field] ? 'border-destructive focus-visible:ring-destructive' : '';
-
-    const FieldError = ({ field }: { field: EventFormField }) =>
-        formErrors[field] ? (
-            <p className="text-sm text-destructive">{formErrors[field]}</p>
-        ) : null;
 
     const load = async () => {
         try {
@@ -182,9 +234,11 @@ const EventSelector: React.FC = () => {
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
             .filter(Boolean)
             .map(c => ({
-                name: c!.name,
-                subCategory: c!.subCategories?.[0] || 'Any',
+                name: EVENT_TYPE_GROUP[form.eventType],
+                subCategory: c!.name,
             }));
+
+        const cities = form.city.split('\n').map(c => c.trim()).filter(Boolean);
 
         try {
             setIsCreating(true);
@@ -193,7 +247,9 @@ const EventSelector: React.FC = () => {
                 theme: form.theme,
                 startDate: form.startDate,
                 endDate: form.endDate,
-                city: form.city,
+                city: cities.join(', '),
+                country: form.country,
+                cities,
                 eventType: form.eventType,
                 venues: form.venues.split('\n').filter(v => v.trim()),
                 sportCategories,
@@ -221,7 +277,8 @@ const EventSelector: React.FC = () => {
             theme: ev.theme,
             startDate: ev.startDate,
             endDate: ev.endDate,
-            city: ev.city,
+            country: ev.country || '',
+            city: (ev.cities && ev.cities.length > 0 ? ev.cities : [ev.city]).filter(Boolean).join('\n'),
             venues: ev.venues.join('\n'),
             status: ev.status,
             eventType: ev.eventType ?? 'individual',
@@ -238,12 +295,12 @@ const EventSelector: React.FC = () => {
         const sportCategories = form.selectedSports
             .map(id => SPORT_CATEGORIES.find(c => c.id === id))
             .filter(Boolean)
-            .map((c, index) => ({
-                id: index + 1,
-                // Providing a numeric ID as shown in user's request
-                name: c!.name,
-                subCategory: c!.subCategories?.[0] || 'Any',
+            .map(c => ({
+                name: EVENT_TYPE_GROUP[form.eventType],
+                subCategory: c!.name,
             }));
+
+        const updateCities = form.city.split('\n').map(c => c.trim()).filter(Boolean);
 
         try {
             setIsUpdating(true);
@@ -252,7 +309,9 @@ const EventSelector: React.FC = () => {
                 theme: form.theme,
                 startDate: form.startDate,
                 endDate: form.endDate,
-                city: form.city,
+                city: updateCities.join(', '),
+                country: form.country,
+                cities: updateCities,
                 eventType: form.eventType,
                 venues: form.venues.split('\n').filter(v => v.trim()),
                 sportCategories,
@@ -304,13 +363,6 @@ const EventSelector: React.FC = () => {
         return matchSearch && matchStatus;
     });
 
-    const RequiredLabel = ({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) => (
-        <Label htmlFor={htmlFor}>
-            {children}
-            <span className="text-destructive ms-1">*</span>
-        </Label>
-    );
-
     const todayStr = new Date().toISOString().split('T')[0];
 
     const validateForm = (): boolean => {
@@ -324,184 +376,351 @@ const EventSelector: React.FC = () => {
 
     /* ─── Shared form fields JSX ─── */
     const FormFields = (
-        <div className="grid gap-4 py-2">
-            {/* Logo upload */}
-            <div className="grid gap-2">
-                <Label>{t('events.event_logo')} <span className="text-muted-foreground text-xs">{t('events.logo_limit')}</span></Label>
-                <div className="flex items-center gap-3">
-                    {form.logo ? (
-                        <div className="relative h-16 w-16 rounded-xl overflow-hidden border">
-                            <img src={form.logo} alt="logo" className="h-full w-full object-cover" />
+        <div className="space-y-4">
+            {/* Branding */}
+            <FormSection
+                icon={ImageIcon}
+                title="Branding"
+                description="Optional logo shown on invitations, badges, and the event card."
+            >
+                <div className="grid gap-2">
+                    <Label className="text-[13px] font-semibold text-foreground">
+                        {t('events.event_logo')}
+                        <span className="ms-1.5 text-[11px] font-normal text-muted-foreground">
+                            {t('events.logo_limit')}
+                        </span>
+                    </Label>
+                    <div
+                        className={cn(
+                            'flex flex-col gap-3 rounded-xl border border-dashed p-3 transition-colors sm:flex-row sm:items-center',
+                            form.logo
+                                ? 'border-primary/25 bg-primary/[0.03]'
+                                : 'border-border/80 bg-muted/30 hover:border-primary/30 hover:bg-muted/50',
+                        )}
+                    >
+                        {form.logo ? (
+                            <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
+                                <img src={form.logo} alt="Event logo" className="h-full w-full object-cover" />
+                                <button
+                                    type="button"
+                                    onClick={() => setForm(f => ({ ...f, logo: '' }))}
+                                    className="absolute end-1 top-1 flex h-6 w-6 items-center justify-center rounded-full bg-foreground/80 text-background shadow-sm transition-colors hover:bg-foreground"
+                                    title="Remove logo"
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            </div>
+                        ) : (
                             <button
                                 type="button"
-                                onClick={() => setForm(f => ({ ...f, logo: '' }))}
-                                className="absolute top-0.5 right-0.5 bg-black/60 rounded-full p-0.5 text-white hover:bg-black"
+                                onClick={() => logoInputRef.current?.click()}
+                                className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-border/70 bg-card text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
                             >
-                                <X className="h-3 w-3" />
+                                <Upload className="h-5 w-5" />
+                                <span className="text-[10px] font-semibold uppercase tracking-wide">Add</span>
                             </button>
+                        )}
+                        <div className="min-w-0 flex-1 space-y-2">
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                                Square PNG or JPG works best. Max 2 MB.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8 gap-1.5 text-xs"
+                                    onClick={() => logoInputRef.current?.click()}
+                                >
+                                    <Upload className="h-3.5 w-3.5" />
+                                    {form.logo ? t('events.change_logo') : t('events.upload_logo')}
+                                </Button>
+                                {form.logo && (
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                                        onClick={() => setForm(f => ({ ...f, logo: '' }))}
+                                    >
+                                        Remove
+                                    </Button>
+                                )}
+                            </div>
                         </div>
-                    ) : (
-                        <div className="h-16 w-16 rounded-xl border-2 border-dashed flex items-center justify-center bg-muted/30">
-                            <Upload className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                    )}
-                    <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
-                        {form.logo ? t('events.change_logo') : t('events.upload_logo')}
-                    </Button>
-                    <input
-                        ref={logoInputRef}
-                        type="file"
-                        accept="image/*"
-                        className="hidden"
-                        onChange={handleLogoUpload}
-                    />
-                </div>
-            </div>
-
-            <div className="grid gap-2">
-                <RequiredLabel htmlFor="f-name">{t('events.name_label')}</RequiredLabel>
-                <Input
-                    id="f-name"
-                    value={form.name}
-                    onChange={e => { clearFieldError('name'); setForm(f => ({ ...f, name: e.target.value })); }}
-                    className={inputErrorClass('name')}
-                    required
-                />
-                <FieldError field="name" />
-            </div>
-            <div className="grid gap-2">
-                <RequiredLabel htmlFor="f-theme">{t('events.theme_label')}</RequiredLabel>
-                <Input
-                    id="f-theme"
-                    value={form.theme}
-                    onChange={e => { clearFieldError('theme'); setForm(f => ({ ...f, theme: e.target.value })); }}
-                    className={inputErrorClass('theme')}
-                    required
-                />
-                <FieldError field="theme" />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                    <RequiredLabel htmlFor="f-start">{t('events.start_label')}</RequiredLabel>
-                    <Input
-                        id="f-start"
-                        type="date"
-                        value={form.startDate}
-                        min={todayStr}
-                        onChange={e => { clearFieldError('startDate'); setForm(f => ({ ...f, startDate: e.target.value })); }}
-                        onPaste={e => e.preventDefault()}
-                        className={inputErrorClass('startDate')}
-                        required
-                    />
-                    <FieldError field="startDate" />
-                </div>
-                <div className="grid gap-2">
-                    <RequiredLabel htmlFor="f-end">{t('events.end_label')}</RequiredLabel>
-                    <Input
-                        id="f-end"
-                        type="date"
-                        value={form.endDate}
-                        min={form.startDate || todayStr}
-                        onChange={e => { clearFieldError('endDate'); setForm(f => ({ ...f, endDate: e.target.value })); }}
-                        onPaste={e => e.preventDefault()}
-                        className={inputErrorClass('endDate')}
-                        required
-                    />
-                    <FieldError field="endDate" />
-                </div>
-            </div>
-            <div className="grid gap-2">
-                <RequiredLabel htmlFor="f-city">{t('events.city_label')}</RequiredLabel>
-                <Input
-                    id="f-city"
-                    value={form.city}
-                    onChange={e => { clearFieldError('city'); setForm(f => ({ ...f, city: e.target.value })); }}
-                    className={inputErrorClass('city')}
-                    required
-                />
-                <FieldError field="city" />
-            </div>
-            <div className="grid gap-2">
-                <RequiredLabel htmlFor="f-venues">{t('events.venues_label')}</RequiredLabel>
-                <Textarea
-                    id="f-venues"
-                    placeholder={t('events.venues_placeholder')}
-                    value={form.venues}
-                    onChange={e => { clearFieldError('venues'); setForm(f => ({ ...f, venues: e.target.value })); }}
-                    className={inputErrorClass('venues')}
-                    required
-                />
-                <FieldError field="venues" />
-            </div>
-            <div className="grid gap-2">
-                <RequiredLabel>{t('events.type')}</RequiredLabel>
-                <Select
-                    value={form.eventType}
-                    onValueChange={(v: 'individual' | 'team-based' | 'hybrid') => {
-                        clearFieldError('eventType');
-                        clearFieldError('selectedSports');
-                        setForm(f => ({ ...f, eventType: v }));
-                    }}
-                >
-                    <SelectTrigger className={inputErrorClass('eventType')}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="individual">{t('events.type_individual')}</SelectItem>
-                        <SelectItem value="team-based">{t('events.type_team')}</SelectItem>
-                        <SelectItem value="hybrid">{t('events.type_hybrid')}</SelectItem>
-                    </SelectContent>
-                </Select>
-                <FieldError field="eventType" />
-            </div>
-            {(form.eventType === 'team-based' || form.eventType === 'hybrid') && (
-                <>
-                    <div className="flex items-center gap-2">
-                        <Checkbox
-                            id="f-teamreg"
-                            checked={form.allowTeamRegistration}
-                            onCheckedChange={c => setForm(f => ({ ...f, allowTeamRegistration: !!c }))}
+                        <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={handleLogoUpload}
                         />
-                        <Label htmlFor="f-teamreg" className="font-normal">{t('events.allow_team_reg')}</Label>
+                    </div>
+                </div>
+            </FormSection>
+
+            {/* Basics */}
+            <FormSection
+                icon={Sparkles}
+                title="Basics"
+                description="The name and theme participants will recognise."
+            >
+                <div className="grid gap-2">
+                    <RequiredLabel htmlFor="f-name">{t('events.name_label')}</RequiredLabel>
+                    <Input
+                        id="f-name"
+                        placeholder="e.g. World Aquatics Championships"
+                        value={form.name}
+                        onChange={e => { clearFieldError('name'); setForm(f => ({ ...f, name: e.target.value })); }}
+                        className={cn('h-10 bg-background', inputErrorClass('name'))}
+                        required
+                    />
+                    <FieldError message={formErrors.name} />
+                </div>
+                <div className="grid gap-2">
+                    <RequiredLabel htmlFor="f-theme">{t('events.theme_label')}</RequiredLabel>
+                    <Input
+                        id="f-theme"
+                        placeholder="e.g. Excellence · Unity · Legacy"
+                        value={form.theme}
+                        onChange={e => { clearFieldError('theme'); setForm(f => ({ ...f, theme: e.target.value })); }}
+                        className={cn('h-10 bg-background', inputErrorClass('theme'))}
+                        required
+                    />
+                    <FieldError message={formErrors.theme} />
+                    <FieldHint>A short line used on invitations and marketing surfaces.</FieldHint>
+                </div>
+            </FormSection>
+
+            {/* Format */}
+            <FormSection
+                icon={Users}
+                title="Format"
+                description="Who can register and which sports apply."
+            >
+                <div className="grid gap-2">
+                    <RequiredLabel>{t('events.type')}</RequiredLabel>
+                    <div className="grid gap-2 sm:grid-cols-3">
+                        {([
+                            { value: 'individual' as const, label: t('events.type_individual'), hint: 'Solo participants' },
+                            { value: 'team-based' as const, label: t('events.type_team'), hint: 'Delegations & teams' },
+                            { value: 'hybrid' as const, label: t('events.type_hybrid'), hint: 'Both formats' },
+                        ]).map((option) => {
+                            const isActive = form.eventType === option.value;
+                            return (
+                                <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={() => {
+                                        clearFieldError('eventType');
+                                        clearFieldError('selectedSports');
+                                        setForm(f => ({ ...f, eventType: option.value }));
+                                    }}
+                                    className={cn(
+                                        'rounded-xl border px-3 py-3 text-start transition-all duration-200',
+                                        isActive
+                                            ? 'border-primary/40 bg-primary/[0.06] ring-2 ring-primary/20 shadow-sm'
+                                            : 'border-border/70 bg-background hover:border-primary/25 hover:bg-muted/40',
+                                    )}
+                                >
+                                    <p className={cn('text-sm font-semibold', isActive ? 'text-primary' : 'text-foreground')}>
+                                        {option.label}
+                                    </p>
+                                    <p className="mt-0.5 text-[11px] text-muted-foreground">{option.hint}</p>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    <FieldError message={formErrors.eventType} />
+                </div>
+
+                {(form.eventType === 'team-based' || form.eventType === 'hybrid') && (
+                    <>
+                        <label
+                            htmlFor="f-teamreg"
+                            className={cn(
+                                'flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 transition-colors',
+                                form.allowTeamRegistration
+                                    ? 'border-primary/30 bg-primary/[0.04]'
+                                    : 'border-border/70 bg-background hover:bg-muted/30',
+                            )}
+                        >
+                            <Checkbox
+                                id="f-teamreg"
+                                checked={form.allowTeamRegistration}
+                                onCheckedChange={c => setForm(f => ({ ...f, allowTeamRegistration: !!c }))}
+                                className="mt-0.5"
+                            />
+                            <div className="min-w-0">
+                                <p className="text-sm font-semibold text-foreground">{t('events.allow_team_reg')}</p>
+                                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
+                                    Managers can submit whole teams for this event.
+                                </p>
+                            </div>
+                        </label>
+
+                        <div className="grid gap-2">
+                            <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
+                            <FieldHint>Select every sport category this event covers.</FieldHint>
+                            <div
+                                className={cn(
+                                    'grid max-h-44 grid-cols-1 gap-1.5 overflow-y-auto rounded-xl border bg-muted/20 p-2.5 sm:grid-cols-2',
+                                    formErrors.selectedSports ? 'border-destructive' : 'border-border/70',
+                                )}
+                            >
+                                {SPORT_CATEGORIES.map(sport => {
+                                    const checked = form.selectedSports.includes(sport.id);
+                                    return (
+                                        <label
+                                            key={sport.id}
+                                            htmlFor={sport.id}
+                                            className={cn(
+                                                'flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm transition-colors',
+                                                checked
+                                                    ? 'bg-primary/10 text-foreground'
+                                                    : 'hover:bg-background',
+                                            )}
+                                        >
+                                            <Checkbox
+                                                id={sport.id}
+                                                checked={checked}
+                                                onCheckedChange={() => {
+                                                    clearFieldError('selectedSports');
+                                                    toggleSport(sport.id);
+                                                }}
+                                            />
+                                            <span className="font-medium">{sport.name}</span>
+                                        </label>
+                                    );
+                                })}
+                            </div>
+                            <FieldError message={formErrors.selectedSports} />
+                        </div>
+
+                        {form.country && form.selectedSports.length > 0 && (
+                            <div className="grid gap-2">
+                                <Label className="text-[13px] font-semibold text-foreground">Sports Boards</Label>
+                                <div className="flex flex-wrap gap-2">
+                                    {getSportsBoardsForEvent(
+                                        form.country,
+                                        form.selectedSports
+                                            .map(id => SPORT_CATEGORIES.find(s => s.id === id)?.name)
+                                            .filter((name): name is string => Boolean(name)),
+                                    ).map(board => (
+                                        <Badge key={board} variant="secondary">{board}</Badge>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </>
+                )}
+            </FormSection>
+
+            {/* When & where */}
+            <FormSection
+                icon={MapPin}
+                title="When & where"
+                description="Dates and locations for the event programme."
+            >
+                <div className="grid gap-3.5 sm:grid-cols-2">
+                    <div className="grid gap-2">
+                        <RequiredLabel htmlFor="f-start">{t('events.start_label')}</RequiredLabel>
+                        <Input
+                            id="f-start"
+                            type="date"
+                            value={form.startDate}
+                            min={todayStr}
+                            onChange={e => { clearFieldError('startDate'); setForm(f => ({ ...f, startDate: e.target.value })); }}
+                            onPaste={e => e.preventDefault()}
+                            className={cn('h-10 bg-background', inputErrorClass('startDate'))}
+                            required
+                        />
+                        <FieldError message={formErrors.startDate} />
                     </div>
                     <div className="grid gap-2">
-                        <RequiredLabel>{t('events.sport_cats')}</RequiredLabel>
-                        <div className={`grid grid-cols-2 md:grid-cols-3 gap-2 max-h-40 overflow-y-auto border rounded-lg p-3 ${formErrors.selectedSports ? 'border-destructive' : ''}`}>
-                            {SPORT_CATEGORIES.map(sport => (
-                                <div key={sport.id} className="flex items-center gap-2">
-                                    <Checkbox
-                                        id={sport.id}
-                                        checked={form.selectedSports.includes(sport.id)}
-                                        onCheckedChange={() => {
-                                            clearFieldError('selectedSports');
-                                            toggleSport(sport.id);
-                                        }}
-                                    />
-                                    <Label htmlFor={sport.id} className="font-normal text-sm cursor-pointer">{sport.name}</Label>
-                                </div>
-                            ))}
-                        </div>
-                        <FieldError field="selectedSports" />
+                        <RequiredLabel htmlFor="f-end">{t('events.end_label')}</RequiredLabel>
+                        <Input
+                            id="f-end"
+                            type="date"
+                            value={form.endDate}
+                            min={form.startDate || todayStr}
+                            onChange={e => { clearFieldError('endDate'); setForm(f => ({ ...f, endDate: e.target.value })); }}
+                            onPaste={e => e.preventDefault()}
+                            className={cn('h-10 bg-background', inputErrorClass('endDate'))}
+                            required
+                        />
+                        <FieldError message={formErrors.endDate} />
                     </div>
-                </>
-            )}
-            <div className="grid gap-2">
-                <RequiredLabel>{t('events.status_label')}</RequiredLabel>
-                <Select
-                    value={form.status}
-                    onValueChange={(v: EMSEvent['status']) => {
-                        clearFieldError('status');
-                        setForm(f => ({ ...f, status: v }));
-                    }}
-                >
-                    <SelectTrigger className={inputErrorClass('status')}><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                        <SelectItem value="Draft">{t('common.draft')}</SelectItem>
-                        <SelectItem value="Published">{t('common.published')}</SelectItem>
-                        <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
-                        <SelectItem value="Closed">{t('common.closed')}</SelectItem>
-                    </SelectContent>
-                </Select>
-                <FieldError field="status" />
-            </div>
+                </div>
+                <div className="grid gap-2">
+                    <RequiredLabel htmlFor="f-country">Country</RequiredLabel>
+                    <CountryCombobox
+                        id="f-country"
+                        value={form.country}
+                        onChange={(value) => {
+                            clearFieldError('country');
+                            setForm(f => ({ ...f, country: value }));
+                        }}
+                        error={Boolean(formErrors.country)}
+                    />
+                    <FieldError message={formErrors.country} />
+                </div>
+                <div className="grid gap-2">
+                    <RequiredLabel htmlFor="f-city">{t('events.city_label')}</RequiredLabel>
+                    <Textarea
+                        id="f-city"
+                        placeholder="List cities (one per line)"
+                        value={form.city}
+                        onChange={e => { clearFieldError('city'); setForm(f => ({ ...f, city: e.target.value })); }}
+                        className={cn('min-h-[72px] resize-y bg-background', inputErrorClass('city'))}
+                        required
+                    />
+                    <FieldError message={formErrors.city} />
+                    <FieldHint>One city per line — an event can span multiple cities.</FieldHint>
+                </div>
+                <div className="grid gap-2">
+                    <RequiredLabel htmlFor="f-venues">{t('events.venues_label')}</RequiredLabel>
+                    <Textarea
+                        id="f-venues"
+                        placeholder={t('events.venues_placeholder')}
+                        value={form.venues}
+                        onChange={e => { clearFieldError('venues'); setForm(f => ({ ...f, venues: e.target.value })); }}
+                        className={cn('min-h-[88px] resize-y bg-background', inputErrorClass('venues'))}
+                        required
+                    />
+                    <FieldError message={formErrors.venues} />
+                    <FieldHint>One venue per line — used on travel and accreditation screens.</FieldHint>
+                </div>
+            </FormSection>
+
+            {/* Status */}
+            <FormSection
+                icon={Flag}
+                title="Visibility"
+                description="Draft events stay hidden until you publish them."
+            >
+                <div className="grid gap-2">
+                    <RequiredLabel>{t('events.status_label')}</RequiredLabel>
+                    <Select
+                        value={form.status}
+                        onValueChange={(v: EMSEvent['status']) => {
+                            clearFieldError('status');
+                            setForm(f => ({ ...f, status: v }));
+                        }}
+                    >
+                        <SelectTrigger className={cn('h-10 bg-background', inputErrorClass('status'))}>
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="Draft">{t('common.draft')}</SelectItem>
+                            <SelectItem value="Published">{t('common.published')}</SelectItem>
+                            <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
+                            <SelectItem value="Closed">{t('common.closed')}</SelectItem>
+                        </SelectContent>
+                    </Select>
+                    <FieldError message={formErrors.status} />
+                </div>
+            </FormSection>
         </div>
     );
 
@@ -692,41 +911,104 @@ const EventSelector: React.FC = () => {
 
             {/* ─── Create Dialog ─── */}
             <Dialog open={isCreateOpen} onOpenChange={open => { setCreate(open); if (!open) { setForm(emptyForm()); setFormErrors({}); } }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? 'rtl' : 'ltr'}>
-                    <DialogHeader>
-                        <DialogTitle className="text-start">{t('events.create_new')}</DialogTitle>
-                        <DialogDescription className="text-start">{t('events.create_desc')}</DialogDescription>
+                <DialogContent
+                    className="flex max-h-[92dvh] w-[calc(100vw-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl"
+                    dir={isRtl ? 'rtl' : 'ltr'}
+                >
+                    <DialogHeader className="shrink-0 space-y-0 border-b bg-gradient-to-br from-primary/[0.07] via-card to-card px-5 py-5 pe-12 text-start sm:px-6">
+                        <div className="flex items-start gap-3.5">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary ring-1 ring-inset ring-primary/15 shadow-sm">
+                                <Calendar className="h-5 w-5" />
+                            </span>
+                            <div className="min-w-0 space-y-1">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/70">
+                                    Event operations
+                                </p>
+                                <DialogTitle className="text-xl font-semibold tracking-tight">
+                                    {t('events.create_new')}
+                                </DialogTitle>
+                                <DialogDescription className="text-sm leading-relaxed">
+                                    {t('events.create_desc')}
+                                </DialogDescription>
+                            </div>
+                        </div>
                     </DialogHeader>
-                    {FormFields}
-                    <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} justify-end gap-2 pt-2`}>
-                        <Button variant="outline" onClick={() => { setCreate(false); setForm(emptyForm()); }} disabled={isCreating}>
-                            {t('common.cancel')}
-                        </Button>
-                        <Button onClick={handleCreate} disabled={isCreating}>
-                            {isCreating && <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? 'ml-2' : 'mr-2'}`} />}
-                            {t('events.create_event')}
-                        </Button>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/15 px-4 py-4 sm:px-6 sm:py-5">
+                        {FormFields}
                     </div>
+
+                    <DialogFooter className="shrink-0 gap-2 border-t bg-card px-4 py-3.5 sm:flex-row sm:justify-between sm:px-6">
+                        <p className="hidden text-xs text-muted-foreground sm:block">
+                            Required fields are marked with <span className="text-destructive">*</span>
+                        </p>
+                        <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} gap-2`}>
+                            <Button
+                                variant="outline"
+                                className="h-10"
+                                onClick={() => { setCreate(false); setForm(emptyForm()); }}
+                                disabled={isCreating}
+                            >
+                                {t('common.cancel')}
+                            </Button>
+                            <Button className="h-10 gap-2 shadow-sm" onClick={handleCreate} disabled={isCreating}>
+                                {isCreating ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Plus className="h-4 w-4" />
+                                )}
+                                {t('events.create_event')}
+                            </Button>
+                        </div>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
             {/* ─── Edit Dialog ─── */}
             <Dialog open={isEditOpen} onOpenChange={open => { setEdit(open); if (!open) { setEditTarget(null); setForm(emptyForm()); setFormErrors({}); } }}>
-                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" dir={isRtl ? 'rtl' : 'ltr'}>
-                    <DialogHeader>
-                        <DialogTitle className="text-start">{t('events.edit_event')}</DialogTitle>
-                        <DialogDescription className="text-start">{t('events.edit_desc')}</DialogDescription>
+                <DialogContent
+                    className="flex max-h-[92dvh] w-[calc(100vw-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl"
+                    dir={isRtl ? 'rtl' : 'ltr'}
+                >
+                    <DialogHeader className="shrink-0 space-y-0 border-b bg-gradient-to-br from-primary/[0.07] via-card to-card px-5 py-5 pe-12 text-start sm:px-6">
+                        <div className="flex items-start gap-3.5">
+                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary ring-1 ring-inset ring-primary/15 shadow-sm">
+                                <Edit className="h-5 w-5" />
+                            </span>
+                            <div className="min-w-0 space-y-1">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-primary/70">
+                                    Event operations
+                                </p>
+                                <DialogTitle className="text-xl font-semibold tracking-tight">
+                                    {t('events.edit_event')}
+                                </DialogTitle>
+                                <DialogDescription className="text-sm leading-relaxed">
+                                    {editTarget?.name
+                                        ? `Updating ${editTarget.name}`
+                                        : t('events.edit_desc')}
+                                </DialogDescription>
+                            </div>
+                        </div>
                     </DialogHeader>
-                    {FormFields}
-                    <div className={`flex ${isRtl ? 'flex-row-reverse' : 'flex-row'} justify-end gap-2 pt-2`}>
-                        <Button variant="outline" onClick={() => { setEdit(false); setEditTarget(null); setForm(emptyForm()); }} disabled={isUpdating}>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/15 px-4 py-4 sm:px-6 sm:py-5">
+                        {FormFields}
+                    </div>
+
+                    <DialogFooter className="shrink-0 gap-2 border-t bg-card px-4 py-3.5 sm:flex-row sm:justify-end sm:px-6">
+                        <Button
+                            variant="outline"
+                            className="h-10"
+                            onClick={() => { setEdit(false); setEditTarget(null); setForm(emptyForm()); }}
+                            disabled={isUpdating}
+                        >
                             {t('common.cancel')}
                         </Button>
-                        <Button onClick={handleUpdate} disabled={isUpdating}>
-                            {isUpdating && <Loader2 className={`h-4 w-4 animate-spin ${isRtl ? 'ml-2' : 'mr-2'}`} />}
+                        <Button className="h-10 gap-2 shadow-sm" onClick={handleUpdate} disabled={isUpdating}>
+                            {isUpdating && <Loader2 className="h-4 w-4 animate-spin" />}
                             {t('common.save_changes')}
                         </Button>
-                    </div>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 

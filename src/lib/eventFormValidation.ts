@@ -4,6 +4,7 @@ export interface EventFormValues {
   startDate: string;
   endDate: string;
   city: string;
+  country: string;
   venues: string;
   status: string;
   eventType: 'individual' | 'team-based' | 'hybrid';
@@ -16,6 +17,7 @@ export type EventFormField =
   | 'startDate'
   | 'endDate'
   | 'city'
+  | 'country'
   | 'venues'
   | 'status'
   | 'eventType'
@@ -56,6 +58,10 @@ export const validateEventForm = (
 
   if (!values.city.trim()) {
     errors.city = t('events.validation.city_required');
+  }
+
+  if (!values.country.trim()) {
+    errors.country = t('events.validation.country_required', { defaultValue: 'Country is required' });
   }
 
   if (!values.venues.trim()) {

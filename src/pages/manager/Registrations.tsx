@@ -1,62 +1,36 @@
 
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { Team, TeamMember } from '@/lib/teamStore';
-import { EMSEvent, EMSInvitation } from '@/lib/emsStore';
+import { Team } from '@/lib/teamStore';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Input } from '@/components/ui/input';
 import { getMyTeams, listTeamMembers } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
-import { Loader2, Eye, Search, FileText, Users, UserPlus, ArrowRight, Calendar, Trash2 } from 'lucide-react';
+import { Loader2, Eye, Search, FileText, Users, Calendar, Send, Clock } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-
-interface PendingRegistration {
-  invitation: EMSInvitation;
-  event: EMSEvent;
-  participantName: string;
-  participantEmail: string;
-}
 
 const RegistrationsPage: React.FC = () => {
   const { manager } = useManagerSession();
   const navigate = useNavigate();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
+  const [selectedMember, setSelectedMember] = useState<any | null>(null);
 
-  // New state for pending registrations
-  const [pendingRegistrations, setPendingRegistrations] = useState<PendingRegistration[]>([]);
-
-  const [isLoading, setIsLoading] = useState(false);
-  const [events, setEvents] = useState<EMSEvent[]>([]);
-
-  useEffect(() => {
-    if (manager) {
-      refreshData();
-    }
-  }, [manager]);
-
-  const refreshData = async () => {
-    setIsLoading(true);
-    try {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['manager', 'registrations'],
+    queryFn: async () => {
       const [teamsData, eventsData] = await Promise.all([
         getMyTeams(),
-        getEvents()
+        getEvents(),
       ]);
-      setTeams(teamsData);
-      setEvents(eventsData);
 
       if (teamsData.length === 0) {
-        setMembers([]);
-        return;
+        return { teams: teamsData, events: eventsData, members: [] as any[] };
       }
 
       const membersPerTeam = await Promise.all(
@@ -67,38 +41,84 @@ const RegistrationsPage: React.FC = () => {
         teamMembers.map(member => ({ ...member, teamId: teamsData[index].id }))
       );
 
-      setMembers(membersData);
-    } catch (error: any) {
-      console.error('Failed to load registrations data:', error);
-      const msg = error?.response?.data?.message || error?.message || 'Unknown error';
-      toast.error(`Failed to load registrations: ${msg}`);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const filteredMembers = (members || []).filter(m => {
-    const participant = (m as any).participant || m;
-    const matchesTeam = selectedTeamFilter === 'all' || m.teamId === selectedTeamFilter;
-    const matchesSearch =
-      (participant.firstName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (participant.lastName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (participant.email || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (participant.passportNumber || (m as any).passportNumber || '').toLowerCase().includes(searchQuery.toLowerCase());
-    return matchesTeam && matchesSearch;
+      return { teams: teamsData, events: eventsData, members: membersData };
+    },
+    enabled: !!manager,
   });
 
-  const getTeamName = (teamId: string) => {
-    return teams.find(t => t.id === teamId)?.name || 'Unknown Team';
+  const teams = data?.teams ?? [];
+  const events = data?.events ?? [];
+  const members = data?.members ?? [];
+
+  useEffect(() => {
+    if (error) {
+      console.error('Failed to load registrations data:', error);
+      const msg = (error as any)?.response?.data?.message || (error as any)?.message || 'Unknown error';
+      toast.error(`Failed to load registrations: ${msg}`);
+    }
+  }, [error]);
+
+  const getTeamEventId = (team: Team | undefined): string => {
+    if (!team) return '';
+    return String((team as any).eventId || (team as any).event_id || (team as any).event?.id || '');
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Approved': return 'bg-status-success-bg text-status-success';
-      case 'Submitted': return 'bg-status-info-bg text-status-info';
-      case 'Rejected': return 'bg-status-error-bg text-status-error';
-      default: return 'bg-muted text-muted-foreground';
-    }
+  const matchesSearch = (member: any) => {
+    if (!searchQuery.trim()) return true;
+    const p = member.participant || member;
+    const q = searchQuery.toLowerCase();
+    return (
+      (p.firstName || '').toLowerCase().includes(q) ||
+      (p.lastName || '').toLowerCase().includes(q) ||
+      (p.email || '').toLowerCase().includes(q) ||
+      (p.passportNumber || member.passportNumber || '').toLowerCase().includes(q)
+    );
+  };
+
+  const isSent = (member: any) => member.status && member.status !== 'Draft';
+
+  const getTeamName = (teamId: string) => teams.find(t => t.id === teamId)?.name || 'Unknown Team';
+
+  // Group teams by the event they're currently linked to (a team has no event until
+  // it's attached to an approved delegation), then group members within each team.
+  const eventGroups = events
+    .map(event => {
+      const eventTeams = teams.filter(t => getTeamEventId(t) === String(event.id));
+      const eventMembers = members.filter(m => eventTeams.some(t => t.id === m.teamId) && matchesSearch(m));
+      return { event, eventTeams, eventMembers };
+    })
+    .filter(group => group.eventTeams.length > 0);
+
+  const unassignedTeams = teams.filter(t => !getTeamEventId(t));
+  const unassignedMembers = members.filter(m => unassignedTeams.some(t => t.id === m.teamId) && matchesSearch(m));
+
+  const renderMemberRow = (registration: any) => {
+    const p = registration.participant || registration;
+    const sent = isSent(registration);
+    return (
+      <TableRow key={registration.id}>
+        <TableCell>
+          <div>
+            <p className="font-medium">{p.firstName} {p.lastName}</p>
+            <p className="text-sm text-muted-foreground">{p.email}</p>
+          </div>
+        </TableCell>
+        <TableCell>{getTeamName(registration.teamId)}</TableCell>
+        <TableCell>{registration.role || p.role}</TableCell>
+        <TableCell className="font-mono text-sm">{p.passportNumber || registration.passportNumber || '—'}</TableCell>
+        <TableCell>
+          <Badge className={sent ? 'bg-status-success-bg text-status-success' : 'bg-muted text-muted-foreground'}>
+            {sent ? <Send className="h-3 w-3 mr-1 inline" /> : <Clock className="h-3 w-3 mr-1 inline" />}
+            {sent ? 'Sent to Admin' : 'Draft — not sent'}
+          </Badge>
+        </TableCell>
+        <TableCell>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedMember(registration)}>
+            <Eye className="h-4 w-4" />
+          </Button>
+        </TableCell>
+      </TableRow>
+    );
   };
 
   return (
@@ -106,114 +126,110 @@ const RegistrationsPage: React.FC = () => {
       <div>
         <h1 className="text-3xl font-bold">Team Registration</h1>
         <p className="text-muted-foreground mt-1">
-          View and manage all registered team members
+          Members are only visible to event admins once you send the delegation. Until then, everything here is kept private to you.
         </p>
       </div>
 
-
-      {/* Filters */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name, email, or passport..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={selectedTeamFilter} onValueChange={setSelectedTeamFilter}>
-              <SelectTrigger className="w-full sm:w-48">
-                <SelectValue placeholder="Filter by team" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Teams</SelectItem>
-                {teams.map(team => (
-                  <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, email, or passport..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+            />
           </div>
         </CardContent>
       </Card>
 
-      {/* Members Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Users className="h-5 w-5" />
-            Registered Members ({filteredMembers.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : filteredMembers.length === 0 ? (
-            <div className="text-center py-12">
-              <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-              <p className="text-muted-foreground">No members registered yet</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Team</TableHead>
-                    <TableHead>Role</TableHead>
-                    <TableHead>Passport</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredMembers.map(registration => {
-                    const m = registration as any;
-                    const p = m.participant || m;
-                    return (
-                      <TableRow key={registration.id}>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{p.firstName} {p.lastName}</p>
-                            <p className="text-sm text-muted-foreground">{p.email}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{getTeamName(registration.teamId)}</TableCell>
-                        <TableCell>{p.role || m.role}</TableCell>
-                        <TableCell className="font-mono text-sm">{p.passportNumber || m.passportNumber}</TableCell>
-                        <TableCell>
-                          <Badge className={getStatusColor(registration.status || 'Draft')}>{registration.status || 'Draft'}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setSelectedMember(registration)}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => navigate(`/manager/documents?memberId=${registration.id}`)}
-                            title="Manage Documents"
-                          >
-                            <FileText className="h-4 w-4" />
-                          </Button>
-                        </TableCell>
+      {isLoading ? (
+        <Card>
+          <CardContent className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          </CardContent>
+        </Card>
+      ) : eventGroups.length === 0 && unassignedMembers.length === 0 ? (
+        <Card>
+          <CardContent className="text-center py-12">
+            <FileText className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
+            <p className="text-muted-foreground">No members registered yet</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {eventGroups.map(({ event, eventMembers }) => (
+            <Card key={event.id}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  {event.name}
+                  <Badge variant="outline" className="ml-2 font-normal">
+                    {eventMembers.filter(isSent).length} sent · {eventMembers.length} total
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {eventMembers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">No members added for this event yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Name</TableHead>
+                          <TableHead>Team</TableHead>
+                          <TableHead>Category</TableHead>
+                          <TableHead>Passport</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Actions</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {eventMembers.map(renderMemberRow)}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+
+          {unassignedMembers.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5" />
+                  Not yet linked to an event
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground mb-3">
+                  These teams aren't attached to a delegation/event yet — go to Delegations to send one.
+                </p>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Team</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Passport</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
                       </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {unassignedMembers.map(renderMemberRow)}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </CardContent>
-      </Card>
+        </>
+      )}
 
       {/* Member Detail Dialog */}
       <Dialog open={!!selectedMember} onOpenChange={() => setSelectedMember(null)}>
@@ -237,12 +253,8 @@ const RegistrationsPage: React.FC = () => {
                       <p className="font-medium">{getTeamName(m.teamId)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Role</p>
-                      <p className="font-medium">{p.role || m.role}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Sport</p>
-                      <p className="font-medium">{p.sportCategory || m.sportCategory}</p>
+                      <p className="text-sm text-muted-foreground">Category</p>
+                      <p className="font-medium">{m.role || p.role || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Email</p>
@@ -250,31 +262,29 @@ const RegistrationsPage: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Phone</p>
-                      <p className="font-medium">{p.phone || m.phone || 'N/A'}</p>
+                      <p className="font-medium">{p.phone || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Nationality</p>
-                      <p className="font-medium">{p.nationality || m.nationality}</p>
+                      <p className="font-medium">{p.nationality || 'N/A'}</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Passport</p>
-                      <p className="font-medium font-mono">{p.passportNumber || m.passportNumber}</p>
+                      <p className="font-medium font-mono">{p.passportNumber || 'N/A'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Passport Expiry</p>
-                      <p className="font-medium">{p.passportExpiry || m.passportExpiry || 'N/A'}</p>
+                      <p className="text-sm text-muted-foreground">Organization</p>
+                      <p className="font-medium">{p.organization || 'N/A'}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-muted-foreground">Date of Birth</p>
-                      <p className="font-medium">{p.dateOfBirth || m.dateOfBirth || 'N/A'}</p>
+                      <p className="text-sm text-muted-foreground">Job Title</p>
+                      <p className="font-medium">{p.jobTitle || 'N/A'}</p>
                     </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Gender</p>
-                      <p className="font-medium">{p.gender || m.gender}</p>
-                    </div>
-                    <div>
+                    <div className="col-span-2">
                       <p className="text-sm text-muted-foreground">Status</p>
-                      <Badge className={getStatusColor(m.status || 'Draft')}>{m.status || 'Draft'}</Badge>
+                      <Badge className={isSent(m) ? 'bg-status-success-bg text-status-success' : 'bg-muted text-muted-foreground'}>
+                        {isSent(m) ? 'Sent to Admin' : 'Draft — not sent'}
+                      </Badge>
                     </div>
                   </div>
                 );
@@ -291,10 +301,12 @@ const RegistrationsPage: React.FC = () => {
                   <p className="font-medium">{(selectedMember as any).medicalConditions}</p>
                 </div>
               )}
-              {(selectedMember as any).emergencyContact && (
+              {(selectedMember as any).participant?.emergencyContact && (
                 <div className="text-start">
                   <p className="text-sm text-muted-foreground">Emergency Contact</p>
-                  <p className="font-medium">{(selectedMember as any).emergencyContact} - {(selectedMember as any).emergencyPhone}</p>
+                  <p className="font-medium">
+                    {(selectedMember as any).participant.emergencyContact} - {(selectedMember as any).participant.emergencyPhone}
+                  </p>
                 </div>
               )}
             </div>

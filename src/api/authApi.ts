@@ -92,9 +92,40 @@ export interface ParticipantRegisterRequest {
   confirmPassword: string;
 }
 
+export interface SetParticipantPasswordResponse {
+  message: string;
+  email: string;
+}
+
 export const participantRegister = async (
   payload: ParticipantRegisterRequest
 ): Promise<{ message: string;[key: string]: unknown }> => {
   const { data } = await apiClient.post('/auth/participant/register', payload);
+  return data;
+};
+
+export const setParticipantPassword = async (
+  token: string,
+  password: string,
+  confirmPassword: string,
+): Promise<SetParticipantPasswordResponse> => {
+  const { data } = await apiClient.post('/auth/participant/set-password', {
+    token,
+    password,
+    confirmPassword,
+  });
+  return data;
+};
+
+export const setManagerPassword = async (
+  token: string,
+  password: string,
+  confirmPassword: string,
+): Promise<SetParticipantPasswordResponse> => {
+  const { data } = await apiClient.post('/auth/team-manager/set-password', {
+    token,
+    password,
+    confirmPassword,
+  });
   return data;
 };

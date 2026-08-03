@@ -26,6 +26,16 @@ export interface CreateTeamManagerPayload {
   federation: string;
 }
 
+export interface InviteTeamManagerPayload {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  country: string;
+  organization: string;
+  federation: string;
+}
+
 const unwrapList = (data: unknown): any[] => {
   if (Array.isArray(data)) return data;
   if (data && typeof data === 'object') {
@@ -110,23 +120,10 @@ const fetchManagersFromEndpoint = async (endpoint: string): Promise<EMSManager[]
     .filter(Boolean) as EMSManager[];
 };
 
-/** List team managers — prefers GET /admin/team-managers. */
+/** List team managers from the backend's admin listing endpoint. */
 export const getAllManagers = async (): Promise<EMSManager[]> => {
-  const endpoints = ['/admin/team-managers', '/admin/managers', '/team-managers'];
-  const merged: EMSManager[] = [];
-
-  for (const endpoint of endpoints) {
-    try {
-      const list = await fetchManagersFromEndpoint(endpoint);
-      if (list.length > 0) merged.push(...list);
-    } catch (err: any) {
-      if (err?.response?.status !== 404 && err?.response?.status !== 403) {
-        console.warn(`[managerApi] ${endpoint} failed:`, err?.message);
-      }
-    }
-  }
-
-  return dedupeManagers(merged);
+  const managers = await fetchManagersFromEndpoint('/admin/managers');
+  return dedupeManagers(managers);
 };
 
 /** Admin creates a team manager — POST /admin/team-managers */
@@ -149,6 +146,32 @@ export const createTeamManager = async (payload: CreateTeamManagerPayload): Prom
     throw new Error('Manager created but response could not be parsed');
   }
   return normalized;
+};
+
+/** Admin invites a team manager by email — POST /admin/team-managers/invite */
+export const inviteTeamManager = async (payload: InviteTeamManagerPayload): Promise<{ teamManager: EMSManager; setupEmailSent: boolean }> => {
+  const body = {
+    firstName: payload.firstName.trim(),
+    lastName: payload.lastName.trim(),
+    email: payload.email.trim().toLowerCase(),
+    phone: payload.phone.trim(),
+    country: payload.country.trim(),
+    organization: payload.organization.trim(),
+    federation: payload.federation.trim(),
+  };
+
+  const { data } = await apiClient.post('/admin/team-managers/invite', body);
+  const normalized = normalizeManager(unwrapItem(data?.teamManager || data));
+  if (!normalized) {
+    throw new Error('Manager invited but response could not be parsed');
+  }
+  return { teamManager: normalized, setupEmailSent: data?.setupEmailSent !== false };
+};
+
+/** Resend a manager's password-setup invite — POST /admin/team-managers/:id/send-setup-email */
+export const resendManagerSetupEmail = async (id: string): Promise<{ message: string }> => {
+  const { data } = await apiClient.post(`/admin/team-managers/${id}/send-setup-email`);
+  return data;
 };
 
 /** @deprecated use getAllManagers */

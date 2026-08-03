@@ -11,6 +11,7 @@ import * as participantApi from '@/api/participantApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -29,6 +30,10 @@ import {
   Trash2,
   Users,
   Loader2,
+  UserPlus,
+  UserRound,
+  Heart,
+  CalendarArrowDown,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -72,6 +77,7 @@ const ParticipantsPage: React.FC = () => {
   const [editingParticipant, setEditingParticipant] = useState<EMSParticipant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [resendingParticipantId, setResendingParticipantId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     firstName: '',
@@ -94,11 +100,11 @@ const ParticipantsPage: React.FC = () => {
   const loadParticipants = async () => {
     setIsLoading(true);
     try {
-      const data = await participantApi.getApprovedParticipantsFromRegistrations();
+      const data = await participantApi.getAdminMembers();
       setParticipants(data);
     } catch (error) {
-      console.error('Error fetching approved participants:', error);
-      toast.error('Failed to load approved participants');
+      console.error('Error fetching members:', error);
+      toast.error('Failed to load members');
       setParticipants([]);
     } finally {
       setIsLoading(false);
@@ -134,8 +140,12 @@ const ParticipantsPage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      await participantApi.createParticipant(formData);
-      toast.success(`Participant "${formData.firstName} ${formData.lastName}" added successfully`);
+      const result = await participantApi.createParticipant(formData);
+      toast.success(
+        result.setupEmailSent
+          ? `Participant "${formData.firstName} ${formData.lastName}" was added and invited to set their portal password.`
+          : `Participant "${formData.firstName} ${formData.lastName}" was added, but the setup email could not be sent.`,
+      );
       setIsAddOpen(false);
       resetForm();
       loadParticipants();
@@ -214,6 +224,18 @@ const ParticipantsPage: React.FC = () => {
     }
   };
 
+  const handleSendPortalInvite = async (participant: EMSParticipant) => {
+    setResendingParticipantId(participant.id);
+    try {
+      await participantApi.sendParticipantSetupEmail(participant.id);
+      toast.success(`A password setup email was sent to ${participant.email}`);
+    } catch (error: any) {
+      toast.error(error.response?.data?.message || 'Failed to send the portal invite');
+    } finally {
+      setResendingParticipantId(null);
+    }
+  };
+
   // Combine participant data with their invitation/registration status
   const participantsWithStatus: ParticipantWithStatus[] = participants.map(p => {
     const invitations = invitationStore.getByParticipant(p.id);
@@ -232,7 +254,7 @@ const ParticipantsPage: React.FC = () => {
     return {
       ...p,
       invitationStatus: latestInvitation?.status,
-      registrationStatus: approvedParticipant.registrationStatus || latestRegistration?.status || 'Approved',
+      registrationStatus: approvedParticipant.registrationStatus || latestRegistration?.status,
       registrationId: approvedParticipant.registrationId,
     };
   }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -250,14 +272,14 @@ const ParticipantsPage: React.FC = () => {
       sortable: true,
       accessor: (row) => (
         <div className="flex items-center gap-3">
-          <Avatar className="h-9 w-9">
-            <AvatarFallback className="bg-accent/10 text-accent text-sm">
+          <Avatar className="h-10 w-10 border border-primary/10 shadow-sm">
+            <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
               {row.firstName.charAt(0)}{row.lastName.charAt(0)}
             </AvatarFallback>
           </Avatar>
-          <div>
-            <p className="font-medium">{row.firstName} {row.lastName}</p>
-            <p className="text-sm text-muted-foreground">{row.email}</p>
+          <div className="min-w-0">
+            <p className="truncate font-semibold text-foreground">{row.firstName} {row.lastName}</p>
+            <p className="truncate text-sm text-muted-foreground">{row.email}</p>
           </div>
         </div>
       ),
@@ -267,7 +289,7 @@ const ParticipantsPage: React.FC = () => {
       header: t('participants.role'),
       sortable: true,
       accessor: (row) => (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground">
+        <span className="inline-flex items-center rounded-full border border-primary/10 bg-primary/[0.07] px-2.5 py-1 text-xs font-semibold text-primary">
           {row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '-'}
         </span>
       ),
@@ -283,17 +305,33 @@ const ParticipantsPage: React.FC = () => {
       header: t('participants.organization'),
       sortable: true,
       accessor: (row) => (
-        <span className="text-sm">{row.organization || '-'}</span>
+        <span className="font-medium text-foreground/85">{row.organization || '-'}</span>
       ),
+    },
+    {
+      key: 'added',
+      header: t('participants.added'),
+      className: 'hidden 2xl:table-cell whitespace-nowrap',
+      accessor: (row) => {
+        const createdAt = new Date(row.createdAt);
+        const addedDate = Number.isNaN(createdAt.getTime())
+          ? '-'
+          : createdAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+        return <span className="text-sm font-medium text-muted-foreground">{addedDate}</span>;
+      },
     },
     {
       key: 'invitation',
       header: t('common.invitation'),
+      className: 'hidden 2xl:table-cell',
       accessor: (row) => (
         row.invitationStatus ? (
           <StatusBadge status={row.invitationStatus} size="sm" />
         ) : (
-          <span className="text-muted-foreground text-sm">-</span>
+          <span className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-xs font-medium text-muted-foreground">
+            {t('participants.not_registered')}
+          </span>
         )
       ),
     },
@@ -330,9 +368,13 @@ const ParticipantsPage: React.FC = () => {
               <Edit className="h-4 w-4" />
               {t('common.edit')}
             </DropdownMenuItem>
-            <DropdownMenuItem className="flex items-center gap-2">
+            <DropdownMenuItem
+              disabled={resendingParticipantId === row.id}
+              onClick={() => handleSendPortalInvite(row)}
+              className="flex items-center gap-2"
+            >
               <Mail className="h-4 w-4" />
-              {t('participants.send_message')}
+              {resendingParticipantId === row.id ? 'Sending portal invite…' : t('participants.send_portal_invite')}
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => handleDeleteClick(row)}
@@ -347,131 +389,201 @@ const ParticipantsPage: React.FC = () => {
     },
   ];
 
+  const fieldClassName = 'h-11 rounded-xl border-border/80 bg-background px-3.5 shadow-sm transition-shadow focus-visible:ring-primary/25';
+  const selectClassName = 'h-11 rounded-xl border-border/80 bg-background px-3.5 shadow-sm focus:ring-primary/25';
+
   const formFieldsJsx = (
-    <div className="grid gap-4 py-4 max-h-[60vh] overflow-y-auto">
-      <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="firstName">{t('participants.first_name')} *</Label>
-          <Input
-            id="firstName"
-            placeholder="First name"
-            value={formData.firstName}
-            onChange={(e) => setFormData(prev => ({ ...prev, firstName: e.target.value }))}
-          />
+    <div className="min-h-0 space-y-5 overflow-y-auto bg-muted/20 px-5 py-5 sm:px-7 sm:py-6">
+      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5" aria-labelledby="contact-information-heading">
+        <div className="mb-5 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <UserRound className="h-[18px] w-[18px]" />
+          </div>
+          <div>
+            <h3 id="contact-information-heading" className="text-sm font-semibold text-foreground">
+              {t('participants.contact_information')}
+            </h3>
+            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+              {t('participants.contact_information_desc')}
+            </p>
+          </div>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="lastName">{t('participants.last_name')} *</Label>
-          <Input
-            id="lastName"
-            placeholder={t('participants.last_name')}
-            value={formData.lastName}
-            onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
-          />
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="firstName">{t('participants.first_name')} <span className="text-destructive">*</span></Label>
+            <Input
+              id="firstName"
+              autoComplete="given-name"
+              placeholder={t('participants.first_name')}
+              value={formData.firstName}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, firstName: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="lastName">{t('participants.last_name')} <span className="text-destructive">*</span></Label>
+            <Input
+              id="lastName"
+              autoComplete="family-name"
+              placeholder={t('participants.last_name')}
+              value={formData.lastName}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, lastName: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="email">{t('participants.email')} <span className="text-destructive">*</span></Label>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              placeholder="name@example.com"
+              value={formData.email}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="phone">{t('common.phone')}</Label>
+            <Input
+              id="phone"
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              placeholder="+971 50 123 4567"
+              value={formData.phone}
+              className={fieldClassName}
+              onChange={(e) => {
+                const value = e.target.value.replace(/[^0-9+]/g, '');
+                const sanitized = value.startsWith('+')
+                  ? '+' + value.slice(1).replace(/\+/g, '')
+                  : value.replace(/\+/g, '');
+                setFormData(prev => ({ ...prev, phone: sanitized }));
+              }}
+            />
+          </div>
         </div>
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="email">{t('participants.email')} *</Label>
-        <Input
-          id="email"
-          type="email"
-          placeholder="email@example.com"
-          value={formData.email}
-          onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="phone">{t('common.phone')}</Label>
-          <Input
-            id="phone"
-            placeholder="+971 50 123 4567"
-            value={formData.phone}
-            onChange={(e) => {
-              const value = e.target.value.replace(/[^0-9+]/g, '');
-              // Ensure + only appears at the start and only once
-              const sanitized = value.startsWith('+')
-                ? '+' + value.slice(1).replace(/\+/g, '')
-                : value.replace(/\+/g, '');
-              setFormData(prev => ({ ...prev, phone: sanitized }));
-            }}
-          />
+      </section>
+
+      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5" aria-labelledby="participant-details-heading">
+        <div className="mb-5 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Users className="h-[18px] w-[18px]" />
+          </div>
+          <div>
+            <h3 id="participant-details-heading" className="text-sm font-semibold text-foreground">
+              {t('participants.participant_details')}
+            </h3>
+            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+              {t('participants.participant_details_desc')}
+            </p>
+          </div>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="nationality">{t('participants.nationality')}</Label>
-          <Input
-            id="nationality"
-            placeholder={t('participants.nationality')}
-            value={formData.nationality}
-            onChange={(e) => setFormData(prev => ({ ...prev, nationality: e.target.value }))}
-          />
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="role">{t('participants.role')} <span className="text-destructive">*</span></Label>
+            <Select value={formData.role} onValueChange={(value: ParticipantRole) => setFormData(prev => ({ ...prev, role: value }))}>
+              <SelectTrigger id="role" className={selectClassName}>
+                <SelectValue placeholder="Select role" />
+              </SelectTrigger>
+              <SelectContent>
+                {ROLES.map(role => (
+                  <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="gender">{t('common.gender')} <span className="text-destructive">*</span></Label>
+            <Select value={formData.gender} onValueChange={(value) => setFormData(prev => ({ ...prev, gender: value }))}>
+              <SelectTrigger id="gender" className={selectClassName}>
+                <SelectValue placeholder="Select gender" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="male">{t('common.male')}</SelectItem>
+                <SelectItem value="female">{t('common.female')}</SelectItem>
+                <SelectItem value="other">{t('common.other')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="nationality">{t('participants.nationality')}</Label>
+            <Input
+              id="nationality"
+              autoComplete="country-name"
+              placeholder={t('participants.nationality')}
+              value={formData.nationality}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, nationality: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="organization">{t('participants.organization')}</Label>
+            <Input
+              id="organization"
+              autoComplete="organization"
+              placeholder={t('participants.organization')}
+              value={formData.organization}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, organization: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2 sm:col-span-2">
+            <Label htmlFor="jobTitle">{t('participants.job_title')}</Label>
+            <Input
+              id="jobTitle"
+              autoComplete="organization-title"
+              placeholder={t('participants.job_title')}
+              value={formData.jobTitle}
+              className={fieldClassName}
+              onChange={(e) => setFormData(prev => ({ ...prev, jobTitle: e.target.value }))}
+            />
+          </div>
         </div>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="role">Role *</Label>
-          <Select value={formData.role} onValueChange={(value: ParticipantRole) => setFormData(prev => ({ ...prev, role: value }))}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select role" />
-            </SelectTrigger>
-            <SelectContent>
-              {ROLES.map(role => (
-                <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      </section>
+
+      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5" aria-labelledby="additional-needs-heading">
+        <div className="mb-5 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Heart className="h-[18px] w-[18px]" />
+          </div>
+          <div>
+            <h3 id="additional-needs-heading" className="text-sm font-semibold text-foreground">
+              {t('participants.additional_needs')}
+            </h3>
+            <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+              {t('participants.additional_needs_desc')}
+            </p>
+          </div>
         </div>
-        <div className="grid gap-2">
-          <Label htmlFor="gender">{t('common.gender')} *</Label>
-          <Select value={formData.gender} onValueChange={(value) => setFormData(prev => ({ ...prev, gender: value }))}>
-            <SelectTrigger>
-              <SelectValue placeholder="Select gender" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="male">{t('common.male')}</SelectItem>
-              <SelectItem value="female">{t('common.female')}</SelectItem>
-              <SelectItem value="other">{t('common.other')}</SelectItem>
-            </SelectContent>
-          </Select>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="dietaryNotes">{t('participants.dietary')}</Label>
+            <Textarea
+              id="dietaryNotes"
+              rows={3}
+              placeholder="e.g., Vegetarian, Halal, Gluten-free"
+              value={formData.dietaryNotes}
+              className="min-h-[88px] resize-none rounded-xl border-border/80 bg-background px-3.5 py-3 shadow-sm focus-visible:ring-primary/25"
+              onChange={(e) => setFormData(prev => ({ ...prev, dietaryNotes: e.target.value }))}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="accessibilityNeeds">{t('participants.accessibility')}</Label>
+            <Textarea
+              id="accessibilityNeeds"
+              rows={3}
+              placeholder="e.g., Wheelchair access or assistance"
+              value={formData.accessibilityNeeds}
+              className="min-h-[88px] resize-none rounded-xl border-border/80 bg-background px-3.5 py-3 shadow-sm focus-visible:ring-primary/25"
+              onChange={(e) => setFormData(prev => ({ ...prev, accessibilityNeeds: e.target.value }))}
+            />
+          </div>
         </div>
-      </div>
-      <div className="grid grid-cols-2 gap-4">
-        <div className="grid gap-2">
-          <Label htmlFor="organization">{t('participants.organization')}</Label>
-          <Input
-            id="organization"
-            placeholder={t('participants.organization')}
-            value={formData.organization}
-            onChange={(e) => setFormData(prev => ({ ...prev, organization: e.target.value }))}
-          />
-        </div>
-        <div className="grid gap-2">
-          <Label htmlFor="jobTitle">{t('participants.job_title')}</Label>
-          <Input
-            id="jobTitle"
-            placeholder={t('participants.job_title')}
-            value={formData.jobTitle}
-            onChange={(e) => setFormData(prev => ({ ...prev, jobTitle: e.target.value }))}
-          />
-        </div>
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="dietaryNotes">{t('participants.dietary')}</Label>
-        <Input
-          id="dietaryNotes"
-          placeholder="e.g., Vegetarian, Halal, Gluten-free"
-          value={formData.dietaryNotes}
-          onChange={(e) => setFormData(prev => ({ ...prev, dietaryNotes: e.target.value }))}
-        />
-      </div>
-      <div className="grid gap-2">
-        <Label htmlFor="accessibilityNeeds">{t('participants.accessibility')}</Label>
-        <Input
-          id="accessibilityNeeds"
-          placeholder="e.g., Wheelchair accessible"
-          value={formData.accessibilityNeeds}
-          onChange={(e) => setFormData(prev => ({ ...prev, accessibilityNeeds: e.target.value }))}
-        />
-      </div>
+      </section>
     </div>
   );
 
@@ -523,33 +635,42 @@ const ParticipantsPage: React.FC = () => {
         {!isLoading && participants.length > 0 && (
           <>
             {/* Filters */}
-            <div className="flex flex-wrap gap-3 p-4 rounded-lg bg-muted/50 border border-border">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm font-medium">{t('common.filter')}:</span>
+            <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Filter className="h-4 w-4" />
+                  </span>
+                  {t('common.filter')}
+                </div>
+
+                <Select value={roleFilter} onValueChange={setRoleFilter}>
+                  <SelectTrigger className="h-9 w-36 rounded-xl border-border/80 bg-background">
+                    <SelectValue placeholder="Role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">{t('common.all_roles')}</SelectItem>
+                    {ROLES.map(role => (
+                      <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {roleFilter !== 'all' && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setRoleFilter('all')}
+                  >
+                    {t('participants.clear_filters')}
+                  </Button>
+                )}
               </div>
 
-              <Select value={roleFilter} onValueChange={setRoleFilter}>
-                <SelectTrigger className="w-32 h-8">
-                  <SelectValue placeholder="Role" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">{t('common.all_roles')}</SelectItem>
-                  {ROLES.map(role => (
-                    <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-
-              {roleFilter !== 'all' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setRoleFilter('all')}
-                >
-                  {t('participants.clear_filters')}
-                </Button>
-              )}
+              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                <CalendarArrowDown className="h-4 w-4 text-primary" />
+                {t('members.newest_first')}
+              </div>
             </div>
 
             <DataTable
@@ -561,6 +682,8 @@ const ParticipantsPage: React.FC = () => {
               searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
               selectable
               onSelectionChange={(ids) => console.log('Selected:', ids)}
+              pageSize={25}
+              className="space-y-5 [&>div:last-child]:overflow-hidden [&>div:last-child]:rounded-2xl [&>div:last-child]:border-border/70 [&>div:last-child]:shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.22)] [&_thead_tr]:border-border/70 [&_thead_tr]:bg-muted/55 [&_thead_th]:h-14 [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_tbody_td]:py-4 [&_tbody_tr]:border-border/65 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-primary/[0.025]"
             />
           </>
         )}
@@ -568,36 +691,56 @@ const ParticipantsPage: React.FC = () => {
 
       {/* Add Member Dialog */}
       <Dialog open={isAddOpen} onOpenChange={(open) => { setIsAddOpen(open); if (!open) resetForm(); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t('members.add_member')}</DialogTitle>
-            <DialogDescription>{t('participants.add_desc')}</DialogDescription>
+        <DialogContent className="grid max-h-[92vh] w-[calc(100%-1.5rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden border-0 p-0 shadow-2xl sm:rounded-2xl [&>button]:right-5 [&>button]:top-5 [&>button]:rounded-full [&>button]:p-1.5 [&>button]:transition-colors [&>button:hover]:bg-muted">
+          <DialogHeader className="border-b border-border/70 bg-gradient-to-r from-primary/[0.09] via-primary/[0.035] to-transparent px-5 py-5 pr-14 sm:px-7 sm:py-6">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md shadow-primary/20">
+                <UserPlus className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-xl font-semibold tracking-tight sm:text-2xl">{t('members.add_member')}</DialogTitle>
+                <DialogDescription className="mt-1 text-sm leading-5">{t('participants.add_desc')}</DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
           {formFieldsJsx}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" disabled={isSubmitting} onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button disabled={isSubmitting} onClick={handleCreate}>
+          <div className="flex flex-col-reverse gap-2 border-t border-border/70 bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+            <p className="text-xs text-muted-foreground">{t('participants.required_hint')}</p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button className="h-10 rounded-xl px-5" variant="outline" disabled={isSubmitting} onClick={() => { setIsAddOpen(false); resetForm(); }}>{t('common.cancel')}</Button>
+              <Button className="h-10 rounded-xl px-6 shadow-md shadow-primary/15" disabled={isSubmitting} onClick={handleCreate}>
               {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
               {t('common.save')}
-            </Button>
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Edit Participant Dialog */}
       <Dialog open={isEditOpen} onOpenChange={(open) => { setIsEditOpen(open); if (!open) { setEditingParticipant(null); resetForm(); } }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t('members.edit_member')}</DialogTitle>
-            <DialogDescription>{t('participants.edit_desc')}</DialogDescription>
+        <DialogContent className="grid max-h-[92vh] w-[calc(100%-1.5rem)] max-w-3xl grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden border-0 p-0 shadow-2xl sm:rounded-2xl [&>button]:right-5 [&>button]:top-5 [&>button]:rounded-full [&>button]:p-1.5 [&>button]:transition-colors [&>button:hover]:bg-muted">
+          <DialogHeader className="border-b border-border/70 bg-gradient-to-r from-primary/[0.09] via-primary/[0.035] to-transparent px-5 py-5 pr-14 sm:px-7 sm:py-6">
+            <div className="flex items-center gap-3.5">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md shadow-primary/20">
+                <Edit className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-xl font-semibold tracking-tight sm:text-2xl">{t('members.edit_member')}</DialogTitle>
+                <DialogDescription className="mt-1 text-sm leading-5">{t('participants.edit_desc')}</DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
           {formFieldsJsx}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" disabled={isSubmitting} onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>{t('common.cancel')}</Button>
-            <Button disabled={isSubmitting} onClick={handleUpdate}>
-              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-              {t('common.save_changes')}
-            </Button>
+          <div className="flex flex-col-reverse gap-2 border-t border-border/70 bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+            <p className="text-xs text-muted-foreground">{t('participants.required_hint')}</p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button className="h-10 rounded-xl px-5" variant="outline" disabled={isSubmitting} onClick={() => { setIsEditOpen(false); setEditingParticipant(null); resetForm(); }}>{t('common.cancel')}</Button>
+              <Button className="h-10 rounded-xl px-6 shadow-md shadow-primary/15" disabled={isSubmitting} onClick={handleUpdate}>
+                {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                {t('common.save_changes')}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

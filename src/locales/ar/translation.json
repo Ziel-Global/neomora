@@ -64,6 +64,7 @@
     "actions": "الإجراءات",
     "filter": "تصفية",
     "export": "تصدير",
+    "phone": "الهاتف",
     "participant": "المشارك",
     "member": "عضو",
     "event": "الفعالية",
@@ -213,6 +214,16 @@
     "clear_filters": "مسح التصفية",
     "dietary": "الاحتياجات الغذائية",
     "accessibility": "احتياجات إمكانية الوصول",
+    "added": "تاريخ الإضافة",
+    "not_registered": "غير مسجل",
+    "contact_information": "معلومات الاتصال",
+    "contact_information_desc": "بيانات الهوية والاتصال الخاصة بهذا العضو.",
+    "participant_details": "تفاصيل المشارك",
+    "participant_details_desc": "الدور والجنسية والمعلومات المهنية.",
+    "additional_needs": "الاحتياجات الإضافية",
+    "additional_needs_desc": "ملاحظات اختيارية للمساعدة في تقديم التجربة المناسبة.",
+    "required_hint": "الحقول المشار إليها بعلامة * مطلوبة.",
+    "send_portal_invite": "إرسال دعوة البوابة",
     "send_message": "إرسال رسالة",
     "view_profile": "عرض الملف الشخصي"
   },
@@ -221,7 +232,8 @@
     "add_member": "إضافة عضو",
     "edit_member": "تعديل عضو",
     "no_members": "لا يوجد أعضاء بعد",
-    "no_members_desc": "أضف عضو الأول للبدء في إدارة السجلات العالمية."
+    "no_members_desc": "أضف عضو الأول للبدء في إدارة السجلات العالمية.",
+    "newest_first": "الأعضاء الأحدث أولاً"
   },
   "invitations": {
     "title": "الدعوات",
@@ -231,6 +243,7 @@
     "delivered": "تم التسليم",
     "accepted": "مقبول",
     "campaigns": "الحملات",
+    "search_placeholder": "البحث عن الحملات بالاسم أو الفعالية...",
     "campaign_name": "اسم الحملة",
     "rsvp_deadline": "الموعد النهائي للرد",
     "send_now": "إرسال الآن",

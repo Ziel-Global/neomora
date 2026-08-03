@@ -168,24 +168,10 @@ const normalizeDelegationStatus = (raw?: string): string => {
 // Only shows delegations that have been explicitly created and submitted by managers
 export const getAllDelegations = async (): Promise<any[]> => {
     try {
-        const adminDelegationEndpoints = ['/me/delegations', '/delegations/admin/all', '/admin/delegations'];
-        let remoteDelegations: any[] = [];
-
-        for (const endpoint of adminDelegationEndpoints) {
-            try {
-                console.log(`[API] Fetching delegations from ${endpoint}`);
-                const { data } = await apiClient.get(endpoint);
-                const result = Array.isArray(data) ? data : (data?.data || data?.delegations || []);
-                if (Array.isArray(result)) {
-                    remoteDelegations = result;
-                    if (result.length > 0) break;
-                }
-            } catch (err: any) {
-                if (err?.response?.status !== 404) {
-                    console.warn(`[API] Delegations fetch failed for ${endpoint}:`, err?.message || err);
-                }
-            }
-        }
+        // `/me/delegations` is the supported role-aware endpoint for admins.
+        // It already returns all delegations, so do not probe legacy routes.
+        const { data } = await apiClient.get('/me/delegations');
+        const remoteDelegations = Array.isArray(data) ? data : (data?.data || data?.delegations || []);
 
         // Build delegation map from actual server delegations only
         const delegationMap = new Map<string, any>();
@@ -218,108 +204,10 @@ export const getAllDelegations = async (): Promise<any[]> => {
             });
         }
 
-        // Now fetch registrations only to enrich existing delegations with member details
-        try {
-            console.log('[API] Fetching registrations to enrich delegation member data');
-            const regsResponse = await apiClient.get('/registrations/admin/all');
-            const registrations = Array.isArray(regsResponse.data) ? regsResponse.data : (regsResponse.data?.data || []);
-            console.log('[API] Got registrations:', registrations.length);
-
-            // Group teamIds by delegationId from registrations
-            const delegationTeamsFromRegs = new Map<string, Set<string>>();
-            for (const reg of registrations) {
-                let regDelegationId = reg.delegationId || reg.delegation_id;
-                if (!regDelegationId && reg.team) {
-                    const teamDel = reg.team.delegationId || reg.team.delegation_id || reg.team.delegation;
-                    regDelegationId = typeof teamDel === 'object' ? (teamDel.id || teamDel._id) : teamDel;
-                }
-                const regTeamId = reg.teamId || reg.team_id || (reg.team && typeof reg.team === 'object' ? (reg.team.id || reg.team._id) : reg.team);
-                if (regDelegationId && regTeamId) {
-                    if (!delegationTeamsFromRegs.has(regDelegationId)) {
-                        delegationTeamsFromRegs.set(regDelegationId, new Set());
-                    }
-                    delegationTeamsFromRegs.get(regDelegationId)!.add(regTeamId);
-                }
-            }
-
-            // Update delegations in map with teamIds from registrations
-            for (const [remoteId, delegation] of delegationMap) {
-                const regTeamIds = delegationTeamsFromRegs.get(remoteId);
-                if (regTeamIds && (!delegation.teamIds || delegation.teamIds.length === 0)) {
-                    delegation.teamIds = Array.from(regTeamIds);
-                }
-            }
-
-            // Build a set of all teamIds that belong to known delegations
-            const delegationTeamIds = new Set<string>();
-            for (const [, delegation] of delegationMap) {
-                for (const teamId of (delegation.teamIds || [])) {
-                    delegationTeamIds.add(teamId);
-                }
-            }
-
-            for (const reg of registrations) {
-                let regDelegationId = reg.delegationId || reg.delegation_id;
-                if (!regDelegationId && reg.team) {
-                    const teamDel = reg.team.delegationId || reg.team.delegation_id || reg.team.delegation;
-                    regDelegationId = typeof teamDel === 'object' ? (teamDel.id || teamDel._id) : teamDel;
-                }
-                const regTeamId = reg.teamId || reg.team_id || (reg.team && typeof reg.team === 'object' ? (reg.team.id || reg.team._id) : reg.team);
-
-                // Only process registrations that belong to a known delegation
-                // Match by delegationId directly, or by teamId belonging to a delegation's teams
-                let matchedDelegationKey: string | null = null;
-
-                if (regDelegationId && delegationMap.has(regDelegationId)) {
-                    matchedDelegationKey = regDelegationId;
-                } else if (regTeamId && delegationTeamIds.has(regTeamId)) {
-                    // Find which delegation owns this teamId
-                    for (const [key, delegation] of delegationMap) {
-                        if ((delegation.teamIds || []).includes(regTeamId)) {
-                            matchedDelegationKey = key;
-                            break;
-                        }
-                    }
-                }
-
-                // Skip registrations that don't belong to any known delegation
-                if (!matchedDelegationKey) continue;
-
-                const existing = delegationMap.get(matchedDelegationKey)!;
-                const memberObj = {
-                    ...(reg.participant || reg),
-                    teamId: regTeamId,
-                    team_id: regTeamId,
-                    registrationId: reg.id || reg._id || reg.registrationId || reg.registration_id,
-                };
-
-                // Avoid duplicate members
-                const alreadyExists = existing.members.some((m: any) => {
-                    const mEmail = m.email || m.participant?.email;
-                    const newEmail = memberObj.email || memberObj.participant?.email;
-                    return mEmail && newEmail && mEmail.toLowerCase() === newEmail.toLowerCase();
-                });
-
-                if (!alreadyExists) {
-                    existing.members.push(memberObj);
-                    existing.totalMembers = existing.members.length;
-                }
-
-                const regManagerId = reg.managerId || reg.manager_id || reg.team?.managerId || reg.team?.manager_id;
-                const regManagerEmail = reg.managerEmail || reg.manager_email || reg.team?.managerEmail || reg.team?.manager?.email;
-                if (!existing.managerId && regManagerId) {
-                    existing.managerId = regManagerId;
-                }
-                if (!existing.managerEmail && regManagerEmail) {
-                    existing.managerEmail = regManagerEmail;
-                }
-            }
-        } catch (regErr: any) {
-            console.warn('[API] Failed to fetch registrations for enrichment:', regErr?.message);
-        }
-
+        // Registration and team details are loaded by the Delegations page only
+        // when needed. Keeping this base endpoint small makes list navigation
+        // immediate and avoids downloading registrations twice.
         const combinedDelegations = Array.from(delegationMap.values());
-        console.log('[API] Returning delegations:', combinedDelegations.length);
         return combinedDelegations;
     } catch (err: any) {
         console.error('[API] Error fetching delegations:', err);
@@ -351,6 +239,18 @@ export const updateDelegationStatus = async (id: string, status: 'Approved' | 'R
 
 export const deleteDelegation = async (id: string): Promise<void> => {
     await apiClient.delete(`/delegations/${id}`);
+};
+
+// Admin: send a delegation back to the manager for changes, with a message
+export const requestDelegationUpdate = async (id: string, message: string): Promise<any> => {
+    const { data } = await apiClient.post(`/delegations/${id}/request-update`, { message });
+    return data;
+};
+
+// Manager: mark a delegation's roster as complete and ready for per-member review
+export const submitDelegationRoster = async (id: string): Promise<any> => {
+    const { data } = await apiClient.post(`/delegations/${id}/submit-roster`);
+    return data;
 };
 
 export const extractDelegationId = (delegation: unknown): string => {

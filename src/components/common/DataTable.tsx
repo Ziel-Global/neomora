@@ -199,13 +199,13 @@ export function DataTable<T>({
       )}
 
       {/* Table */}
-      <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <div className="overflow-x-auto">
-          <Table>
+      <div className="overflow-hidden rounded-lg border border-border bg-card">
+        <div className="w-full overflow-x-auto">
+          <Table className="w-full table-fixed">
             <TableHeader>
               <TableRow className="table-header hover:bg-muted/50">
                 {selectable && (
-                  <TableHead className="w-12">
+                  <TableHead className="w-10 px-2">
                     <Checkbox
                       checked={isAllSelected}
                       onCheckedChange={handleSelectAll}
@@ -270,7 +270,7 @@ export function DataTable<T>({
                       onClick={() => onRowClick?.(row)}
                     >
                       {selectable && (
-                        <TableCell onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="w-10 px-2" onClick={(e) => e.stopPropagation()}>
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={(checked) =>
@@ -281,7 +281,7 @@ export function DataTable<T>({
                         </TableCell>
                       )}
                       {columns.map((column) => (
-                        <TableCell key={column.key} className={cn(column.className, 'text-start')}>
+                        <TableCell key={column.key} className={cn('min-w-0 text-start', column.className)}>
                           {column.accessor(row)}
                         </TableCell>
                       ))}

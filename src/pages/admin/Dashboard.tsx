@@ -84,17 +84,22 @@ const AdminDashboard: React.FC = () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [data, events] = await Promise.all([
-        getAdminDashboard(eventId),
-        eventId ? getEvents().catch(() => []) : Promise.resolve([]),
-      ]);
+      const data = await getAdminDashboard(eventId);
       setDashboard(data);
 
       if (eventId) {
-        const matchedEvent = events.find(
-          event => String(event.id || (event as any)._id) === String(eventId),
-        );
-        setEventName(data.eventName || matchedEvent?.name);
+        // The dashboard response is sufficient to render immediately. Resolve
+        // the optional display name afterwards rather than blocking every KPI
+        // on the full events-list request.
+        setEventName(data.eventName);
+        void getEvents()
+          .then((events) => {
+            const matchedEvent = events.find(
+              event => String(event.id || (event as any)._id) === String(eventId),
+            );
+            if (matchedEvent?.name) setEventName(data.eventName || matchedEvent.name);
+          })
+          .catch(() => undefined);
       } else {
         setEventName(data.eventName);
       }

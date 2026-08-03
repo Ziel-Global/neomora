@@ -83,6 +83,7 @@ export interface Campaign {
 
 const managerCampaignClient = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL,
+    timeout: 15000,
     headers: { 'Content-Type': 'application/json' },
 });
 
@@ -96,6 +97,7 @@ managerCampaignClient.interceptors.request.use((config) => {
 
 const participantCampaignClient = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL,
+    timeout: 15000,
     headers: { 'Content-Type': 'application/json' },
 });
 
@@ -545,8 +547,6 @@ const getManagerCampaignEndpoints = (): string[] => [
     '/manager/campaigns',
     '/manager/campaigns/invitations',
     '/me/campaigns',
-    '/campaigns/me',
-    '/campaigns/my',
     '/participant/campaigns/invitations',
     '/participant/campaigns',
 ];

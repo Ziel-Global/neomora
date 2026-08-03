@@ -68,6 +68,13 @@ export const getRegistrationById = async (id: string): Promise<Registration> => 
     const { data } = await apiClient.get(`/registrations/${id}`);
     return data?.data || data;
 };
+
+// GET /registrations/team/:teamId — Manager: get registrations for a team's members
+export const getTeamRegistrations = async (teamId: string): Promise<Registration[]> => {
+    const { data } = await apiClient.get(`/registrations/team/${teamId}`);
+    const result = Array.isArray(data) ? data : (data?.data || []);
+    return Array.isArray(result) ? result : [];
+};
 // PUT /registrations/:id — Update registration form (JSON)
 export const updateRegistrationForm = async (id: string, payload: Partial<Registration>): Promise<Registration> => {
     const { data } = await apiClient.put(`/registrations/${id}`, payload);
@@ -274,7 +281,7 @@ export const uploadRegistrationDocuments = async (
 ): Promise<void> => {
     for (const doc of documents) {
         const formData = new FormData();
-        formData.append(doc.type, doc.file);
+        formData.append('file', doc.file);
         formData.append('type', doc.type);
         await apiClient.post(`/registrations/${registrationId}/documents`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
@@ -378,18 +385,14 @@ const getRegistrationEventId = (registration: any): string =>
 
 /** Merge admin registration sources and return only Approved registrations. */
 export const getApprovedAdminRegistrations = async (eventId?: string): Promise<Registration[]> => {
-    const [teamGroups, allRegs] = await Promise.all([
-        getRegistrationsByTeam().catch(() => []),
-        getRegistrations().catch(() => []),
-    ]);
-
     const merged = new Map<string, Registration>();
     const targetEventId = eventId ? String(eventId) : '';
 
-    for (const reg of [
-        ...extractRegistrationsFromTeamGroups(teamGroups),
-        ...(Array.isArray(allRegs) ? allRegs : []),
-    ]) {
+    // `/registrations/admin/all` already contains every registration with its
+    // participant data. Avoid downloading the same records again through the
+    // grouped-by-team endpoint just to build the Members table.
+    const allRegs = await getRegistrations().catch(() => []);
+    for (const reg of Array.isArray(allRegs) ? allRegs : []) {
         const key = getRegistrationRecordKey(reg);
         if (!key || !isApprovedRegistration(reg)) continue;
         if (targetEventId && getRegistrationEventId(reg) !== targetEventId) continue;
@@ -416,7 +419,7 @@ export const rejectRegistration = async (id: string, reason?: string): Promise<v
 
 // POST /registrations/:id/request-update — Request update from participant
 export const requestRegistrationUpdate = async (id: string, reason?: string): Promise<void> => {
-    await apiClient.post(`/registrations/${id}/request-update`, reason ? { reason } : undefined);
+    await apiClient.post(`/registrations/${id}/request-update`, reason ? { message: reason } : undefined);
 };
 
 // GET /registrations/event/:eventId/participants — legacy alias; uses approved admin registrations.

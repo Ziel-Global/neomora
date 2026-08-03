@@ -1,5 +1,6 @@
 // Team and Delegation Store for Manager Portal
 import { ParticipantRole } from '@/data/mockData';
+import { DELEGATION_CATEGORY_LABELS } from '@/lib/delegationCategories';
 
 // ============= TYPES =============
 
@@ -80,9 +81,11 @@ export interface Delegation {
   eventId: string;
   teamIds: string[];
   totalMembers: number;
-  status: 'Draft' | 'Submitted' | 'Approved' | 'Rejected';
+  status: 'Draft' | 'Submitted' | 'Approved' | 'Rejected' | 'Update Requested' | 'Roster Submitted';
   serverDelegationId?: string;
   rejectionReason?: string;
+  reviewMessage?: string;
+  expectedMemberCounts?: Record<string, number>;
   reviewedAt?: string;
   submittedAt?: string;
   createdAt: string;
@@ -144,16 +147,7 @@ export const SPORT_CATEGORIES: SportCategory[] = [
   },
 ];
 
-export const TEAM_ROLES = [
-  'VVIP',
-  'VIP',
-  'Athlete',
-  'Official',
-  'Judge',
-  'Media',
-  'Fan',
- 
-];
+export const TEAM_ROLES = DELEGATION_CATEGORY_LABELS;
 
 // ============= STORE KEYS =============
 

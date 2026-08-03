@@ -49,6 +49,8 @@ export interface EMSEvent {
   startDate: string;
   endDate: string;
   city: string;
+  country?: string;
+  cities?: string[];
   venues: string[];
   status: EventStatus;
   clientGroups: ParticipantRole[];
@@ -81,6 +83,7 @@ export interface EMSParticipant {
   dietaryNotes: string;
   accessibilityNeeds: string;
   emergencyContact?: string;
+  sports?: string[];
   createdAt: string;
   updatedAt: string;
 }

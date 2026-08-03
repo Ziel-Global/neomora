@@ -24,7 +24,15 @@ import {
 import { ParticipantRole } from '@/data/mockData';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Plane, MapPin, Calendar } from 'lucide-react';
-import { createRegistration, submitFinalRegistration, getMyRegistrations } from '@/api/registrationApi';
+import {
+  createRegistration,
+  submitFinalRegistration,
+  getMyRegistrations,
+  getRegistrationById,
+  updateRegistrationForm,
+  uploadRegistrationDocuments,
+  Registration,
+} from '@/api/registrationApi';
 import { getEvents } from '@/api/eventApi';
 import { getInvitationById, Invitation } from '@/api/invitationApi';
 
@@ -48,7 +56,7 @@ const hasExistingInvitationRegistration = async (
 
   const registrations = await getMyRegistrations().catch(() => []);
   return registrations.some(reg => {
-    const regInvitationId = reg.invitationId || reg.invitation_id;
+    const regInvitationId = reg.invitationId || reg.invitation_id || (reg as any).invitation?.id;
     if (regInvitationId && String(regInvitationId) === invitationId) return true;
     if (!eventId) return false;
     const regEventId = reg.eventId || (reg as any).event?.id;
@@ -121,6 +129,7 @@ const RegisterPage: React.FC = () => {
   const [invitationId, setInvitationId] = useState<string | null>(null);
   const [isInvitationLocked, setIsInvitationLocked] = useState(false);
   const [lockedEvent, setLockedEvent] = useState<any | null>(null);
+  const [editingRegistration, setEditingRegistration] = useState<Registration | null>(null);
   const [errors, setErrors] = useState<FormErrors>({});
   const [touched, setTouched] = useState<{ [key: string]: boolean }>({});
   const [availableEvents, setAvailableEvents] = useState<any[]>([]);
@@ -169,6 +178,7 @@ const RegisterPage: React.FC = () => {
     const searchParams = new URLSearchParams(location.search);
     const invId = searchParams.get('invitationId');
     const urlEventId = searchParams.get('eventId');
+    const registrationIdToEdit = searchParams.get('registrationId');
 
     const applySessionPrefill = () => {
       if (!sessionParticipant) return;
@@ -194,6 +204,59 @@ const RegisterPage: React.FC = () => {
       let invitationEvent: any = null;
 
       try {
+        if (registrationIdToEdit) {
+          const registration = await getRegistrationById(registrationIdToEdit);
+          if (registration.status !== 'Update Requested') {
+            toast.info('This registration is not currently awaiting updates.');
+            navigate('/portal/registrations');
+            return;
+          }
+
+          const participant = registration.participant || {};
+          const event = registration.event || { id: registration.eventId, name: 'Selected event' };
+          setEditingRegistration(registration);
+          setLockedEvent(event);
+          setAvailableEvents([event]);
+          setIsInvitationLocked(true);
+          setFormData(prev => ({
+            ...prev,
+            eventId: event.id || registration.eventId || '',
+            firstName: participant.firstName || '',
+            lastName: participant.lastName || '',
+            email: participant.email || '',
+            phone: participant.phone || '',
+            nationality: participant.nationality || '',
+            passportNumber: participant.passportNumber || '',
+            organization: participant.organization || '',
+            jobTitle: participant.jobTitle || '',
+            role: participant.role || '',
+            arrivalDate: registration.arrivalDate || '',
+            departureDate: registration.departureDate || '',
+            needsVisa: Boolean(registration.needsVisa),
+            needsAccommodation: Boolean(registration.needsAccommodation),
+            needsTransport: Boolean(registration.needsTransport),
+            dietaryRequirements: registration.dietaryRequirements || '',
+            emergencyContact: participant.emergencyPhone || participant.emergencyContact || '',
+            originCity: registration.travelBooking?.originCity || '',
+            departureAirport: registration.travelBooking?.departureAirport || '',
+            seatPreference: registration.travelBooking?.seatPreference || 'No Preference',
+            mealPreference: registration.travelBooking?.mealPreference || 'حلال / Halal',
+            specialRequirements: registration.travelBooking?.specialRequirements || '',
+            travelEmergencyContact: registration.travelBooking?.emergencyContact || '',
+            travelEmergencyPhone: registration.travelBooking?.emergencyPhone || '',
+          }));
+          setUploadedDocs((registration.documents || []).flatMap((doc: any) => {
+            const type = doc.type === 'passport_copy'
+              ? 'Passport'
+              : doc.type === 'profile_photo'
+                ? 'Photo'
+                : null;
+            return type ? [{ type, fileName: doc.fileName || `${type} on file`, fileData: '', docId: doc.id }] : [];
+          }) as UploadedDoc[]);
+          setCurrentStep(2);
+          return;
+        }
+
         if (invId) {
           setInvitationId(invId);
 
@@ -267,7 +330,9 @@ const RegisterPage: React.FC = () => {
         setIsLoadingEvents(false);
       }
 
-      applySessionPrefill();
+      if (!registrationIdToEdit) {
+        applySessionPrefill();
+      }
     };
 
     loadRegistrationContext();
@@ -637,6 +702,60 @@ const RegisterPage: React.FC = () => {
         return;
       }
 
+      if (editingRegistration) {
+        const servicesRequired = [
+          ...(formData.needsAccommodation ? ['accommodation'] : []),
+          ...(formData.needsTransport ? ['airporttransfer'] : []),
+        ];
+        const updated = await updateRegistrationForm(editingRegistration.id, {
+          firstName: formData.firstName,
+          lastName: formData.lastName,
+          email: formData.email,
+          phone: formData.phone,
+          nationality: formData.nationality,
+          passportNumber: formData.passportNumber,
+          organization: formData.organization,
+          jobTitle: formData.jobTitle,
+          role: formData.role,
+          emergencyContactPhone: formData.emergencyContact,
+          preferredArrivalDate: formData.arrivalDate,
+          preferredDepartureDate: formData.departureDate,
+          needsVisa: formData.needsVisa,
+          dietaryRequirements: formData.dietaryRequirements,
+          servicesRequired,
+          originCity: formData.originCity,
+          departureAirport: formData.departureAirport,
+          seatPreference: formData.seatPreference,
+          mealPreference: formData.mealPreference,
+          specialRequirements: formData.specialRequirements,
+          travelEmergencyContactName: formData.travelEmergencyContact,
+          travelEmergencyContactPhone: formData.travelEmergencyPhone,
+        });
+
+        const registrationReference = updated.registrationId || editingRegistration.registrationId;
+        const newDocuments = await Promise.all(
+          uploadedDocs
+            .filter(doc => doc.fileData.startsWith('data:'))
+            .map(async doc => {
+              const blob = await (await fetch(doc.fileData)).blob();
+              return {
+                type: doc.type === 'Passport' ? 'passport_copy' : 'profile_photo',
+                file: new File([blob], doc.fileName, { type: blob.type || 'application/octet-stream' }),
+              };
+            }),
+        );
+        if (registrationReference && newDocuments.length > 0) {
+          await uploadRegistrationDocuments(registrationReference, newDocuments);
+        }
+        if (registrationReference) {
+          await submitFinalRegistration(registrationReference);
+        }
+
+        toast.success('Your changes were submitted for review.');
+        navigate('/portal/registrations');
+        return;
+      }
+
       // Create FormData for multipart/form-data submission
       const registrationFormData = new FormData();
 
@@ -653,11 +772,15 @@ const RegisterPage: React.FC = () => {
       registrationFormData.append('participantRole', formData.role);
 
       // Add travel and service preferences
-      registrationFormData.append('arrivalDate', formData.arrivalDate);
-      registrationFormData.append('departureDate', formData.departureDate);
-      registrationFormData.append('needsVisa', String(formData.needsVisa));
-      registrationFormData.append('needsAccommodation', String(formData.needsAccommodation));
-      registrationFormData.append('needsTransport', String(formData.needsTransport));
+      registrationFormData.append('preferredArrivalDate', formData.arrivalDate);
+      registrationFormData.append('preferredDepartureDate', formData.departureDate);
+      const servicesRequired = [
+        ...(formData.needsAccommodation ? ['accommodation'] : []),
+        ...(formData.needsTransport ? ['airporttransfer'] : []),
+      ];
+      if (servicesRequired.length > 0) {
+        registrationFormData.append('servicesRequired', servicesRequired.join(','));
+      }
 
       // Add travel preferences if applicable
       if (formData.needsTransport) {
@@ -672,20 +795,22 @@ const RegisterPage: React.FC = () => {
 
       // Add other fields
       registrationFormData.append('dietaryRequirements', formData.dietaryRequirements);
-      registrationFormData.append('emergencyContact', formData.emergencyContact);
+      registrationFormData.append('emergencyContactPhone', formData.emergencyContact);
       registrationFormData.append('agreeTerms', String(formData.agreeTerms));
       if (invitationId) {
         registrationFormData.append('invitationId', invitationId);
       }
 
-      // Add uploaded files
-      uploadedDocs.forEach((doc) => {
-        if (doc.type === 'Passport') {
-          registrationFormData.append('passportCopy', doc.fileData as any);
-        } else if (doc.type === 'Photo') {
-          registrationFormData.append('profilePhoto', doc.fileData as any);
-        }
-      });
+      // Add uploaded files (convert stored base64 data URLs back into real files
+      // so the backend's multipart file interceptor actually picks them up)
+      await Promise.all(
+        uploadedDocs.map(async (doc) => {
+          if (doc.type !== 'Passport' && doc.type !== 'Photo') return;
+          const blob = await (await fetch(doc.fileData)).blob();
+          const file = new File([blob], doc.fileName, { type: blob.type || 'application/octet-stream' });
+          registrationFormData.append(doc.type === 'Passport' ? 'passportCopy' : 'profilePhoto', file);
+        }),
+      );
 
       // Call API to create registration
       const response = await createRegistration(registrationFormData);
@@ -729,7 +854,7 @@ const RegisterPage: React.FC = () => {
       login(formData.email, '');
 
       toast.success('Registration submitted successfully!');
-      navigate('/my-status');
+      navigate(location.pathname.startsWith('/portal/') ? '/portal/registrations' : '/my-status');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error('Registration error:', error);
@@ -1031,6 +1156,24 @@ const RegisterPage: React.FC = () => {
                 )}
               </div>
             </div>
+
+            {editingRegistration?.travelBooking && (editingRegistration.travelBooking.pnr || editingRegistration.travelBooking.airline) && (
+              <div className="space-y-2 p-4 rounded-lg border bg-muted/40">
+                <h3 className="font-medium flex items-center gap-2">
+                  <Plane className="h-4 w-4" />
+                  Booked Flight
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Assigned by our team — contact us if this needs to change.
+                </p>
+                <div className="grid sm:grid-cols-2 gap-2 text-sm">
+                  <div>Airline: {editingRegistration.travelBooking.airline || '—'}</div>
+                  <div>PNR: {editingRegistration.travelBooking.pnr || '—'}</div>
+                  <div>Seat: {editingRegistration.travelBooking.seatNumber || '—'}</div>
+                  <div>Class: {editingRegistration.travelBooking.cabinClass || '—'}</div>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               <Label>Services Required</Label>
@@ -1467,8 +1610,19 @@ const RegisterPage: React.FC = () => {
             const stepErrors = getStepErrors(step.id);
             const hasErrors = stepErrors.length > 0;
 
+            const isLocked = isInvitationLocked && step.id === 1;
+
             return (
-              <div key={step.id} className="flex flex-col items-center gap-2">
+              <button
+                key={step.id}
+                type="button"
+                onClick={() => setCurrentStep(step.id)}
+                disabled={isLocked}
+                className={cn(
+                  "flex flex-col items-center gap-2",
+                  isLocked ? "cursor-not-allowed opacity-50" : "cursor-pointer",
+                )}
+              >
                 <div className={cn(
                   "w-10 h-10 rounded-full flex items-center justify-center transition-colors relative",
                   currentStep >= step.id
@@ -1490,7 +1644,7 @@ const RegisterPage: React.FC = () => {
                 )}>
                   {step.title}
                 </span>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1526,10 +1680,10 @@ const RegisterPage: React.FC = () => {
                   {isSubmitting ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Submitting...
+                      {editingRegistration ? 'Saving Changes...' : 'Submitting...'}
                     </>
                   ) : (
-                    'Submit Registration'
+                    editingRegistration ? 'Save Changes' : 'Submit Registration'
                   )}
                 </Button>
               )}
@@ -1542,7 +1696,3 @@ const RegisterPage: React.FC = () => {
 };
 
 export default RegisterPage;
-
-
-
-

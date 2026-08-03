@@ -45,9 +45,9 @@ import ManagerListPage from "@/pages/admin/ManagerList";
 import AdminLogin from "@/pages/auth/AdminLogin";
 import StaffLogin from "@/pages/auth/StaffLogin";
 import ParticipantLogin from "@/pages/auth/ParticipantLogin";
-import ParticipantRegister from "@/pages/auth/ParticipantRegister";
+import ParticipantSetPassword from "@/pages/auth/ParticipantSetPassword";
+import ManagerSetPassword from "@/pages/auth/ManagerSetPassword";
 import ManagerLogin from "@/pages/auth/ManagerLogin";
-import ManagerRegister from "@/pages/auth/ManagerRegister";
 
 // SubAdmin Pages
 import SubAdminDashboard from "@/pages/subadmin/Dashboard";
@@ -63,6 +63,7 @@ import ManagerDocumentsPage from "@/pages/manager/MemberDocuments";
 import ManagerInvitationsPage from "@/pages/manager/Invitations";
 import ManagerRegisterMemberPage from "@/pages/manager/RegisterMember";
 import ManagerRegisterPage from "@/pages/manager/Register";
+import ManagerMembersPage from "@/pages/manager/Members";
 import ManagerVisaPage from "@/pages/manager/Visa";
 import ManagerTravelPage from "@/pages/manager/Travel";
 import ManagerAccommodationPage from "@/pages/manager/Accommodation";
@@ -91,7 +92,15 @@ import PortalAccreditationPage from "@/pages/public/portal/Accreditation";
 import PortalVisaPage from "@/pages/public/portal/Visa";
 import PortalTransportationPage from "@/pages/public/portal/Transportation";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 0,
+      refetchOnMount: 'always',
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 // Initialize store with Arabic dummy data
 initializeStore();
@@ -110,9 +119,9 @@ const App = () => (
                 <Route path="/login/admin" element={<AdminLogin />} />
                 <Route path="/login/staff" element={<StaffLogin />} />
                 <Route path="/login/participant" element={<ParticipantLogin />} />
-                <Route path="/participant/register" element={<ParticipantRegister />} />
+                <Route path="/participant/set-password" element={<ParticipantSetPassword />} />
                 <Route path="/login/manager" element={<ManagerLogin />} />
-                <Route path="/manager/register" element={<ManagerRegister />} />
+                <Route path="/manager/set-password" element={<ManagerSetPassword />} />
 
                 {/* Public Routes */}
                 <Route path="/invite/:token" element={<RSVPLanding />} />
@@ -134,6 +143,7 @@ const App = () => (
                   <Route path="accommodation" element={<PortalAccommodationPage />} />
                   <Route path="registrations" element={<PortalRegistrationsPage />} />
                   <Route path="invitations" element={<PortalInvitationsPage />} />
+                  <Route path="register" element={<RegisterPage />} />
                   <Route path="accreditation" element={<PortalAccreditationPage />} />
                   <Route path="visa" element={<PortalVisaPage />} />
                   <Route path="transportation" element={<PortalTransportationPage />} />
@@ -147,6 +157,7 @@ const App = () => (
                   <Route path="dashboard" element={<ManagerDashboard />} />
                   <Route path="invitations" element={<ManagerInvitationsPage />} />
                   <Route path="teams" element={<ManagerTeamsPage />} />
+                  <Route path="members" element={<ManagerMembersPage />} />
                   <Route path="add-members" element={<ManagerAddMembersPage />} />
                   <Route path="registrations" element={<ManagerRegistrationsPage />} />
                   <Route path="delegations" element={<ManagerDelegationsPage />} />

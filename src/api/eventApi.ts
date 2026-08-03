@@ -14,6 +14,8 @@ export interface CreateEventPayload {
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   city: string;
+  country?: string;
+  cities?: string[];
   eventType: string; // 'individual' | 'team-based' | 'hybrid'
   venues: string[];
   sportCategories: SportCategoryPayload[];

@@ -36,7 +36,9 @@ export const isEndpointBlocked = (endpoint: string): boolean =>
     readCache().blockedEndpoints.includes(endpoint);
 
 export const markEndpointBlocked = (endpoint: string, status?: number): void => {
-    if (status && status !== 404 && status !== 403 && status !== 401) return;
+    // Only cache a genuinely missing route. Authentication failures are
+    // session-specific and must be retried after login/token refresh.
+    if (status && status !== 404) return;
     const cache = readCache();
     if (cache.blockedEndpoints.includes(endpoint)) return;
     cache.blockedEndpoints = [...cache.blockedEndpoints, endpoint];
@@ -61,7 +63,9 @@ export const orderEndpoints = (
     endpoints: string[],
 ): string[] => {
     const blocked = new Set(readCache().blockedEndpoints);
-    const filtered = endpoints.filter(endpoint => !blocked.has(endpoint));
+    // Always retry the primary API route. This keeps an old browser cache from
+    // hiding data after a backend restart or a corrected session.
+    const filtered = endpoints.filter((endpoint, index) => index === 0 || !blocked.has(endpoint));
     const cached = getCachedEndpoint(key);
     if (cached && filtered.includes(cached)) {
         return [cached, ...filtered.filter(endpoint => endpoint !== cached)];

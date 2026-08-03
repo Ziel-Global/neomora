@@ -23,6 +23,11 @@ export interface ParticipantPayload {
   accessibilityNeeds?: string;
 }
 
+export interface ParticipantCreationResult {
+  participant: EMSParticipant;
+  setupEmailSent: boolean;
+}
+
 export interface ManagerParticipantPayload {
   firstName: string;
   lastName: string;
@@ -33,13 +38,14 @@ export interface ManagerParticipantPayload {
   passportExpiry?: string;
   organization?: string;
   jobTitle?: string;
-  role: string;
+  role?: string;
   dateOfBirth?: string;
   gender?: string;
   emergencyContact?: string;
   emergencyPhone?: string;
   dietaryRequirements?: string;
   medicalConditions?: string;
+  sports?: string[];
 }
 
 const unwrapList = (data: unknown): any[] => {
@@ -100,6 +106,7 @@ export const normalizeParticipant = (raw: any, fallbackId?: string): EMSParticip
     role: (source.role || raw.role || 'Athlete') as ParticipantRole,
     dietaryNotes: source.dietaryNotes || source.dietary_notes || '',
     accessibilityNeeds: source.accessibilityNeeds || source.accessibility_needs || '',
+    sports: Array.isArray(source.sports) ? source.sports : (Array.isArray(raw.sports) ? raw.sports : undefined),
     createdAt: source.createdAt || source.created_at || raw.createdAt || raw.created_at || new Date().toISOString(),
     updatedAt: source.updatedAt || source.updated_at || raw.updatedAt || raw.updated_at || new Date().toISOString(),
   };
@@ -129,6 +136,7 @@ const mergeParticipants = (...lists: EMSParticipant[][]): EMSParticipant[] => {
         nationality: participant.nationality || existing.nationality,
         organization: participant.organization || existing.organization,
         role: participant.role || existing.role,
+        sports: participant.sports || existing.sports,
       });
     }
   }
@@ -177,6 +185,35 @@ export const getApprovedParticipantsFromRegistrations = async (
   return mergeParticipants(participants);
 };
 
+/**
+ * Admin Members page: load every participant, then enrich them with approved
+ * registration details when available. This keeps standalone members visible
+ * before they have been invited or registered for an event.
+ */
+export const getAdminMembers = async (): Promise<AdminApprovedParticipant[]> => {
+  const [allParticipants, approvedParticipants] = await Promise.all([
+    getParticipants(),
+    getApprovedParticipantsFromRegistrations(),
+  ]);
+
+  const approvedByKey = new Map<string, AdminApprovedParticipant>();
+  for (const participant of approvedParticipants) {
+    if (participant.id) approvedByKey.set(participant.id, participant);
+    if (participant.email) approvedByKey.set(participant.email.toLowerCase(), participant);
+  }
+
+  return mergeParticipants(allParticipants, approvedParticipants)
+    .map((participant) => {
+      const approved = approvedByKey.get(participant.id) || approvedByKey.get(participant.email.toLowerCase());
+      return {
+        ...participant,
+        registrationId: approved?.registrationId,
+        registrationStatus: approved?.registrationStatus,
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+};
+
 export const getAllParticipantsForInvitations = async (): Promise<EMSParticipant[]> => {
   const [adminParticipants, registrations] = await Promise.all([
     getParticipants().catch(() => []),
@@ -197,9 +234,18 @@ export const getAllParticipantsForInvitations = async (): Promise<EMSParticipant
   return mergeParticipants(adminParticipants, registrationParticipants);
 };
 
-export const createParticipant = async (payload: ParticipantPayload): Promise<EMSParticipant> => {
+export const createParticipant = async (payload: ParticipantPayload): Promise<ParticipantCreationResult> => {
   const { data } = await apiClient.post('/admin/participants', payload);
-  return normalizeParticipant(data) || (data as EMSParticipant);
+  const participant = normalizeParticipant(data?.participant || data) || (data?.participant as EMSParticipant);
+  return {
+    participant,
+    setupEmailSent: data?.setupEmailSent !== false,
+  };
+};
+
+export const sendParticipantSetupEmail = async (id: string): Promise<{ message: string }> => {
+  const { data } = await apiClient.post(`/admin/participants/${id}/send-setup-email`);
+  return data;
 };
 
 export const createManagerParticipant = async (

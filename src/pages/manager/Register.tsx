@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,24 +14,13 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import {
   getMyTeams,
-  listTeamMembers,
-  deleteTeamMember,
+  addTeamMember,
   resolveTeamMembershipId,
   syncTeamMemberCount,
 } from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
-import { createManagerParticipant } from '@/api/participantApi';
+import { createManagerParticipant, getManagerParticipants } from '@/api/participantApi';
 import { addPendingTeamRegistration } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -227,108 +217,25 @@ const ManagerRegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { manager } = useManagerSession();
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [delegations, setDelegations] = useState<any[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
   const [members, setMembers] = useState<MemberForm[]>([{ ...emptyMember }]);
-  const [currentMembers, setCurrentMembers] = useState<TeamMemberDetail[]>([]);
   const [selectedMember, setSelectedMember] = useState<TeamMemberDetail | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isMembersLoading, setIsMembersLoading] = useState(false);
-  const [memberToRemove, setMemberToRemove] = useState<TeamMemberDetail | null>(null);
-  const [isRemovingMember, setIsRemovingMember] = useState(false);
   const [memberErrors, setMemberErrors] = useState<Record<number, Partial<Record<keyof MemberForm, string>>>>({});
 
   const maxDateOfBirth = getLocalDateString();
 
-  useEffect(() => {
-    if (selectedTeamId) {
-      loadCurrentMembers();
-    } else {
-      setCurrentMembers([]);
-    }
-  }, [selectedTeamId]);
-
-  const loadCurrentMembers = async () => {
-    if (!selectedTeamId) {
-      setCurrentMembers([]);
-      return;
-    }
-
-    setIsMembersLoading(true);
-    try {
-      if (selectedTeamId.startsWith('team-')) {
-        const localMembers = teamMemberStore.getByTeam(selectedTeamId);
-        setCurrentMembers(
-          localMembers
-            .map(normalizeTeamMember)
-            .filter(Boolean) as TeamMemberDetail[]
-        );
-        return;
-      }
-
-      const teamMembers = await listTeamMembers(selectedTeamId);
-      setCurrentMembers(
-        (Array.isArray(teamMembers) ? teamMembers : [])
-          .map(normalizeTeamMember)
-          .filter(Boolean) as TeamMemberDetail[]
-        );
-    } catch (e) {
-      console.error('Failed to load current members:', e);
-      toast.error('Failed to load team members');
-      setCurrentMembers([]);
-    } finally {
-      setIsMembersLoading(false);
-    }
-  };
-
-  const handleConfirmRemoveMember = async () => {
-    if (!memberToRemove || !selectedTeamId) return;
-
-    setIsRemovingMember(true);
-    try {
-      if (selectedTeamId.startsWith('team-')) {
-        const removed = teamMemberStore.delete(memberToRemove.id);
-        if (!removed) throw new Error('Member not found');
-      } else {
-        const membershipId = memberToRemove.membershipId || memberToRemove.id;
-        await deleteTeamMember(membershipId);
-        await syncTeamMemberCount(selectedTeamId).catch(() => undefined);
-      }
-
-      if (selectedMember?.id === memberToRemove.id) {
-        setSelectedMember(null);
-      }
-
-      toast.success(`${memberToRemove.firstName} ${memberToRemove.lastName} removed from team`);
-      setMemberToRemove(null);
-      await loadCurrentMembers();
-    } catch (error: any) {
-      const detail =
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to remove member';
-      toast.error(detail);
-    } finally {
-      setIsRemovingMember(false);
-    }
-  };
-
-  useEffect(() => {
-    if (manager) {
-      loadTeams();
-    }
-  }, [manager, searchParams]);
-
-  const loadTeams = async () => {
-    setIsLoading(true);
-    try {
+  const {
+    data: teamsData,
+    isLoading,
+    error: teamsError,
+  } = useQuery({
+    queryKey: ['manager', 'register', 'teams'],
+    queryFn: async () => {
       const [serverTeams, delegationsData] = await Promise.all([
         getMyTeams(),
         getMyDelegations().catch(() => []),
       ]);
-      setDelegations(Array.isArray(delegationsData) ? delegationsData : []);
 
       const localTeams = teamStore.getByManager(manager?.id || '');
 
@@ -347,19 +254,67 @@ const ManagerRegisterPage: React.FC = () => {
         }
       }
 
-      setTeams(merged);
+      return { teams: merged, delegations: Array.isArray(delegationsData) ? delegationsData : [] };
+    },
+    enabled: !!manager,
+  });
 
-      const teamIdParam = searchParams.get('teamId');
-      if (teamIdParam && merged.some(t => t.id === teamIdParam)) {
-        setSelectedTeamId(teamIdParam);
-      }
-    } catch (error) {
-      console.error('Failed to load teams:', error);
+  const teams = teamsData?.teams ?? [];
+  const delegations = teamsData?.delegations ?? [];
+
+  useEffect(() => {
+    if (teamsError) {
+      console.error('Failed to load teams:', teamsError);
       toast.error('Failed to load teams');
-    } finally {
-      setIsLoading(false);
     }
-  };
+  }, [teamsError]);
+
+  useEffect(() => {
+    const teamIdParam = searchParams.get('teamId');
+    if (teamIdParam && teams.some(t => t.id === teamIdParam) && selectedTeamId !== teamIdParam) {
+      setSelectedTeamId(teamIdParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teams, searchParams]);
+
+  const {
+    data: currentMembersData,
+    isLoading: isMembersLoading,
+    error: membersError,
+    refetch: refetchCurrentMembers,
+  } = useQuery({
+    queryKey: ['manager', 'register', 'members', selectedTeamId],
+    queryFn: async () => {
+      // Registered members created by this manager (GET /manager/participants)
+      const participants = await getManagerParticipants();
+      const rows = (Array.isArray(participants) ? participants : [])
+        .map((participant: any) => {
+          const participantTeamId =
+            participant?.teamId ||
+            participant?.team_id ||
+            participant?.team?.id ||
+            participant?.team?._id;
+          // If the API includes a team association, only show that team's members
+          if (participantTeamId && String(participantTeamId) !== String(selectedTeamId)) {
+            return null;
+          }
+          return normalizeTeamMember(participant);
+        })
+        .filter(Boolean) as TeamMemberDetail[];
+
+      return rows;
+    },
+    enabled: !!selectedTeamId,
+  });
+
+  const currentMembers = currentMembersData ?? [];
+
+  useEffect(() => {
+    if (membersError) {
+      console.error('Failed to load manager participants:', membersError);
+      toast.error('Failed to load team members');
+    }
+  }, [membersError]);
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
   const selectedTeamEventId = selectedTeam
@@ -477,6 +432,28 @@ const ManagerRegisterPage: React.FC = () => {
 
         if (isLocalTeam) {
           const localParticipantId = `local-participant-${Date.now()}-${savedCount}`;
+          teamMemberStore.create({
+            teamId: selectedTeamId,
+            firstName: m.firstName,
+            lastName: m.lastName,
+            email: m.email,
+            phone: m.phone || '',
+            nationality: m.nationality || manager?.country || '',
+            passportNumber: m.passportNumber,
+            passportExpiry: m.passportExpiry || '',
+            dateOfBirth: m.dateOfBirth || '',
+            gender: m.gender,
+            sportCategory:
+              typeof selectedTeam?.sportCategory === 'string'
+                ? selectedTeam.sportCategory
+                : (selectedTeam?.sportCategory as any)?.name || '',
+            subCategory: selectedTeam?.subCategory || '',
+            role: m.role,
+            emergencyContact: m.emergencyContact || '',
+            emergencyPhone: m.emergencyPhone || '',
+            dietaryRequirements: m.dietaryRequirements || '',
+            medicalConditions: m.medicalConditions || '',
+          });
           addPendingTeamRegistration(selectedTeamId, {
             participantId: localParticipantId,
             registrationId: localParticipantId,
@@ -496,7 +473,6 @@ const ManagerRegisterPage: React.FC = () => {
             passportExpiry: m.passportExpiry || undefined,
             organization: `${m.nationality || manager?.country || ''} Delegation`.trim(),
             jobTitle: m.role,
-            role: m.role,
             gender: m.gender,
             dateOfBirth: m.dateOfBirth || undefined,
             emergencyContact: m.emergencyContact || undefined,
@@ -507,23 +483,42 @@ const ManagerRegisterPage: React.FC = () => {
 
           const participantId = String(created?.id || '');
 
-          if (participantId) {
-            addPendingTeamRegistration(selectedTeamId, {
-              participantId,
-              registrationId: participantId,
-              email: m.email,
-              firstName: m.firstName,
-              lastName: m.lastName,
-              registeredAt: new Date().toISOString(),
-            });
+          if (!participantId) {
+            throw new Error(`Failed to create participant for ${m.email}`);
           }
+
+          // Add the new participant to the selected team
+          await addTeamMember(selectedTeamId, {
+            participantId,
+            role: m.role,
+            needsVisa: false,
+            needsAccommodation: false,
+            needsTransport: false,
+            originCity: m.nationality || manager?.country || '',
+            dietaryRequirements: m.dietaryRequirements || '',
+            medicalConditions: m.medicalConditions || '',
+          });
+
+          addPendingTeamRegistration(selectedTeamId, {
+            participantId,
+            registrationId: participantId,
+            email: m.email,
+            firstName: m.firstName,
+            lastName: m.lastName,
+            registeredAt: new Date().toISOString(),
+          });
         }
         savedCount++;
       }
 
-      toast.success(`${savedCount} member(s) registered successfully! Go to Add Members to add them to the team.`);
+      if (!selectedTeamId.startsWith('team-')) {
+        await syncTeamMemberCount(selectedTeamId).catch(() => undefined);
+      }
+
+      toast.success(`${savedCount} member(s) registered and added to the team.`);
       setMembers([{ ...emptyMember }]);
       setMemberErrors({});
+      await refetchCurrentMembers();
     } catch (error: any) {
       console.error('Failed to save members:', error);
       const detail = error?.response?.data?.message || JSON.stringify(error?.response?.data) || error.message;
@@ -623,13 +618,13 @@ const ManagerRegisterPage: React.FC = () => {
         </Card>
       )}
 */}
-      {/* Team members already added via Add Members */}
+      {/* Registered members from GET /manager/participants */}
       {selectedTeamId && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Team Members (In Delegation)</CardTitle>
+            <CardTitle className="text-lg">Registered Members</CardTitle>
             <CardDescription>
-              Members already added to team: {selectedTeam?.name}
+              Members registered for {selectedTeam?.name}. Add them to the team from Add Members.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -640,52 +635,38 @@ const ManagerRegisterPage: React.FC = () => {
             ) : currentMembers.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                <p>No team members added yet. Register first, then use Add Members.</p>
+                <p>No members registered yet. Use the form below to register members.</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {currentMembers.map((member) => (
-                  <div
+                  <button
                     key={member.id}
-                    className="flex items-center gap-2 p-3 border rounded-lg"
+                    type="button"
+                    onClick={() => setSelectedMember(member)}
+                    className="w-full flex items-center justify-between gap-3 p-3 border rounded-lg text-left transition-colors hover:bg-muted/50 cursor-pointer"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setSelectedMember(member)}
-                      className="flex-1 flex items-center justify-between gap-3 min-w-0 text-left transition-colors hover:bg-muted/50 rounded-md -m-1 p-1 cursor-pointer"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <Avatar className="h-10 w-10">
-                          <AvatarFallback>
-                            {(member.firstName[0] || '?').toUpperCase()}
-                            {(member.lastName[0] || '').toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="min-w-0">
-                          <p className="font-medium truncate">
-                            {member.firstName} {member.lastName}
-                          </p>
-                          <p className="text-sm text-muted-foreground truncate">{member.email}</p>
-                        </div>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <Avatar className="h-10 w-10">
+                        <AvatarFallback>
+                          {(member.firstName[0] || '?').toUpperCase()}
+                          {(member.lastName[0] || '').toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="min-w-0">
+                        <p className="font-medium truncate">
+                          {member.firstName} {member.lastName}
+                        </p>
+                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <Badge variant="outline">{member.role}</Badge>
-                        {member.status && (
-                          <Badge variant="secondary">{member.status}</Badge>
-                        )}
-                      </div>
-                    </button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="shrink-0 text-destructive hover:text-destructive"
-                      title="Remove from team"
-                      onClick={() => setMemberToRemove(member)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline">{member.role}</Badge>
+                      {member.nationality && (
+                        <Badge variant="secondary">{member.nationality}</Badge>
+                      )}
+                    </div>
+                  </button>
                 ))}
               </div>
             )}
@@ -1010,39 +991,6 @@ const ManagerRegisterPage: React.FC = () => {
           )}
         </DialogContent>
       </Dialog>
-
-      <AlertDialog open={!!memberToRemove} onOpenChange={(open) => !open && !isRemovingMember && setMemberToRemove(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove team member?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {memberToRemove
-                ? `${memberToRemove.firstName} ${memberToRemove.lastName} will be removed from ${selectedTeam?.name || 'this team'}. This does not delete their participant registration.`
-                : ''}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isRemovingMember}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={isRemovingMember}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={(event) => {
-                event.preventDefault();
-                void handleConfirmRemoveMember();
-              }}
-            >
-              {isRemovingMember ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Removing…
-                </>
-              ) : (
-                'Remove'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 };

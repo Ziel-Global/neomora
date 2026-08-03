@@ -140,6 +140,7 @@ export const ParticipantSessionProvider: React.FC<{ children: React.ReactNode }>
     try {
       const response = await participantLoginApi(email, password);
       localStorage.setItem(PARTICIPANT_TOKEN_KEY, response.token);
+      sessionStorage.removeItem('ems_participant_api_cache');
 
       let profileId: string | undefined;
       const authUserId = response.user?.id ? String(response.user.id) : undefined;

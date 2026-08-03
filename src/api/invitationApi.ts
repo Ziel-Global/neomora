@@ -266,6 +266,7 @@ const normalizeInvitationList = (data: unknown): Invitation[] => {
 // (participant token first, then manager token) rather than hardcoding one.
 const myInvitationsClient = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL,
+    timeout: 15000,
     headers: { 'Content-Type': 'application/json' },
 });
 
@@ -291,10 +292,12 @@ export const getMyInvitations = async (): Promise<Invitation[]> => {
         '/participant/invitations',
     ];
     const managerEndpoints = [
+        // This route is role-aware on the local backend and works for both
+        // participant and manager portals.
+        '/invitations/me',
         '/manager/invitations',
         '/manager/campaigns/invitations',
         '/invitations/manager/me',
-        '/invitations/me',
         '/participant/invitations',
         '/invitations/my',
         '/participant/campaigns/invitations',
@@ -318,14 +321,11 @@ export const getMyInvitations = async (): Promise<Invitation[]> => {
         try {
             const { data } = await myInvitationsClient.get(endpoint);
             const result = normalizeInvitationList(data);
-            if (result.length > 0) {
-                setCachedEndpoint('invitationsEndpoint', endpoint);
-                return result;
-            }
-            // Manager endpoints may legitimately return an empty array — keep trying.
-            if (isManagerSession && /\/manager\//.test(endpoint) && Array.isArray(data?.data ?? data)) {
-                setCachedEndpoint('invitationsEndpoint', endpoint);
-            }
+            // An empty response from a valid endpoint is still a successful answer.
+            // Continuing through legacy fallback URLs turns an empty inbox into a
+            // slow sequence of unnecessary 404 requests.
+            setCachedEndpoint('invitationsEndpoint', endpoint);
+            return result;
         } catch (err: any) {
             markEndpointBlocked(endpoint, err?.response?.status);
         }

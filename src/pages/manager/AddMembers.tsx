@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -225,36 +226,27 @@ const AddMembersPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const { manager } = useManagerSession();
 
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [delegations, setDelegations] = useState<any[]>([]);
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
-  const [isLoadingTeams, setIsLoadingTeams] = useState(false);
-
-  const [allParticipants, setAllParticipants] = useState<Participant[]>([]);
-  const [isLoadingParticipants, setIsLoadingParticipants] = useState(false);
 
   const [rows, setRows] = useState<MemberRow[]>([emptyRow()]);
   const [isSaving, setIsSaving] = useState(false);
-  const [currentMembers, setCurrentMembers] = useState<CurrentTeamMember[]>([]);
-  const [isLoadingCurrentMembers, setIsLoadingCurrentMembers] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<CurrentTeamMember | null>(null);
   const [isRemovingMember, setIsRemovingMember] = useState(false);
 
   const searchRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // ── Load teams ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (manager) loadTeams();
-  }, [manager, searchParams]);
-
-  const loadTeams = async () => {
-    setIsLoadingTeams(true);
-    try {
+  const {
+    data: teamsData,
+    isLoading: isLoadingTeams,
+    error: teamsError,
+  } = useQuery({
+    queryKey: ['manager', 'addMembers', 'teams'],
+    queryFn: async () => {
       const [serverTeams, delegationsData] = await Promise.all([
         getMyTeams(),
         getMyDelegations().catch(() => []),
       ]);
-      setDelegations(Array.isArray(delegationsData) ? delegationsData : []);
 
       const localTeams = teamStore.getByManager(manager?.id || '');
       const merged = (Array.isArray(serverTeams) ? serverTeams : []).map((t: any) => ({
@@ -269,77 +261,70 @@ const AddMembersPage: React.FC = () => {
           });
         }
       }
-      setTeams(merged);
-      const teamIdParam = searchParams.get('teamId');
-      if (teamIdParam && merged.some((t: any) => t.id === teamIdParam)) {
-        setSelectedTeamId(teamIdParam);
-      }
-    } catch {
-      toast.error('Failed to load teams');
-    } finally {
-      setIsLoadingTeams(false);
-    }
-  };
+
+      return { teams: merged, delegations: Array.isArray(delegationsData) ? delegationsData : [] };
+    },
+    enabled: !!manager,
+  });
+
+  const teams = teamsData?.teams ?? [];
+  const delegations = teamsData?.delegations ?? [];
 
   useEffect(() => {
-    if (!selectedTeamId) {
-      setAllParticipants([]);
-      setRows([emptyRow()]);
-      return;
+    if (teamsError) toast.error('Failed to load teams');
+  }, [teamsError]);
+
+  useEffect(() => {
+    const teamIdParam = searchParams.get('teamId');
+    if (teamIdParam && teams.some((t: any) => t.id === teamIdParam) && selectedTeamId !== teamIdParam) {
+      setSelectedTeamId(teamIdParam);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [teams, searchParams]);
 
-    if (!teams.some((entry) => entry.id === selectedTeamId)) return;
-
-    setIsLoadingParticipants(true);
-    loadRegisteredParticipantsForTeam(selectedTeamId)
-      .then(setAllParticipants)
-      .catch((error) => {
-        console.error('Failed to load registered participants:', error);
-        toast.error('Failed to load registered members');
-        setAllParticipants([]);
-      })
-      .finally(() => setIsLoadingParticipants(false));
-
+  useEffect(() => {
     setRows([emptyRow()]);
-  }, [selectedTeamId, teams, delegations]);
+  }, [selectedTeamId]);
 
-  const loadCurrentMembers = async () => {
-    if (!selectedTeamId) {
-      setCurrentMembers([]);
-      return;
+  const teamIsReady = !!selectedTeamId && teams.some((entry) => entry.id === selectedTeamId);
+
+  const {
+    data: allParticipants = [],
+    isLoading: isLoadingParticipants,
+    error: participantsError,
+    refetch: refetchParticipants,
+  } = useQuery({
+    queryKey: ['manager', 'addMembers', 'participants', selectedTeamId],
+    queryFn: () => loadRegisteredParticipantsForTeam(selectedTeamId),
+    enabled: teamIsReady,
+  });
+
+  useEffect(() => {
+    if (participantsError) {
+      console.error('Failed to load registered participants:', participantsError);
+      toast.error('Failed to load registered members');
     }
+  }, [participantsError]);
 
-    setIsLoadingCurrentMembers(true);
-    try {
+  const {
+    data: currentMembers = [],
+    isLoading: isLoadingCurrentMembers,
+    refetch: refetchCurrentMembers,
+  } = useQuery({
+    queryKey: ['manager', 'addMembers', 'currentMembers', selectedTeamId],
+    queryFn: async () => {
       if (selectedTeamId.startsWith('team-')) {
         const localMembers = teamMemberStore.getByTeam(selectedTeamId);
-        setCurrentMembers(
-          localMembers.map(mapToCurrentTeamMember).filter(Boolean) as CurrentTeamMember[],
-        );
-        return;
+        return localMembers.map(mapToCurrentTeamMember).filter(Boolean) as CurrentTeamMember[];
       }
 
       const teamMembers = await listTeamMembers(selectedTeamId);
-      setCurrentMembers(
-        (Array.isArray(teamMembers) ? teamMembers : [])
-          .map(mapToCurrentTeamMember)
-          .filter(Boolean) as CurrentTeamMember[],
-      );
-    } catch (error) {
-      console.error('Failed to load current team members:', error);
-      setCurrentMembers([]);
-    } finally {
-      setIsLoadingCurrentMembers(false);
-    }
-  };
-
-  useEffect(() => {
-    if (selectedTeamId && teams.some((entry) => entry.id === selectedTeamId)) {
-      void loadCurrentMembers();
-    } else {
-      setCurrentMembers([]);
-    }
-  }, [selectedTeamId, teams]);
+      return (Array.isArray(teamMembers) ? teamMembers : [])
+        .map(mapToCurrentTeamMember)
+        .filter(Boolean) as CurrentTeamMember[];
+    },
+    enabled: teamIsReady,
+  });
 
   const handleConfirmRemoveMember = async () => {
     if (!memberToRemove || !selectedTeamId) return;
@@ -358,8 +343,8 @@ const AddMembersPage: React.FC = () => {
       setMemberToRemove(null);
 
       await Promise.all([
-        loadCurrentMembers(),
-        loadRegisteredParticipantsForTeam(selectedTeamId).then(setAllParticipants),
+        refetchCurrentMembers(),
+        refetchParticipants(),
       ]);
     } catch (error: any) {
       const detail =
@@ -521,9 +506,8 @@ const AddMembersPage: React.FC = () => {
 
       setRows([emptyRow()]);
 
-      const refreshed = await loadRegisteredParticipantsForTeam(selectedTeamId);
-        setAllParticipants(refreshed);
-      await loadCurrentMembers();
+      await refetchParticipants();
+      await refetchCurrentMembers();
     } catch (error: any) {
       const detail =
         error?.response?.data?.message ||
@@ -649,6 +633,14 @@ const AddMembersPage: React.FC = () => {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <Badge variant="outline">{member.role}</Badge>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => navigate(`/manager/register-member?membershipId=${member.membershipId}&teamId=${selectedTeamId}`)}
+                      >
+                        Complete Registration
+                      </Button>
                       <Button
                         type="button"
                         variant="ghost"

@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useParams } from 'react-router-dom';
-import { PageHeader } from '@/components/common/PageHeader';
-import { StatsCard } from '@/components/common/StatsCard';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import {
   eventStore,
@@ -19,7 +17,8 @@ import {
   InvitationStatus,
 } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog } from 'lucide-react';
+import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog, Home, ChevronRight } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -65,6 +64,43 @@ const isVIPTemplate = (template: EMSInvitationTemplate): boolean => {
   return name.includes('vip') || name.includes('exclusive') ||
     subject.includes('vip') || subject.includes('exclusive');
 };
+
+// Words that should stay upper-cased when a template variable is made readable
+const VARIABLE_ACRONYMS = new Set(['rsvp', 'vip', 'vvip', 'id', 'url', 'qr']);
+
+// firstName -> "First name", rsvpDeadline -> "RSVP deadline"
+const humanizeTemplateVariable = (variable: string): string =>
+  variable
+    .replace(/([a-z\d])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word, index) => {
+      const lower = word.toLowerCase();
+      if (VARIABLE_ACRONYMS.has(lower)) return lower.toUpperCase();
+      return index === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+    })
+    .join(' ');
+
+// Show a template subject with its {{placeholders}} as readable inline chips
+const renderTemplateSubject = (subject: string): React.ReactNode =>
+  subject
+    .split(/(\{\{[^}]+\}\})/g)
+    .filter(Boolean)
+    .map((part, index) => {
+      const placeholder = part.match(/^\{\{\s*([^}]+?)\s*\}\}$/);
+      if (!placeholder) return <React.Fragment key={index}>{part}</React.Fragment>;
+
+      return (
+        <span
+          key={index}
+          className="rounded bg-primary/10 px-1 font-medium text-primary"
+          title={part}
+        >
+          {humanizeTemplateVariable(placeholder[1])}
+        </span>
+      );
+    });
 
 // Real backend UUIDs for invitation templates
 const BACKEND_TEMPLATE_IDS = BACKEND_INVITATION_TEMPLATE_IDS;
@@ -296,23 +332,30 @@ const InvitationsPage: React.FC = () => {
   const loadCampaigns = async () => {
     setIsLoading(true);
     try {
-      const [campaignData, eventData, participantData, delegationData, managerData] = await Promise.all([
+      // These two calls are enough to render the campaign dashboard. Audience
+      // lookup data is loaded in the background, so a slow delegation/manager
+      // endpoint can never keep the whole page on its loading screen.
+      const [campaignData, eventData] = await Promise.all([
         campaignApi.getCampaigns(),
         getEvents(),
-        getParticipants().catch(() => []),
-        getAllDelegations().catch(() => []),
-        getAllManagers().catch(() => []),
       ]);
       const campaigns = Array.isArray(campaignData) ? campaignData : [];
       const templateData = extractInvitationTemplatesFromCampaigns(campaigns);
 
       setApiCampaigns(campaigns);
       setApiEvents(Array.isArray(eventData) ? eventData : []);
-      setApiParticipants(Array.isArray(participantData) ? participantData : []);
-      setApiDelegations(Array.isArray(delegationData) ? delegationData : []);
-      setApiManagers(Array.isArray(managerData) ? managerData : []);
       setApiTemplates(templateData);
       templateStore.replaceAll(templateData);
+
+      void getParticipants()
+        .then((data) => setApiParticipants(Array.isArray(data) ? data : []))
+        .catch(() => setApiParticipants([]));
+      void getAllDelegations()
+        .then((data) => setApiDelegations(Array.isArray(data) ? data : []))
+        .catch(() => setApiDelegations([]));
+      void getAllManagers()
+        .then((data) => setApiManagers(Array.isArray(data) ? data : []))
+        .catch(() => setApiManagers([]));
     } catch (error) {
       console.error('Failed to load invitations data:', error);
     } finally {
@@ -1902,79 +1945,67 @@ const InvitationsPage: React.FC = () => {
         const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
         const audience = getFilteredAudience();
         const managerTargets = resolveAllManagerTargets();
+        const audienceCount = audienceMode === 'manager' || audienceMode === 'delegation'
+          ? managerTargets.length
+          : audience.length;
+        const audienceLabel = audienceMode === 'manager'
+          ? 'Selected managers'
+          : audienceMode === 'delegation'
+            ? 'Delegation managers'
+            : 'Selected participants';
 
         return (
-          <div className="space-y-4">
-            <h3 className="font-medium">{t('invitations.step_4_review_create')}</h3>
-            <Card>
-              <CardContent className="p-4 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('common.event')}:</span>
-                  <span>{selectedEvent?.name || '-'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('common.campaign')}:</span>
-                  <span>{campaignName || '-'}</span>
-                </div>
-                {audienceMode === 'manager' ? (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Managers:</span>
-                    <span>{managerTargets.length} manager(s)</span>
-                  </div>
-                ) : audienceMode === 'delegation' ? (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Delegation managers:</span>
-                    <span>{managerTargets.length} manager(s)</span>
-                  </div>
-                ) : (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">{t('common.audience')}:</span>
-                    <span>{t('common.participants_count', { count: audience.length })}</span>
-                  </div>
-                )}
-                {managerTargets.length > 0 && audienceMode !== 'manager' && audienceMode !== 'delegation' && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Managers:</span>
-                    <span>{managerTargets.length} manager invitation(s)</span>
-                  </div>
-                )}
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('invitations.templates')}:</span>
-                  <span>{selectedTemplate?.name || '-'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">{t('invitations.rsvp_deadline')}:</span>
-                  <span>{rsvpDeadline || '-'}</span>
-                </div>
-              </CardContent>
-            </Card>
-            <p className="text-sm text-muted-foreground">
-              {audienceMode === 'manager'
-                ? `${managerTargets.length} manager invitation(s) will be created.`
-                : audience.length === 1
-                  ? t('invitations.review_create_desc_singular')
-                  : t('invitations.review_create_desc_plural', { count: audience.length })}
-            </p>
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold tracking-tight">{t('invitations.step_4_review_create')}</h3>
+                <p className="mt-1 text-sm text-muted-foreground">Everything looks ready. Review the details, then choose how to deliver it.</p>
+              </div>
+              <Badge className="bg-primary/10 px-3 py-1 text-primary hover:bg-primary/10">Ready to launch</Badge>
+            </div>
 
-            <div className="space-y-3 border-t pt-4">
-              <Label>{t('invitations.delivery_option', { defaultValue: 'When should invitations be sent?' })}</Label>
-              <p className="text-xs text-muted-foreground">
-                {t('invitations.delivery_option_desc', { defaultValue: 'Choose to send immediately, schedule for later, or save as draft.' })}
-              </p>
-              <div className="grid gap-2">
-                <Label htmlFor="campaign-schedule-at">{t('invitations.schedule_datetime', { defaultValue: 'Schedule date & time' })}</Label>
-                <Input
-                  id="campaign-schedule-at"
-                  type="datetime-local"
-                  value={scheduledAt}
-                  min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {t('invitations.schedule_hint', { defaultValue: 'Optional — use Schedule Campaign below, or Send Now to deliver immediately.' })}
-                </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border bg-muted/[0.18] p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{t('common.event')}</p>
+                <p className="mt-1 truncate font-semibold">{selectedEvent?.name || '-'}</p>
+                <p className="mt-3 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{t('common.campaign')}</p>
+                <p className="mt-1 truncate font-semibold">{campaignName || '-'}</p>
+              </div>
+              <div className="rounded-xl border bg-muted/[0.18] p-4">
+                <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{audienceLabel}</p>
+                <p className="mt-1 text-2xl font-semibold tabular-nums">{audienceCount}</p>
+                <p className="mt-3 text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{t('invitations.rsvp_deadline')}</p>
+                <p className="mt-1 font-semibold">{rsvpDeadline || '-'}</p>
+              </div>
+              <div className="rounded-xl border bg-muted/[0.18] p-4 sm:col-span-2">
+                <p className="text-xs font-medium uppercase tracking-[0.08em] text-muted-foreground">{t('invitations.templates')}</p>
+                <div className="mt-1 flex items-center justify-between gap-3">
+                  <p className="truncate font-semibold">{selectedTemplate?.name || '-'}</p>
+                  {selectedTemplate && (
+                    <Badge variant="outline" className="shrink-0">
+                      {isVIPTemplate(selectedTemplate) ? 'VIP template' : 'Standard template'}
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
+
+            <div className="rounded-xl border border-primary/15 bg-primary/[0.035] p-4">
+              <div className="flex gap-3">
+                <Send className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                <div>
+                  <p className="font-medium">
+                    {audienceMode === 'manager'
+                      ? `${managerTargets.length} manager invitation${managerTargets.length === 1 ? '' : 's'} will be created.`
+                      : audience.length === 1
+                        ? t('invitations.review_create_desc_singular')
+                        : t('invitations.review_create_desc_plural', { count: audience.length })}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">Send immediately, schedule delivery, or save this campaign as a draft.</p>
+                </div>
+              </div>
+            </div>
+
           </div>
         );
       default:
@@ -2163,158 +2194,335 @@ const InvitationsPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={t('invitations.title')}
-        description={t('invitations.description')}
-        action={
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetWizard(); }}>
+      {/* Hero header */}
+      <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+        <div className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl" aria-hidden />
+        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-40 w-40 rounded-full bg-accent/10 blur-3xl" aria-hidden />
+
+        <div className="relative space-y-4">
+          <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Link to="/" className="transition-colors hover:text-foreground">
+              <Home className="h-4 w-4" />
+            </Link>
+            <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+            <span className="font-medium text-foreground">{t('invitations.title')}</span>
+          </nav>
+
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-xl space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+                Event operations
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                {t('invitations.title')}
+              </h1>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                {t('invitations.description')}
+              </p>
+            </div>
+
+            <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetWizard(); }}>
             <DialogTrigger asChild>
-              <Button><Plus className="h-4 w-4 me-2" />{t('invitations.create_campaign')}</Button>
+              <Button className="h-9 shrink-0 gap-2 shadow-sm">
+                <Plus className="h-4 w-4" />
+                {t('invitations.create_campaign')}
+              </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>{t('invitations.create_campaign_title')}</DialogTitle>
-              </DialogHeader>
-              {/* Progress indicator */}
-              <div className="flex justify-between mb-6">
-                {[1, 2, 3, 4].map((step) => (
-                  <div key={step} className="flex items-center">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${wizardStep >= step ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
-                      }`}>
-                      {step}
-                    </div>
-                    {step < 4 && <div className={`w-12 sm:w-16 h-1 mx-1 sm:mx-2 ${wizardStep > step ? 'bg-primary' : 'bg-muted'}`} />}
-                  </div>
-                ))}
+            <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-3xl flex-col gap-0 overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl">
+              <div className="shrink-0 border-b bg-gradient-to-br from-primary/[0.06] via-background to-background px-5 pb-4 pt-6 sm:px-7">
+                <DialogHeader className="space-y-1.5 text-left">
+                  <DialogTitle className="text-xl tracking-tight">{t('invitations.create_campaign_title')}</DialogTitle>
+                  <DialogDescription>
+                    Build a targeted invitation campaign in four quick steps.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="mt-6 grid grid-cols-4 gap-2" aria-label={`Campaign creation step ${wizardStep} of 4`}>
+                  {['Details', 'Audience', 'Template', 'Review'].map((label, index) => {
+                    const step = index + 1;
+                    const isCurrent = wizardStep === step;
+                    const isComplete = wizardStep > step;
+                    return (
+                      <div key={label} className="min-w-0">
+                        <div className={`mb-2 h-1 rounded-full ${isComplete || isCurrent ? 'bg-primary' : 'bg-muted'}`} />
+                        <div className="flex items-center gap-2">
+                          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${isComplete || isCurrent ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'}`}>
+                            {step}
+                          </span>
+                          <span className={`hidden truncate text-xs font-medium sm:block ${isCurrent ? 'text-foreground' : 'text-muted-foreground'}`}>{label}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
-              {renderWizardStep()}
-              <DialogFooter className="mt-6">
-                <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
-                  {t('invitations.previous')}
-                </Button>
-                {wizardStep < 4 ? (
-                  <Button
-                    onClick={() => setWizardStep(wizardStep + 1)}
-                    disabled={
-                      (wizardStep === 1 && (!selectedEventId || !campaignName || !rsvpDeadline)) ||
-                      (wizardStep === 2 && !hasValidAudience()) ||
-                      (wizardStep === 3 && !selectedTemplateId)
-                    }
-                  >
-                    {t('invitations.next')}
-                  </Button>
-                ) : (
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      disabled={isActionLoading}
-                      onClick={() => handleCreateCampaign('draft')}
-                    >
-                      {isActionLoading && pendingCreateAction === 'draft' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : null}
-                      {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={isActionLoading || !scheduledAt}
-                      onClick={() => handleCreateCampaign('schedule')}
-                    >
-                      {isActionLoading && pendingCreateAction === 'schedule' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Clock className="h-4 w-4 mr-2" />
-                      )}
-                      {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
-                    </Button>
-                    <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
-                      {isActionLoading && pendingCreateAction === 'send' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      ) : (
-                        <Send className="h-4 w-4 mr-2" />
-                      )}
-                      {t('invitations.send_now')}
-                    </Button>
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-7 sm:py-6">
+                {renderWizardStep()}
+              </div>
+              <div className="shrink-0 border-t bg-muted/30">
+                {wizardStep === 4 && (
+                  <div className="flex flex-col gap-2 border-b bg-background/80 px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+                    <div>
+                      <Label htmlFor="campaign-schedule-at" className="text-sm font-semibold">{t('invitations.schedule_datetime', { defaultValue: 'Schedule date & time' })}</Label>
+                      <p className="text-xs text-muted-foreground">Optional — required only to schedule delivery.</p>
+                    </div>
+                    <Input
+                      id="campaign-schedule-at"
+                      type="datetime-local"
+                      value={scheduledAt}
+                      min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+                      onChange={(e) => setScheduledAt(e.target.value)}
+                      className="w-full bg-background sm:w-[285px]"
+                    />
                   </div>
                 )}
-              </DialogFooter>
+                <DialogFooter className="px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
+                  <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
+                    {t('invitations.previous')}
+                  </Button>
+                  {wizardStep < 4 ? (
+                    <Button
+                      onClick={() => setWizardStep(wizardStep + 1)}
+                      disabled={
+                        (wizardStep === 1 && (!selectedEventId || !campaignName || !rsvpDeadline)) ||
+                        (wizardStep === 2 && !hasValidAudience()) ||
+                        (wizardStep === 3 && !selectedTemplateId)
+                      }
+                    >
+                      {t('invitations.next')}
+                    </Button>
+                  ) : (
+                    <div className="flex flex-wrap justify-end gap-2">
+                      <Button
+                        variant="outline"
+                        disabled={isActionLoading}
+                        onClick={() => handleCreateCampaign('draft')}
+                      >
+                        {isActionLoading && pendingCreateAction === 'draft' ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        disabled={isActionLoading || !scheduledAt}
+                        onClick={() => handleCreateCampaign('schedule')}
+                      >
+                        {isActionLoading && pendingCreateAction === 'schedule' ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Clock className="h-4 w-4 mr-2" />
+                        )}
+                        {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                      </Button>
+                      <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
+                        {isActionLoading && pendingCreateAction === 'send' ? (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : (
+                          <Send className="h-4 w-4 mr-2" />
+                        )}
+                        {t('invitations.send_now')}
+                      </Button>
+                    </div>
+                  )}
+                </DialogFooter>
+              </div>
             </DialogContent>
           </Dialog>
-        }
-      />
+          </div>
+        </div>
+      </header>
 
       {isLoading ? (
-        <Card className="p-12">
-          <div className="flex flex-col items-center justify-center py-12">
-            <Loader2 className="h-10 w-10 animate-spin text-primary mb-4" />
-            <p className="text-muted-foreground">{t('invitations.loading', 'Loading invitations...')}</p>
-          </div>
-        </Card>
+        <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-24">
+          <Loader2 className="h-9 w-9 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">{t('invitations.loading', 'Loading invitations...')}</p>
+        </div>
       ) : (
         <>
       {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatsCard title={t('invitations.total_sent')} value={stats.totalSent} icon={Send} />
-        <StatsCard title={t('invitations.delivered')} value={stats.delivered} icon={Mail} />
-        <StatsCard title={t('invitations.accepted')} value={stats.accepted} icon={CheckCircle} />
-        <StatsCard title={t('invitations.campaigns')} value={stats.campaigns} icon={Users} />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            label: t('invitations.total_sent'),
+            value: stats.totalSent,
+            hint: 'Invitations created across campaigns',
+            icon: Send,
+            bar: 'bg-primary',
+            iconWrap: 'bg-primary/10 text-primary',
+            valueTone: 'text-foreground',
+          },
+          {
+            label: t('invitations.delivered'),
+            value: stats.delivered,
+            hint: 'Reached the recipient inbox',
+            icon: Mail,
+            bar: 'bg-status-info',
+            iconWrap: 'bg-status-info-bg text-status-info',
+            valueTone: 'text-status-info',
+          },
+          {
+            label: t('invitations.accepted'),
+            value: stats.accepted,
+            hint: 'Recipients who said yes',
+            icon: CheckCircle,
+            bar: 'bg-status-success',
+            iconWrap: 'bg-status-success-bg text-status-success',
+            valueTone: 'text-status-success',
+          },
+          {
+            label: t('invitations.campaigns'),
+            value: stats.campaigns,
+            hint: 'Campaigns in this workspace',
+            icon: Users,
+            bar: 'bg-accent',
+            iconWrap: 'bg-accent/15 text-accent',
+            valueTone: 'text-foreground',
+          },
+        ].map((card) => {
+          const Icon = card.icon;
+
+          return (
+            <div
+              key={card.label}
+              className="relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-shadow hover:shadow-md"
+            >
+              <span className={cn('absolute inset-x-0 top-0 h-[3px]', card.bar)} aria-hidden />
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {card.label}
+                  </p>
+                  <p
+                    className={cn(
+                      'mt-1 text-3xl font-semibold tabular-nums tracking-tight',
+                      card.value > 0 ? card.valueTone : 'text-foreground/30',
+                    )}
+                  >
+                    {card.value}
+                  </p>
+                </div>
+                <span className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-xl', card.iconWrap)}>
+                  <Icon className="h-4 w-4" />
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{card.hint}</p>
+            </div>
+          );
+        })}
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="campaigns">{t('invitations.campaigns')}</TabsTrigger>
-          <TabsTrigger value="invitations">{t('invitations.all_invitations')}</TabsTrigger>
-          <TabsTrigger value="templates">{t('invitations.templates')}</TabsTrigger>
+        <TabsList className="h-10 rounded-xl border border-border/70 bg-muted/40 p-1">
+          {[
+            { value: 'campaigns', label: t('invitations.campaigns'), count: campaigns.length },
+            { value: 'invitations', label: t('invitations.all_invitations'), count: invitations.length },
+            { value: 'templates', label: t('invitations.templates'), count: templates.length },
+          ].map((tab) => (
+            <TabsTrigger
+              key={tab.value}
+              value={tab.value}
+              className="gap-1.5 rounded-lg px-3 text-sm data-[state=active]:shadow-sm"
+            >
+              {tab.label}
+              <span
+                className={cn(
+                  'rounded px-1 text-[11px] font-semibold tabular-nums',
+                  activeTab === tab.value ? 'bg-primary/10 text-primary' : 'text-muted-foreground/70',
+                )}
+              >
+                {tab.count}
+              </span>
+            </TabsTrigger>
+          ))}
         </TabsList>
 
         <TabsContent value="campaigns" className="space-y-4 mt-4">
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder={t('invitations.search_placeholder')}
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
+          <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card px-4 py-3.5 shadow-sm sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-primary/10">
+                <Send className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-base font-semibold tracking-tight text-foreground">
+                  {t('invitations.campaigns')}
+                  <span className="ml-1.5 text-sm font-normal tabular-nums text-muted-foreground">
+                    ({filteredCampaigns.length})
+                  </span>
+                </h2>
+                <p className="truncate text-xs text-muted-foreground">
+                  Track delivery and RSVP progress for each campaign
+                </p>
+              </div>
             </div>
-            <Button variant="outline" size="icon" onClick={() => setRefreshKey(k => k + 1)}>
-              <RefreshCw className="h-4 w-4" />
-            </Button>
+
+            <div className="flex items-center gap-2">
+              <div className="relative w-full sm:w-72">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder={t('invitations.search_placeholder', { defaultValue: 'Search campaigns by name or event...' })}
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="h-9 pl-9"
+                />
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0"
+                onClick={() => setRefreshKey(k => k + 1)}
+                title="Refresh"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
 
           {filteredCampaigns.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="p-8 text-center">
-                <Mail className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="font-medium mb-2">{t('invitations.no_campaigns_yet')}</h3>
-                <p className="text-muted-foreground mb-4">{t('invitations.no_campaigns_desc')}</p>
-                <Button onClick={() => setIsCreateOpen(true)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  {t('invitations.create_campaign')}
-                </Button>
-              </CardContent>
-            </Card>
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                <Mail className="h-7 w-7 text-muted-foreground/50" />
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">{t('invitations.no_campaigns_yet')}</h3>
+              <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
+                {t('invitations.no_campaigns_desc')}
+              </p>
+              <Button className="mt-5 gap-2" onClick={() => setIsCreateOpen(true)}>
+                <Plus className="h-4 w-4" />
+                {t('invitations.create_campaign')}
+              </Button>
+            </div>
           ) : (
-            <Card>
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('common.campaign')}</TableHead>
-                    <TableHead>{t('common.event')}</TableHead>
-                    <TableHead>{t('common.audience')}</TableHead>
-                    <TableHead>{t('common.responses')}</TableHead>
-                    <TableHead>{t('common.status')}</TableHead>
-                    <TableHead></TableHead>
+                  <TableRow className="border-b border-border/70 bg-muted/40 hover:bg-muted/40">
+                    <TableHead className="h-12 ps-5 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{t('common.campaign')}</TableHead>
+                    <TableHead className="h-12 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{t('common.event')}</TableHead>
+                    <TableHead className="h-12 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{t('common.audience')}</TableHead>
+                    <TableHead className="h-12 min-w-[250px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{t('common.responses')}</TableHead>
+                    <TableHead className="h-12 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">{t('common.status')}</TableHead>
+                    <TableHead className="h-12 w-[60px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredCampaigns.map((campaign) => (
-                    <TableRow key={campaign.id}>
-                      <TableCell>
-                        <div>
-                          <p className="font-medium">{campaign.name}</p>
-                          <p className="text-sm text-muted-foreground">
+                  {filteredCampaigns.map((campaign) => {
+                    const campaignStats = getCampaignStats(campaign);
+                    const responded = campaignStats.accepted + campaignStats.maybe + campaignStats.declined;
+                    const responseRate = campaignStats.totalInvitations > 0
+                      ? Math.round((responded / campaignStats.totalInvitations) * 100)
+                      : 0;
+
+                    return (
+                    <TableRow key={campaign.id} className="group border-b border-border/40 transition-colors last:border-b-0 hover:bg-primary/[0.035]">
+                      <TableCell className="py-4 ps-5">
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary ring-1 ring-primary/10">
+                            <Send className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-foreground">{campaign.name}</p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
                             {campaign.createdAt ? (() => {
                               try {
                                 const date = new Date(campaign.createdAt);
@@ -2330,32 +2538,38 @@ const InvitationsPage: React.FC = () => {
                                 {format(new Date((campaign as any).scheduledAt), 'MMM d, HH:mm')}
                               </>
                             )}
-                          </p>
+                            </p>
+                          </div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm">{getEventName(campaign)}</TableCell>
-                      <TableCell>{getCampaignStats(campaign).totalInvitations}</TableCell>
                       <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <div className="flex gap-1 flex-wrap">
-                            <Badge variant="outline" className="bg-muted/40 text-foreground border-border">
-                              {getCampaignStats(campaign).delivered} delivered
-                            </Badge>
-                            <Badge variant="outline" className="bg-muted/40 text-foreground border-border">
-                              {getCampaignStats(campaign).opened} opened
-                            </Badge>
+                        <span className="font-medium text-foreground">{getEventName(campaign)}</span>
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="text-lg font-semibold tabular-nums">{campaignStats.totalInvitations}</p>
+                          <p className="text-xs text-muted-foreground">recipient{campaignStats.totalInvitations === 1 ? '' : 's'}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="min-w-[230px] space-y-2">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="font-medium text-foreground">RSVP progress</span>
+                            <span className="font-semibold tabular-nums text-primary">{responded}/{campaignStats.totalInvitations} · {responseRate}%</span>
                           </div>
-                          <div className="flex gap-1 flex-wrap">
-                            <Badge variant="outline" className="bg-success/10 text-success border-success/20">
-                              {getCampaignStats(campaign).accepted}
-                            </Badge>
-                            <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
-                              {getCampaignStats(campaign).maybe}
-                            </Badge>
-                            <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/20">
-                              {getCampaignStats(campaign).declined}
-                            </Badge>
+                          <Progress value={responseRate} className="h-1.5 bg-muted" />
+                          <div className="grid grid-cols-3 gap-2 text-xs">
+                            <span className="rounded-md bg-emerald-50 px-2 py-1 font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400">
+                              {campaignStats.accepted} accepted
+                            </span>
+                            <span className="rounded-md bg-amber-50 px-2 py-1 font-medium text-amber-700 dark:bg-amber-950/30 dark:text-amber-400">
+                              {campaignStats.maybe} maybe
+                            </span>
+                            <span className="rounded-md bg-rose-50 px-2 py-1 font-medium text-rose-700 dark:bg-rose-950/30 dark:text-rose-400">
+                              {campaignStats.declined} declined
+                            </span>
                           </div>
+                          <p className="text-xs text-muted-foreground">{campaignStats.delivered} delivered · {campaignStats.opened} opened</p>
                         </div>
                       </TableCell>
                       <TableCell>
@@ -2364,7 +2578,7 @@ const InvitationsPage: React.FC = () => {
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="sm"><MoreHorizontal className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" className="opacity-70 transition-opacity group-hover:opacity-100"><MoreHorizontal className="h-4 w-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => handleViewCampaign(campaign)}>
@@ -2396,99 +2610,213 @@ const InvitationsPage: React.FC = () => {
                         </DropdownMenu>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
-            </Card>
+              </div>
+            </div>
           )}
         </TabsContent>
 
         <TabsContent value="invitations" className="space-y-4 mt-4">
           {invitations.length === 0 ? (
-            <Card className="border-dashed">
-              <CardContent className="p-8 text-center">
-                <Send className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="font-medium mb-2">{t('invitations.no_invitations_yet')}</h3>
-                <p className="text-muted-foreground">{t('invitations.invitations_appear_here')}</p>
-              </CardContent>
-            </Card>
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                <Send className="h-7 w-7 text-muted-foreground/50" />
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">{t('invitations.no_invitations_yet')}</h3>
+              <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
+                {t('invitations.invitations_appear_here')}
+              </p>
+            </div>
           ) : (
-            <Card>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t('common.participant')}</TableHead>
-                    <TableHead>{t('common.event')}</TableHead>
-                    <TableHead>{t('common.status')}</TableHead>
-                    <TableHead>{t('invitations.rsvp_deadline')}</TableHead>
-                    <TableHead>{t('invitations.delivered')}</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {invitations.slice(0, 50).map((inv) => (
-                    <TableRow key={inv.id}>
-                      <TableCell>
-                        <p className="font-medium">{getInvitationRecipientLabel(inv)}</p>
-                      </TableCell>
-                      <TableCell className="text-sm">{getEventName(inv.eventId)}</TableCell>
-                      <TableCell>
-                        <StatusBadge status={inv.status} variant={getStatusVariant(inv.status)} />
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {inv.rsvpDeadline}
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {inv.sentAt ? format(new Date(inv.sentAt), 'MMM d') : '-'}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => copyInviteLink(inv.token)}>
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => window.open(`/invite/${inv.token}`, '_blank')}
-                          >
-                            <ExternalLink className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
+              <div className="overflow-x-auto">
+                <Table className="w-full table-fixed">
+                  <TableHeader>
+                    <TableRow className="border-b border-border/70 bg-muted/40 hover:bg-muted/40">
+                      <TableHead className="h-12 min-w-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('common.participant')}
+                      </TableHead>
+                      <TableHead className="h-12 w-[160px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('common.event')}
+                      </TableHead>
+                      <TableHead className="h-12 w-[130px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('common.status')}
+                      </TableHead>
+                      <TableHead className="h-12 w-[120px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('invitations.rsvp_deadline')}
+                      </TableHead>
+                      <TableHead className="h-12 w-[110px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('invitations.delivered')}
+                      </TableHead>
+                      <TableHead className="h-12 w-[100px] text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
+                        {t('common.actions', { defaultValue: 'Actions' })}
+                      </TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {invitations.slice(0, 50).map((inv) => {
+                      const recipient = getInvitationRecipientLabel(inv);
+
+                      return (
+                        <TableRow
+                          key={inv.id}
+                          className="border-b border-border/40 transition-colors last:border-b-0 hover:bg-primary/[0.035]"
+                        >
+                          <TableCell className="min-w-0 py-3">
+                            <div className="flex items-center gap-3">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-[13px] font-bold text-primary ring-1 ring-inset ring-primary/10">
+                                {recipient.charAt(0).toUpperCase()}
+                              </span>
+                              <p className="truncate text-sm font-semibold text-foreground">{recipient}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="min-w-0 py-3">
+                            <span className="block truncate text-[13px] text-foreground/80">
+                              {getEventName(inv.eventId)}
+                            </span>
+                          </TableCell>
+                          <TableCell className="py-3">
+                            <StatusBadge status={inv.status} variant={getStatusVariant(inv.status)} />
+                          </TableCell>
+                          <TableCell className="min-w-0 py-3 text-[13px] text-muted-foreground">
+                            <span className="block truncate">{inv.rsvpDeadline || '—'}</span>
+                          </TableCell>
+                          <TableCell className="py-3 text-[13px] text-muted-foreground">
+                            {inv.sentAt ? format(new Date(inv.sentAt), 'MMM d') : '—'}
+                          </TableCell>
+                          <TableCell className="py-3">
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8 border-border/80 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                onClick={() => copyInviteLink(inv.token)}
+                                title="Copy invite link"
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="h-8 w-8 border-border/80 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                onClick={() => window.open(`/invite/${inv.token}`, '_blank')}
+                                title="Open invitation"
+                              >
+                                <ExternalLink className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+              {invitations.length > 50 && (
+                <div className="border-t border-border/60 bg-muted/20 px-4 py-2.5 text-center text-xs text-muted-foreground sm:px-5">
+                  Showing the 50 most recent of {invitations.length} invitations
+                </div>
+              )}
+            </div>
           )}
         </TabsContent>
 
         <TabsContent value="templates" className="space-y-4 mt-4">
-          <div className="grid md:grid-cols-2 gap-4">
-            {templates.map((template) => (
-              <Card key={template.id}>
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <CardTitle className="text-base">{template.name}</CardTitle>
-                      <Badge variant="outline" className="mt-1">{template.language}</Badge>
+          {templates.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+              <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                <FileText className="h-7 w-7 text-muted-foreground/50" />
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">No templates yet</h3>
+              <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
+                Invitation templates become available once a campaign uses them.
+              </p>
+            </div>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {templates.map((template) => {
+                const isVIP = isVIPTemplate(template);
+
+                return (
+                  <div
+                    key={template.id}
+                    className="group relative overflow-hidden rounded-2xl border border-border/70 bg-card p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span
+                          className={cn(
+                            'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ring-inset',
+                            isVIP
+                              ? 'bg-gradient-to-br from-amber-400/25 to-amber-500/5 text-amber-600 ring-amber-500/25'
+                              : 'bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-primary/10',
+                          )}
+                        >
+                          {isVIP ? <Crown className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-foreground">{template.name}</p>
+                          <div className="mt-1 flex items-center gap-1.5">
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              {template.language}
+                            </span>
+                            {isVIP && (
+                              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-600 ring-1 ring-inset ring-amber-500/20">
+                                VIP
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 border-border/80 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title="Preview template"
+                      >
+                        <Eye className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                    <Button variant="ghost" size="sm"><Eye className="h-4 w-4" /></Button>
+
+                    <div className="mt-3.5 rounded-xl bg-muted/40 px-3 py-2.5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Subject line
+                      </p>
+                      <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-foreground/85">
+                        {renderTemplateSubject(template.subject)}
+                      </p>
+                    </div>
+
+                    <div className="mt-3 border-t border-border/60 pt-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Fills in automatically
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {template.variables.slice(0, 4).map((variable, index) => (
+                          <span
+                            key={index}
+                            title={`{{${variable}}}`}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 text-[11px] font-medium text-foreground/75"
+                          >
+                            <span className="h-1 w-1 rounded-full bg-primary/50" aria-hidden />
+                            {humanizeTemplateVariable(variable)}
+                          </span>
+                        ))}
+                        {template.variables.length > 4 && (
+                          <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                            +{template.variables.length - 4} more
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex flex-wrap gap-1">
-                    {template.variables.slice(0, 3).map((v, i) => (
-                      <Badge key={i} variant="secondary" className="text-xs">{`{{${v}}}`}</Badge>
-                    ))}
-                    {template.variables.length > 3 && (
-                      <Badge variant="secondary" className="text-xs">+{template.variables.length - 3}</Badge>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
         </>
@@ -2674,12 +3002,6 @@ const InvitationsPage: React.FC = () => {
 };
 
 export default InvitationsPage;
-
-
-
-
-
-
 
 
 

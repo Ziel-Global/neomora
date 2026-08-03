@@ -36,10 +36,8 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 const menuItems = [
   { title: 'Dashboard', url: '/manager/dashboard', icon: LayoutDashboard },
   { title: 'Invitations', url: '/manager/invitations', icon: Mail },
+  { title: 'Members', url: '/manager/members', icon: UserPlus },
   { title: 'My Teams', url: '/manager/teams', icon: Users },
-  { title: 'Register', url: '/manager/register-list', icon: UserCheck },
-
-  { title: 'Add Members', url: '/manager/add-members', icon: UserPlus },
   { title: 'Visa', url: '/manager/visa', icon: Globe },
   { title: 'Travel', url: '/manager/travel', icon: Plane },
   { title: 'Accommodation', url: '/manager/accommodation', icon: Hotel },

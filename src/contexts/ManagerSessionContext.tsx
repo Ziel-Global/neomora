@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { teamManagerLogin as teamManagerLoginApi } from '@/api/authApi';
 
 export interface TeamManager {
@@ -73,6 +74,7 @@ const persistManagerSession = (managerData: TeamManager, token?: string) => {
 export const ManagerSessionProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [manager, setManager] = useState<TeamManager | null>(() => readStoredManager());
   const [isLoading, setIsLoading] = useState(true);
+  const queryClient = useQueryClient();
 
   useEffect(() => {
     const restored = readStoredManager();
@@ -105,7 +107,8 @@ export const ManagerSessionProvider: React.FC<{ children: ReactNode }> = ({ chil
     setManager(null);
     localStorage.removeItem(MANAGER_SESSION_KEY);
     localStorage.removeItem(MANAGER_TOKEN_KEY);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   const updateManager = useCallback((updates: Partial<TeamManager>) => {
     setManager(prev => {
