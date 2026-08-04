@@ -1,11 +1,9 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { eventStore, EMSEvent, generateId } from '@/lib/emsStore';
+import { EMSEvent } from '@/lib/emsStore';
 import { getEvents, createEvent, deleteEvent, updateEvent } from '@/api/eventApi';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
-import { useAuth } from '@/contexts/AuthContext';
-import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -14,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
     Dialog,
     DialogContent,
@@ -40,7 +39,6 @@ import {
     Search,
     Calendar,
     MapPin,
-    LogOut,
     MoreHorizontal,
     Edit,
     Trash2,
@@ -52,12 +50,33 @@ import {
     Sparkles,
     Users,
     Flag,
+    Home,
+    ChevronRight,
+    LayoutGrid,
+    List,
+    ArrowRight,
+    Filter,
+    CheckCircle2,
+    FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { validateEventForm, EventFormErrors, EventFormField } from '@/lib/eventFormValidation';
 import { getSportsBoardsForEvent } from '@/lib/sportsBoards';
 import { CountryCombobox } from '@/components/common/CountryCombobox';
+
+const VIEW_MODE_KEY = 'ems_admin_events_view_mode';
+type ViewMode = 'cards' | 'table';
+
+const readStoredViewMode = (): ViewMode => {
+    try {
+        const stored = localStorage.getItem(VIEW_MODE_KEY);
+        if (stored === 'cards' || stored === 'table') return stored;
+    } catch {
+        /* ignore */
+    }
+    return 'cards';
+};
 
 const EVENT_TYPE_GROUP: Record<string, string> = {
     individual: 'individual-games',
@@ -162,12 +181,12 @@ const FormSection = ({
 const EventSelector: React.FC = () => {
     const { t, i18n } = useTranslation();
     const navigate = useNavigate();
-    const { user, logout } = useAuth();
     const isRtl = i18n.language === 'ar';
 
     const [events, setEvents] = useState<EMSEvent[]>([]);
     const [search, setSearch] = useState('');
     const [statusFilter, setStatus] = useState('all');
+    const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
     const [isCreateOpen, setCreate] = useState(false);
     const [isEditOpen, setEdit] = useState(false);
     const [editTarget, setEditTarget] = useState<EMSEvent | null>(null);
@@ -356,12 +375,53 @@ const EventSelector: React.FC = () => {
     };
 
     /* ─── Filtered list ─── */
-    const filtered = events.filter(ev => {
-        const matchSearch = ev.name.toLowerCase().includes(search.toLowerCase()) ||
-            ev.city.toLowerCase().includes(search.toLowerCase());
-        const matchStatus = statusFilter === 'all' || ev.status === statusFilter;
-        return matchSearch && matchStatus;
-    });
+    const filtered = useMemo(() => {
+        const query = search.toLowerCase().trim();
+        return events.filter((ev) => {
+            const matchSearch =
+                !query ||
+                ev.name.toLowerCase().includes(query) ||
+                (ev.city && ev.city.toLowerCase().includes(query)) ||
+                (ev.theme && ev.theme.toLowerCase().includes(query));
+            const matchStatus = statusFilter === 'all' || ev.status === statusFilter;
+            return matchSearch && matchStatus;
+        });
+    }, [events, search, statusFilter]);
+
+    const publishedCount = useMemo(
+        () => events.filter((ev) => ev.status === 'Published').length,
+        [events],
+    );
+    const draftCount = useMemo(
+        () => events.filter((ev) => ev.status === 'Draft').length,
+        [events],
+    );
+    const ongoingCount = useMemo(
+        () => events.filter((ev) => ev.status === 'Ongoing').length,
+        [events],
+    );
+
+    const setViewModeAndPersist = (mode: ViewMode) => {
+        setViewMode(mode);
+        try {
+            localStorage.setItem(VIEW_MODE_KEY, mode);
+        } catch {
+            /* ignore */
+        }
+    };
+
+    const openCreate = () => {
+        setForm(emptyForm());
+        setFormErrors({});
+        setCreate(true);
+    };
+
+    const getEventInitials = (name: string) =>
+        name
+            .split(' ')
+            .slice(0, 2)
+            .map((w) => w[0]?.toUpperCase() ?? '')
+            .join('') || '?';
 
     const todayStr = new Date().toISOString().split('T')[0];
 
@@ -728,185 +788,386 @@ const EventSelector: React.FC = () => {
         <div className="min-h-screen bg-background flex flex-col" dir={isRtl ? 'rtl' : 'ltr'}>
             <AdminHomeHeader />
 
-            {/* ─── Main content ─── */}
-            <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10">
-                {/* Page heading */}
-                <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                    <div>
-                        <h1 className="text-3xl font-bold tracking-tight">{t('events.your_events')}</h1>
-                        <p className="text-muted-foreground mt-1">
-                            {t('events.select_event_manage')}
-                        </p>
-                    </div>
-                    <Button
-                        size="lg"
-                        className="shrink-0 gap-2 shadow-sm"
-                        onClick={() => { setForm(emptyForm()); setCreate(true); }}
-                    >
-                        <Plus className="h-5 w-5" />
-                        {t('events.add_new_event')}
-                    </Button>
-                </div>
+            <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-10 animate-fade-in sm:px-6 lg:px-8">
+                <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+                    <div
+                        className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl"
+                        aria-hidden
+                    />
+                    <div
+                        className="pointer-events-none absolute -bottom-24 left-1/3 h-40 w-40 rounded-full bg-accent/10 blur-3xl"
+                        aria-hidden
+                    />
 
-                {/* Search + filter */}
-                <div className="flex flex-col sm:flex-row gap-3 mb-8">
-                    <div className="relative flex-1">
-                        <Search className={`absolute ${isRtl ? 'right-3' : 'left-3'} top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground`} />
-                        <Input
-                            placeholder={t('events.search_events_city')}
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className={isRtl ? 'pr-10' : 'pl-10'}
-                        />
-                    </div>
-                    <Select value={statusFilter} onValueChange={setStatus}>
-                        <SelectTrigger className="w-full sm:w-44">
-                            <SelectValue placeholder={t('events.all_statuses')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="all">{t('events.all_statuses')}</SelectItem>
-                            <SelectItem value="Draft">{t('common.draft')}</SelectItem>
-                            <SelectItem value="Published">{t('common.published')}</SelectItem>
-                            <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
-                            <SelectItem value="Closed">{t('common.closed')}</SelectItem>
-                        </SelectContent>
-                    </Select>
-                </div>
+                    <div className="relative space-y-4">
+                        <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                            <Link to="/" className="transition-colors hover:text-foreground">
+                                <Home className="h-4 w-4" />
+                            </Link>
+                            <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+                            <span className="font-medium text-foreground">{t('events.your_events')}</span>
+                        </nav>
 
-                {/* Loading state */}
-                {isListLoading && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                        {[1, 2, 3, 4].map(i => (
-                            <div key={i} className="h-[280px] rounded-2xl bg-muted animate-pulse" />
-                        ))}
-                    </div>
-                )}
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                            <div className="max-w-xl space-y-1.5">
+                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+                                    Event operations
+                                </p>
+                                <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                                    {t('events.your_events')}
+                                </h1>
+                                <p className="text-sm leading-relaxed text-muted-foreground">
+                                    {t('events.select_event_manage')}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
+                                        <Calendar className="h-3.5 w-3.5" />
+                                        <span className="tabular-nums">{events.length}</span>
+                                        total
+                                    </span>
+                                    <span className="inline-flex items-center gap-1.5 rounded-full bg-status-success-bg px-2.5 py-1 text-xs font-semibold text-status-success ring-1 ring-inset ring-status-success/20">
+                                        <CheckCircle2 className="h-3.5 w-3.5" />
+                                        <span className="tabular-nums">{publishedCount}</span>
+                                        published
+                                    </span>
+                                    {ongoingCount > 0 && (
+                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-status-info-bg px-2.5 py-1 text-xs font-semibold text-status-info ring-1 ring-inset ring-status-info/20">
+                                            <Sparkles className="h-3.5 w-3.5" />
+                                            <span className="tabular-nums">{ongoingCount}</span>
+                                            ongoing
+                                        </span>
+                                    )}
+                                    {draftCount > 0 && (
+                                        <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border/70">
+                                            <FileText className="h-3.5 w-3.5" />
+                                            <span className="tabular-nums">{draftCount}</span>
+                                            draft
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
 
-                {/* Empty state */}
-                {!isListLoading && events.length === 0 && (
-                    <div className="flex flex-col items-center justify-center py-24 text-center">
-                        <div className="h-20 w-20 rounded-2xl bg-muted flex items-center justify-center mb-6">
-                            <Calendar className="h-10 w-10 text-muted-foreground" />
+                            <Button className="h-10 shrink-0 gap-1.5 shadow-sm" onClick={openCreate}>
+                                <Plus className="h-4 w-4" />
+                                {t('events.add_new_event')}
+                            </Button>
                         </div>
-                        <h2 className="text-xl font-semibold mb-2">{t('events.no_events_yet')}</h2>
-                        <p className="text-muted-foreground mb-6 max-w-sm">
+                    </div>
+                </header>
+
+                {isListLoading ? (
+                    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-24">
+                        <Loader2 className="h-9 w-9 animate-spin text-primary" />
+                        <p className="text-sm text-muted-foreground">Loading events…</p>
+                    </div>
+                ) : events.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+                        <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                            <Calendar className="h-7 w-7 text-muted-foreground/50" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-foreground">{t('events.no_events_yet')}</h3>
+                        <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
                             {t('events.create_first_event_desc')}
                         </p>
-                        <Button onClick={() => { setForm(emptyForm()); setCreate(true); }}>
-                            <Plus className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} />
+                        <Button className="mt-5 gap-1.5 shadow-sm" onClick={openCreate}>
+                            <Plus className="h-4 w-4" />
                             {t('events.create_first_event')}
                         </Button>
                     </div>
-                )}
-
-                {/* No search results */}
-                {events.length > 0 && filtered.length === 0 && (
-                    <div className="text-center py-16 text-muted-foreground">
-                        {t('events.no_search_results')}
-                    </div>
-                )}
-
-                {/* Event cards grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {filtered.map(ev => (
-                        <div
-                            key={ev.id}
-                            onClick={() => navigate(`/admin/events/${ev.id}/dashboard`)}
-                            className="
-                group relative bg-card rounded-2xl overflow-hidden border border-border
-                shadow-sm hover:shadow-lg hover:-translate-y-1
-                transition-all duration-200 cursor-pointer
-              "
-                        >
-                            {/* Logo / initials area */}
-                            <div className="h-40 w-full overflow-hidden">
-                                {ev.logo ? (
-                                    <img
-                                        src={ev.logo}
-                                        alt={ev.name}
-                                        className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                    />
-                                ) : (
-                                    <EventInitials name={ev.name} status={ev.status} />
-                                )}
-                            </div>
-
-                            {/* Status badge — overlaid top-right (respecting LTR/RTL) */}
-                            <div className={`absolute top-3 ${isRtl ? 'right-3' : 'left-3'}`}>
-                                <StatusBadge
-                                    status={ev.status}
-                                    variant={getStatusVariant(ev.status)}
-                                />
-                            </div>
-
-                            {/* Action menu — top-left (respecting LTR/RTL) */}
-                            <div className={`absolute top-2 ${isRtl ? 'left-2' : 'right-2'}`} onClick={e => e.stopPropagation()}>
-                                <DropdownMenu>
-                                    <DropdownMenuTrigger asChild>
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-7 w-7 bg-black/30 hover:bg-black/50 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                                        >
-                                            <MoreHorizontal className="h-4 w-4" />
-                                        </Button>
-                                    </DropdownMenuTrigger>
-                                    <DropdownMenuContent align={isRtl ? 'start' : 'end'}>
-                                        <DropdownMenuItem onClick={e => openEdit(ev, e)}>
-                                            <Edit className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} /> {t('common.edit')}
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                            className="text-destructive focus:text-destructive"
-                                            onClick={e => handleDelete(ev, e)}
-                                        >
-                                            <Trash2 className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} /> {t('common.delete')}
-                                        </DropdownMenuItem>
-                                    </DropdownMenuContent>
-                                </DropdownMenu>
-                            </div>
-
-                            {/* Card body */}
-                            <div className="p-4 text-start">
-                                <h3 className="font-semibold text-base leading-tight mb-1 truncate" title={ev.name}>
-                                    {ev.name}
-                                </h3>
-                                {ev.theme && (
-                                    <p className="text-xs text-muted-foreground truncate mb-2">{ev.theme}</p>
-                                )}
-                                <div className="flex flex-col gap-1 text-xs text-muted-foreground mt-2">
-                                    <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                        <Calendar className="h-3.5 w-3.5 shrink-0" />
-                                        {ev.startDate} – {ev.endDate}
+                ) : (
+                    <>
+                        <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3.5 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                                    <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                        <Filter className="h-4 w-4" />
                                     </span>
-                                    <span className="flex items-center gap-1.5">
-                                        <MapPin className="h-3.5 w-3.5 shrink-0" />
-                                        {ev.city}
-                                    </span>
+                                    Event list
                                 </div>
+                                <span className="text-xs font-medium text-muted-foreground">
+                                    {filtered.length === events.length
+                                        ? `${events.length} events`
+                                        : `${filtered.length} of ${events.length} matching`}
+                                </span>
+                            </div>
 
-                                {ev.venues.length > 0 && (
-                                    <div className="flex flex-wrap gap-1 mt-3">
-                                        {ev.venues.slice(0, 2).map((v, i) => (
-                                            <Badge key={i} variant="outline" className="text-[10px] py-0 px-1.5">{v}</Badge>
-                                        ))}
-                                        {ev.venues.length > 2 && (
-                                            <Badge variant="outline" className="text-[10px] py-0 px-1.5">
-                                                +{ev.venues.length - 2}
-                                            </Badge>
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                <div className="relative w-full sm:w-72">
+                                    <Search className={cn(
+                                        'pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground',
+                                        isRtl ? 'right-3' : 'left-3',
+                                    )} />
+                                    <Input
+                                        placeholder={t('events.search_events_city')}
+                                        value={search}
+                                        onChange={(e) => setSearch(e.target.value)}
+                                        className={cn(
+                                            'h-9 rounded-xl border-border/80 bg-background shadow-sm',
+                                            isRtl ? 'pr-9' : 'pl-9',
                                         )}
-                                    </div>
-                                )}
-
-                                {/* "Enter event" CTA */}
-                                <div className={`mt-4 pt-3 border-t border-border flex items-center ${isRtl ? 'justify-start' : 'justify-end'}`}>
-                                    <span className="text-xs font-medium text-primary group-hover:underline">
-                                        {t('events.open_dashboard')}
-                                    </span>
+                                    />
+                                </div>
+                                <Select value={statusFilter} onValueChange={setStatus}>
+                                    <SelectTrigger className="h-9 w-full rounded-xl border-border/80 bg-background shadow-sm sm:w-44">
+                                        <SelectValue placeholder={t('events.all_statuses')} />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">{t('events.all_statuses')}</SelectItem>
+                                        <SelectItem value="Draft">{t('common.draft')}</SelectItem>
+                                        <SelectItem value="Published">{t('common.published')}</SelectItem>
+                                        <SelectItem value="Ongoing">{t('common.ongoing')}</SelectItem>
+                                        <SelectItem value="Closed">{t('common.closed')}</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <div
+                                    className="inline-flex items-center rounded-lg border border-border bg-background p-0.5 shadow-sm"
+                                    role="group"
+                                    aria-label="Display mode"
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewModeAndPersist('cards')}
+                                        className={cn(
+                                            'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                                            viewMode === 'cards'
+                                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground',
+                                        )}
+                                        aria-pressed={viewMode === 'cards'}
+                                    >
+                                        <LayoutGrid className="h-3.5 w-3.5" />
+                                        Cards
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setViewModeAndPersist('table')}
+                                        className={cn(
+                                            'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                                            viewMode === 'table'
+                                                ? 'bg-primary text-primary-foreground shadow-sm'
+                                                : 'text-muted-foreground hover:text-foreground',
+                                        )}
+                                        aria-pressed={viewMode === 'table'}
+                                    >
+                                        <List className="h-3.5 w-3.5" />
+                                        Table
+                                    </button>
                                 </div>
                             </div>
                         </div>
-                    ))}
-                </div>
+
+                        {filtered.length === 0 ? (
+                            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+                                <Search className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
+                                <p className="font-medium text-foreground">{t('events.no_search_results')}</p>
+                                <p className="mt-1 text-sm text-muted-foreground">Try another name, city, or status.</p>
+                            </div>
+                        ) : viewMode === 'table' ? (
+                            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+                                <div className="overflow-x-auto">
+                                    <Table>
+                                        <TableHeader>
+                                            <TableRow className="hover:bg-transparent">
+                                                <TableHead className="h-12 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">
+                                                    Event
+                                                </TableHead>
+                                                <TableHead className="h-12 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">
+                                                    Status
+                                                </TableHead>
+                                                <TableHead className="hidden h-12 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider md:table-cell">
+                                                    Dates
+                                                </TableHead>
+                                                <TableHead className="hidden h-12 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider lg:table-cell">
+                                                    Location
+                                                </TableHead>
+                                                <TableHead className="h-12 w-[140px] bg-muted/40 text-end text-[11px] font-semibold uppercase tracking-wider">
+                                                    Actions
+                                                </TableHead>
+                                            </TableRow>
+                                        </TableHeader>
+                                        <TableBody>
+                                            {filtered.map((ev) => (
+                                                <TableRow
+                                                    key={ev.id}
+                                                    className="cursor-pointer border-border/60 transition-colors hover:bg-primary/[0.025]"
+                                                    onClick={() => navigate(`/admin/events/${ev.id}/dashboard`)}
+                                                >
+                                                    <TableCell className="py-3.5">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-primary/10 shadow-sm">
+                                                                {ev.logo ? (
+                                                                    <img src={ev.logo} alt="" className="h-full w-full object-cover" />
+                                                                ) : (
+                                                                    <div className={cn(
+                                                                        'flex h-full w-full items-center justify-center bg-gradient-to-br text-xs font-bold tracking-wide text-white',
+                                                                        STATUS_COLORS[ev.status] ?? 'from-violet-500 to-purple-700',
+                                                                    )}>
+                                                                        {getEventInitials(ev.name)}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="min-w-0">
+                                                                <p className="truncate font-semibold text-foreground">{ev.name}</p>
+                                                                <p className="truncate text-sm text-muted-foreground">
+                                                                    {ev.theme || '—'}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell className="py-3.5">
+                                                        <StatusBadge
+                                                            status={ev.status}
+                                                            variant={getStatusVariant(ev.status)}
+                                                            size="sm"
+                                                        />
+                                                    </TableCell>
+                                                    <TableCell className="hidden py-3.5 md:table-cell">
+                                                        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/85">
+                                                            <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
+                                                            {ev.startDate} – {ev.endDate}
+                                                        </span>
+                                                    </TableCell>
+                                                    <TableCell className="hidden py-3.5 lg:table-cell">
+                                                        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/85">
+                                                            <MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+                                                            {ev.city || '—'}
+                                                        </span>
+                                                    </TableCell>
+                                                    <TableCell className="py-3.5 text-end" onClick={(e) => e.stopPropagation()}>
+                                                        <div className="flex items-center justify-end gap-1.5">
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="h-8 gap-1.5 border-border/80 bg-background"
+                                                                onClick={() => navigate(`/admin/events/${ev.id}/dashboard`)}
+                                                            >
+                                                                Open
+                                                                <ArrowRight className="h-3.5 w-3.5" />
+                                                            </Button>
+                                                            <DropdownMenu>
+                                                                <DropdownMenuTrigger asChild>
+                                                                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                                                                        <MoreHorizontal className="h-4 w-4" />
+                                                                    </Button>
+                                                                </DropdownMenuTrigger>
+                                                                <DropdownMenuContent align={isRtl ? 'start' : 'end'}>
+                                                                    <DropdownMenuItem onClick={(e) => openEdit(ev, e)}>
+                                                                        <Edit className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} />
+                                                                        {t('common.edit')}
+                                                                    </DropdownMenuItem>
+                                                                    <DropdownMenuItem
+                                                                        className="text-destructive focus:text-destructive"
+                                                                        onClick={(e) => handleDelete(ev, e)}
+                                                                    >
+                                                                        <Trash2 className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} />
+                                                                        {t('common.delete')}
+                                                                    </DropdownMenuItem>
+                                                                </DropdownMenuContent>
+                                                            </DropdownMenu>
+                                                        </div>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                                {filtered.map((ev) => (
+                                    <div
+                                        key={ev.id}
+                                        onClick={() => navigate(`/admin/events/${ev.id}/dashboard`)}
+                                        className="group relative cursor-pointer overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)] transition-all duration-300 hover:-translate-y-0.5 hover:shadow-[0_1px_2px_rgba(15,23,42,0.05),0_16px_40px_-16px_rgba(15,23,42,0.14)]"
+                                    >
+                                        <div className="h-40 w-full overflow-hidden">
+                                            {ev.logo ? (
+                                                <img
+                                                    src={ev.logo}
+                                                    alt={ev.name}
+                                                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                                                />
+                                            ) : (
+                                                <EventInitials name={ev.name} status={ev.status} />
+                                            )}
+                                        </div>
+
+                                        <div className={`absolute top-3 ${isRtl ? 'right-3' : 'left-3'}`}>
+                                            <StatusBadge
+                                                status={ev.status}
+                                                variant={getStatusVariant(ev.status)}
+                                            />
+                                        </div>
+
+                                        <div className={`absolute top-2 ${isRtl ? 'left-2' : 'right-2'}`} onClick={(e) => e.stopPropagation()}>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7 rounded-lg bg-black/30 text-white opacity-0 transition-opacity hover:bg-black/50 group-hover:opacity-100"
+                                                    >
+                                                        <MoreHorizontal className="h-4 w-4" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align={isRtl ? 'start' : 'end'}>
+                                                    <DropdownMenuItem onClick={(e) => openEdit(ev, e)}>
+                                                        <Edit className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} /> {t('common.edit')}
+                                                    </DropdownMenuItem>
+                                                    <DropdownMenuItem
+                                                        className="text-destructive focus:text-destructive"
+                                                        onClick={(e) => handleDelete(ev, e)}
+                                                    >
+                                                        <Trash2 className={`h-4 w-4 ${isRtl ? 'ml-2' : 'mr-2'}`} /> {t('common.delete')}
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        </div>
+
+                                        <div className="p-4 text-start">
+                                            <h3 className="mb-1 truncate text-base font-semibold leading-tight" title={ev.name}>
+                                                {ev.name}
+                                            </h3>
+                                            {ev.theme && (
+                                                <p className="mb-2 truncate text-xs text-muted-foreground">{ev.theme}</p>
+                                            )}
+                                            <div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
+                                                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                                    <Calendar className="h-3.5 w-3.5 shrink-0" />
+                                                    {ev.startDate} – {ev.endDate}
+                                                </span>
+                                                <span className="flex items-center gap-1.5">
+                                                    <MapPin className="h-3.5 w-3.5 shrink-0" />
+                                                    {ev.city}
+                                                </span>
+                                            </div>
+
+                                            {ev.venues.length > 0 && (
+                                                <div className="mt-3 flex flex-wrap gap-1">
+                                                    {ev.venues.slice(0, 2).map((v, i) => (
+                                                        <Badge key={i} variant="outline" className="px-1.5 py-0 text-[10px]">{v}</Badge>
+                                                    ))}
+                                                    {ev.venues.length > 2 && (
+                                                        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+                                                            +{ev.venues.length - 2}
+                                                        </Badge>
+                                                    )}
+                                                </div>
+                                            )}
+
+                                            <div className={`mt-4 flex items-center border-t border-border/70 pt-3 ${isRtl ? 'justify-start' : 'justify-end'}`}>
+                                                <span className="inline-flex items-center gap-1 text-xs font-medium text-primary group-hover:underline">
+                                                    {t('events.open_dashboard')}
+                                                    <ArrowRight className="h-3 w-3" />
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </>
+                )}
             </main>
 
             {/* ─── Create Dialog ─── */}

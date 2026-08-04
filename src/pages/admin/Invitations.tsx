@@ -1108,6 +1108,8 @@ const InvitationsPage: React.FC = () => {
 
     setPendingCreateAction(delivery);
     setIsActionLoading(true);
+    // Yield so the button spinner can paint before sync audience work blocks the main thread.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
       const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
 
@@ -1172,9 +1174,9 @@ const InvitationsPage: React.FC = () => {
       const finalCampaignId = backendCampaignId || tempCampaignId;
 
       if (delivery === 'send') {
-        await handleSendCampaign(finalCampaignId);
+        await handleSendCampaign(finalCampaignId, { manageLoading: false });
       } else if (delivery === 'schedule') {
-        await handleScheduleCampaign(finalCampaignId, scheduledAt);
+        await handleScheduleCampaign(finalCampaignId, scheduledAt, { manageLoading: false });
       } else {
         const participantCount = createdInvitations.filter(inv => inv.recipientType !== 'manager').length;
         const managerCount = createdInvitations.filter(inv => inv.recipientType === 'manager').length;
@@ -1280,9 +1282,10 @@ const InvitationsPage: React.FC = () => {
 
   const handleSendCampaign = async (
     campaignId: string,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; manageLoading?: boolean },
   ) => {
-    setIsActionLoading(true);
+    const manageLoading = options?.manageLoading !== false;
+    if (manageLoading) setIsActionLoading(true);
     try {
       const {
         created,
@@ -1333,14 +1336,14 @@ const InvitationsPage: React.FC = () => {
       console.error('Failed to send campaign locally:', error);
       toast({ title: 'Error', description: 'Failed to send campaign', variant: 'destructive' });
     } finally {
-      setIsActionLoading(false);
+      if (manageLoading) setIsActionLoading(false);
     }
   };
 
   const handleScheduleCampaign = async (
     campaignId: string,
     scheduleValue: string,
-    options?: { silent?: boolean },
+    options?: { silent?: boolean; manageLoading?: boolean },
   ) => {
     if (!scheduleValue) {
       toast({
@@ -1361,7 +1364,8 @@ const InvitationsPage: React.FC = () => {
       return;
     }
 
-    setIsActionLoading(true);
+    const manageLoading = options?.manageLoading !== false;
+    if (manageLoading) setIsActionLoading(true);
     try {
       await syncCampaignAudienceBeforeDelivery(campaignId);
 
@@ -1393,7 +1397,7 @@ const InvitationsPage: React.FC = () => {
       console.error('Failed to schedule campaign:', error);
       toast({ title: 'Error', description: t('invitations.schedule_failed', { defaultValue: 'Failed to schedule campaign' }), variant: 'destructive' });
     } finally {
-      setIsActionLoading(false);
+      if (manageLoading) setIsActionLoading(false);
     }
   };
 
@@ -2124,7 +2128,7 @@ const InvitationsPage: React.FC = () => {
                   disabled={isActionLoading}
                   onClick={() => openScheduleDialog(selectedCampaign.id)}
                 >
-                  <Clock className="h-4 w-4 mr-2" />
+                  <Clock className="h-4 w-4" />
                   {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
                 </Button>
                 <Button
@@ -2136,8 +2140,14 @@ const InvitationsPage: React.FC = () => {
                     await refreshCampaignDetailInvitations(refreshed);
                   }}
                 >
-                  <Send className="h-4 w-4 mr-2" />
-                  {t('invitations.send_now')}
+                  {isActionLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {isActionLoading
+                    ? t('invitations.sending', { defaultValue: 'Sending...' })
+                    : t('invitations.send_now')}
                 </Button>
               </div>
             </div>
@@ -2161,8 +2171,14 @@ const InvitationsPage: React.FC = () => {
                 disabled={isActionLoading}
                 onClick={() => handleSendCampaign(selectedCampaign.id)}
               >
-                <Send className="h-4 w-4 mr-2" />
-                {t('invitations.send_now')}
+                {isActionLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                {isActionLoading
+                  ? t('invitations.sending', { defaultValue: 'Sending...' })
+                  : t('invitations.send_now')}
               </Button>
             </div>
           )}
@@ -2254,7 +2270,11 @@ const InvitationsPage: React.FC = () => {
               </p>
             </div>
 
-            <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetWizard(); }}>
+            <Dialog open={isCreateOpen} onOpenChange={(open) => {
+              if (isActionLoading) return;
+              setIsCreateOpen(open);
+              if (!open) resetWizard();
+            }}>
             <DialogTrigger asChild>
               <Button className="h-9 shrink-0 gap-2 shadow-sm">
                 <Plus className="h-4 w-4" />
@@ -2305,11 +2325,12 @@ const InvitationsPage: React.FC = () => {
                       min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
                       onChange={(e) => setScheduledAt(e.target.value)}
                       className="w-full bg-background sm:w-[285px]"
+                      disabled={isActionLoading}
                     />
                   </div>
                 )}
                 <DialogFooter className="px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
-                  <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
+                  <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1 || isActionLoading}>
                     {t('invitations.previous')}
                   </Button>
                   {wizardStep < 4 ? (
@@ -2331,9 +2352,11 @@ const InvitationsPage: React.FC = () => {
                         onClick={() => handleCreateCampaign('draft')}
                       >
                         {isActionLoading && pendingCreateAction === 'draft' ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : null}
-                        {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
+                        {isActionLoading && pendingCreateAction === 'draft'
+                          ? t('common.saving', { defaultValue: 'Saving...' })
+                          : t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
                       </Button>
                       <Button
                         variant="outline"
@@ -2341,19 +2364,23 @@ const InvitationsPage: React.FC = () => {
                         onClick={() => handleCreateCampaign('schedule')}
                       >
                         {isActionLoading && pendingCreateAction === 'schedule' ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Clock className="h-4 w-4 mr-2" />
+                          <Clock className="h-4 w-4" />
                         )}
-                        {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                        {isActionLoading && pendingCreateAction === 'schedule'
+                          ? t('invitations.scheduling', { defaultValue: 'Scheduling...' })
+                          : t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
                       </Button>
                       <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
                         {isActionLoading && pendingCreateAction === 'send' ? (
-                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Send className="h-4 w-4 mr-2" />
+                          <Send className="h-4 w-4" />
                         )}
-                        {t('invitations.send_now')}
+                        {isActionLoading && pendingCreateAction === 'send'
+                          ? t('invitations.sending', { defaultValue: 'Sending...' })
+                          : t('invitations.send_now')}
                       </Button>
                     </div>
                   )}

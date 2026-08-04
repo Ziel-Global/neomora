@@ -13,13 +13,23 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { addTeamMember, getMyTeams, listTeamMembers } from '@/api/teamApi';
-import { createManagerParticipant, getManagerParticipants } from '@/api/participantApi';
+import { createManagerParticipant, deleteManagerParticipant, getManagerParticipants } from '@/api/participantApi';
 import { DELEGATION_CATEGORY_LABELS } from '@/lib/delegationCategories';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
 import {
@@ -34,7 +44,6 @@ import {
   UserPlus,
   Users,
   FolderPlus,
-  IdCard,
   Mail,
   Phone,
   Trophy,
@@ -42,6 +51,7 @@ import {
   Check,
   Sparkles,
   ArrowRight,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -59,14 +69,24 @@ const readStoredSportTab = (): string => {
 
 const ROLES = DELEGATION_CATEGORY_LABELS;
 
-const emptyForm = () => ({
+interface PersonEntry {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  nationality: string;
+  role: string;
+  sports: string[];
+}
+
+const emptyPersonEntry = (): PersonEntry => ({
   firstName: '',
   lastName: '',
   email: '',
   phone: '',
   nationality: '',
   role: ROLES[0],
-  sports: [] as string[],
+  sports: [],
 });
 
 const RequiredMark = () => <span className="text-destructive">*</span>;
@@ -124,7 +144,7 @@ const MembersPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [teamId, setTeamId] = useState(requestedTeamId);
-  const [form, setForm] = useState(emptyForm);
+  const [entries, setEntries] = useState<PersonEntry[]>([emptyPersonEntry()]);
   const [assignMember, setAssignMember] = useState<any | null>(null);
   const [assignTeamId, setAssignTeamId] = useState('');
   const [assignRole, setAssignRole] = useState(ROLES[0]);
@@ -220,77 +240,137 @@ const MembersPage: React.FC = () => {
     return group?.members ?? [];
   }, [activeSportTab, filtered, sportGroups]);
 
+  // Eligible teams are the union across every entry's selected sports, since
+  // one shared "add to team" choice applies to the whole batch — per-person
+  // sport mismatches are still caught and reported individually on save.
+  const allEntrySports = useMemo(
+    () => Array.from(new Set(entries.flatMap((entry) => entry.sports))),
+    [entries],
+  );
   const eligibleTeamsForForm = useMemo(
-    () => teams.filter((team) => form.sports.includes(teamSportName(team))),
-    [teams, form.sports],
+    () => teams.filter((team) => allEntrySports.includes(teamSportName(team))),
+    [teams, allEntrySports],
   );
 
-  const toggleFormSport = (sport: string) => {
-    setForm((prev) => {
-      const nextSports = prev.sports.includes(sport)
-        ? prev.sports.filter((s) => s !== sport)
-        : [...prev.sports, sport];
-      const currentTeam = teams.find((t) => t.id === teamId);
-      if (currentTeam && !nextSports.includes(teamSportName(currentTeam))) {
-        setTeamId('');
-      }
-      return { ...prev, sports: nextSports };
-    });
+  const updateEntry = (index: number, patch: Partial<PersonEntry>) => {
+    setEntries((prev) => prev.map((entry, i) => (i === index ? { ...entry, ...patch } : entry)));
+  };
+
+  const toggleEntrySport = (index: number, sport: string) => {
+    setEntries((prev) =>
+      prev.map((entry, i) => {
+        if (i !== index) return entry;
+        const nextSports = entry.sports.includes(sport)
+          ? entry.sports.filter((s) => s !== sport)
+          : [...entry.sports, sport];
+        return { ...entry, sports: nextSports };
+      }),
+    );
+  };
+
+  const addEntry = () => setEntries((prev) => [...prev, emptyPersonEntry()]);
+  const removeEntry = (index: number) => {
+    if (entries.length > 1) setEntries((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleCreateOpenChange = (next: boolean) => {
     setOpen(next);
     if (!next) {
-      setForm(emptyForm());
+      setEntries([emptyPersonEntry()]);
       setTeamId(requestedTeamId);
     }
   };
 
   const save = async () => {
-    if (!form.firstName.trim() || !form.lastName.trim() || !form.email.trim()) {
-      toast.error('First name, last name, and email are required');
+    const invalidIndex = entries.findIndex(
+      (entry) => !entry.firstName.trim() || !entry.lastName.trim() || !entry.email.trim(),
+    );
+    if (invalidIndex !== -1) {
+      toast.error(`Member ${invalidIndex + 1}: first name, last name, and email are required`);
       return;
     }
+
     setSaving(true);
-    try {
-      const { role, ...personFields } = form;
-      const member = await createManagerParticipant({
-        ...personFields,
-        firstName: form.firstName.trim(),
-        lastName: form.lastName.trim(),
-        email: form.email.trim(),
-        phone: form.phone || undefined,
-        nationality: form.nationality || undefined,
-      });
-      if (teamId) {
-        await addTeamMember(teamId, {
-          participantId: member.id,
-          role: form.role,
-          needsVisa: false,
-          needsAccommodation: false,
-          needsTransport: false,
+    let successCount = 0;
+    let teamAddCount = 0;
+    const errors: string[] = [];
+
+    for (const entry of entries) {
+      const label = entry.firstName.trim() || 'Member';
+      try {
+        // entry.role is the delegation roster category (Athletes/Players,
+        // Head Coach/Coach, etc.) — only meaningful for TeamMembership.role
+        // below. Participant.role is a separate, unrelated classification
+        // (VVIP/VIP/Athlete/Official/Judge/Media/Fan) — sending the former
+        // there fails backend validation.
+        const member = await createManagerParticipant({
+          firstName: entry.firstName.trim(),
+          lastName: entry.lastName.trim(),
+          email: entry.email.trim(),
+          phone: entry.phone || undefined,
+          nationality: entry.nationality || undefined,
+          sports: entry.sports,
         });
-        toast.success(
-          `${member.firstName} was saved to Members and added to ${selectedTeam?.name || 'the team'}.`,
-        );
-      } else {
-        toast.success(`${member.firstName} was added to your Members directory.`);
+        successCount += 1;
+
+        if (teamId) {
+          try {
+            await addTeamMember(teamId, {
+              participantId: member.id,
+              role: entry.role,
+              needsVisa: false,
+              needsAccommodation: false,
+              needsTransport: false,
+            });
+            teamAddCount += 1;
+          } catch (teamError: any) {
+            errors.push(
+              `${label}: saved, but could not add to ${selectedTeam?.name || 'the team'} (${teamError?.response?.data?.message || 'error'})`,
+            );
+          }
+        }
+      } catch (personError: any) {
+        errors.push(`${label}: ${personError?.response?.data?.message || 'could not be saved'}`);
       }
-      setForm(emptyForm());
+    }
+
+    if (successCount > 0) {
+      const teamSuffix = teamId ? ` (${teamAddCount} added to ${selectedTeam?.name || 'the team'})` : '';
+      toast.success(`${successCount} member${successCount === 1 ? '' : 's'} saved${teamSuffix}.`);
+    }
+    errors.forEach((message) => toast.error(message));
+
+    if (errors.length === 0) {
+      setEntries([emptyPersonEntry()]);
       setTeamId('');
       setOpen(false);
-      await refetch();
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || 'Could not save this member');
-    } finally {
-      setSaving(false);
     }
+    await refetch();
+    setSaving(false);
   };
 
   const openAssignToTeam = (member: any) => {
     setAssignMember(member);
     setAssignTeamId('');
     setAssignRole(ROLES[0]);
+  };
+
+  const [memberToDelete, setMemberToDelete] = useState<any | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleConfirmDeleteMember = async () => {
+    if (!memberToDelete) return;
+    setDeleting(true);
+    try {
+      await deleteManagerParticipant(memberToDelete.id);
+      toast.success(`${memberToDelete.firstName} ${memberToDelete.lastName} was removed from your roster.`);
+      setMemberToDelete(null);
+      await refetch();
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || 'Could not delete this member');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const teamsMatchingAssignSport = useMemo(() => {
@@ -380,171 +460,192 @@ const MembersPage: React.FC = () => {
                       Team Manager Portal
                     </p>
                     <DialogTitle className="text-xl font-semibold tracking-tight">
-                      {selectedTeam ? `Add member to ${selectedTeam.name}` : 'Add a member'}
+                      {selectedTeam ? `Add member${entries.length > 1 ? 's' : ''} to ${selectedTeam.name}` : `Add member${entries.length > 1 ? 's' : ''}`}
                     </DialogTitle>
                     <DialogDescription className="text-sm leading-relaxed">
                       Save them to your directory now. You can place them on a matching team right away
-                      or later.
+                      or later. Add more than one before saving if you're building a roster.
                     </DialogDescription>
                   </div>
                 </div>
               </DialogHeader>
 
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-6 py-5">
-                <FormSection
-                  icon={IdCard}
-                  title="Personal details"
-                  description="Name as it should appear on rosters and invitations."
-                >
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label className="text-[12px] font-semibold">
-                        First name <RequiredMark />
-                      </Label>
-                      <Input
-                        className="h-10 bg-background"
-                        value={form.firstName}
-                        onChange={(e) => setForm({ ...form, firstName: e.target.value })}
-                        placeholder="e.g. Ahmed"
-                        autoComplete="given-name"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-[12px] font-semibold">
-                        Last name <RequiredMark />
-                      </Label>
-                      <Input
-                        className="h-10 bg-background"
-                        value={form.lastName}
-                        onChange={(e) => setForm({ ...form, lastName: e.target.value })}
-                        placeholder="e.g. Khan"
-                        autoComplete="family-name"
-                      />
-                    </div>
-                  </div>
-                </FormSection>
-
-                <FormSection
-                  icon={Mail}
-                  title="Contact"
-                  description="Used for invites and account setup when needed."
-                >
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-1.5 sm:col-span-2">
-                      <Label className="text-[12px] font-semibold">
-                        Email <RequiredMark />
-                      </Label>
-                      <div className="relative">
-                        <Mail className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-                        <Input
-                          type="email"
-                          className="h-10 bg-background ps-9"
-                          value={form.email}
-                          onChange={(e) => setForm({ ...form, email: e.target.value })}
-                          placeholder="member@example.com"
-                          autoComplete="email"
-                        />
+                {entries.map((entry, index) => (
+                  <section
+                    key={index}
+                    className="space-y-3.5 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <UserPlus className="h-4 w-4 text-primary/70" />
+                        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+                          Member {index + 1}
+                        </h3>
                       </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-[12px] font-semibold">Phone</Label>
-                      <div className="flex h-10 overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
-                        <span className="inline-flex shrink-0 items-center gap-1.5 border-e border-border/80 bg-muted/40 px-2.5 text-xs font-semibold text-muted-foreground">
-                          <Phone className="h-3.5 w-3.5" />
-                          Intl
-                        </span>
-                        <input
-                          type="tel"
-                          inputMode="tel"
-                          placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
-                          value={form.phone}
-                          onChange={(e) =>
-                            setForm({ ...form, phone: sanitizePhoneInput(e.target.value) })
-                          }
-                          className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
-                          autoComplete="tel"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-[12px] font-semibold">Nationality</Label>
-                      <CountryCombobox
-                        value={form.nationality}
-                        onChange={(nationality) => setForm({ ...form, nationality })}
-                        placeholder="Select country"
-                        className="h-10"
-                      />
-                    </div>
-                  </div>
-                </FormSection>
-
-                <FormSection
-                  icon={Trophy}
-                  title="Role & sports"
-                  description="Sports control which teams they can join below."
-                >
-                  <div className="space-y-1.5">
-                    <Label className="text-[12px] font-semibold">Role</Label>
-                    <Select value={form.role} onValueChange={(role) => setForm({ ...form, role })}>
-                      <SelectTrigger className="h-10 bg-background">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent position="popper" side="bottom" sideOffset={6} className="max-h-56">
-                        {ROLES.map((role) => (
-                          <SelectItem key={role} value={role}>
-                            {role}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <Label className="text-[12px] font-semibold">Sports</Label>
-                      {form.sports.length > 0 && (
-                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold tabular-nums text-primary ring-1 ring-inset ring-primary/15">
-                          {form.sports.length} selected
-                        </span>
+                      {entries.length > 1 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeEntry(index)}
+                          aria-label={`Remove member ${index + 1}`}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       )}
                     </div>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {SPORT_CATEGORIES.map((sport) => {
-                        const selected = form.sports.includes(sport.name);
-                        return (
-                          <button
-                            key={sport.id}
-                            type="button"
-                            onClick={() => toggleFormSport(sport.name)}
-                            className={cn(
-                              'group flex items-center gap-2 rounded-xl border px-3 py-2.5 text-start text-sm transition-all',
-                              selected
-                                ? 'border-primary/30 bg-primary/[0.08] text-foreground shadow-sm ring-1 ring-inset ring-primary/15'
-                                : 'border-border/70 bg-background text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground',
-                            )}
-                          >
-                            <span
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-[12px] font-semibold">
+                          First name <RequiredMark />
+                        </Label>
+                        <Input
+                          className="h-10 bg-background"
+                          value={entry.firstName}
+                          onChange={(e) => updateEntry(index, { firstName: e.target.value })}
+                          placeholder="e.g. Ahmed"
+                          autoComplete="given-name"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[12px] font-semibold">
+                          Last name <RequiredMark />
+                        </Label>
+                        <Input
+                          className="h-10 bg-background"
+                          value={entry.lastName}
+                          onChange={(e) => updateEntry(index, { lastName: e.target.value })}
+                          placeholder="e.g. Khan"
+                          autoComplete="family-name"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label className="text-[12px] font-semibold">
+                          Email <RequiredMark />
+                        </Label>
+                        <div className="relative">
+                          <Mail className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                          <Input
+                            type="email"
+                            className="h-10 bg-background ps-9"
+                            value={entry.email}
+                            onChange={(e) => updateEntry(index, { email: e.target.value })}
+                            placeholder="member@example.com"
+                            autoComplete="email"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[12px] font-semibold">Phone</Label>
+                        <div className="flex h-10 overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                          <span className="inline-flex shrink-0 items-center gap-1.5 border-e border-border/80 bg-muted/40 px-2.5 text-xs font-semibold text-muted-foreground">
+                            <Phone className="h-3.5 w-3.5" />
+                            Intl
+                          </span>
+                          <input
+                            type="tel"
+                            inputMode="tel"
+                            placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
+                            value={entry.phone}
+                            onChange={(e) =>
+                              updateEntry(index, { phone: sanitizePhoneInput(e.target.value) })
+                            }
+                            className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
+                            autoComplete="tel"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[12px] font-semibold">Nationality</Label>
+                        <CountryCombobox
+                          value={entry.nationality}
+                          onChange={(nationality) => updateEntry(index, { nationality })}
+                          placeholder="Select country"
+                          className="h-10"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px] font-semibold">Role</Label>
+                      <Select value={entry.role} onValueChange={(role) => updateEntry(index, { role })}>
+                        <SelectTrigger className="h-10 bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent position="popper" side="bottom" sideOffset={6} className="max-h-56">
+                          {ROLES.map((role) => (
+                            <SelectItem key={role} value={role}>
+                              {role}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label className="text-[12px] font-semibold">Sports</Label>
+                        {entry.sports.length > 0 && (
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-bold tabular-nums text-primary ring-1 ring-inset ring-primary/15">
+                            {entry.sports.length} selected
+                          </span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {SPORT_CATEGORIES.map((sport) => {
+                          const selected = entry.sports.includes(sport.name);
+                          return (
+                            <button
+                              key={sport.id}
+                              type="button"
+                              onClick={() => toggleEntrySport(index, sport.name)}
                               className={cn(
-                                'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors',
+                                'group flex items-center gap-2 rounded-xl border px-3 py-2.5 text-start text-sm transition-all',
                                 selected
-                                  ? 'border-primary bg-primary text-primary-foreground'
-                                  : 'border-border bg-muted/40 text-transparent group-hover:border-muted-foreground/40',
+                                  ? 'border-primary/30 bg-primary/[0.08] text-foreground shadow-sm ring-1 ring-inset ring-primary/15'
+                                  : 'border-border/70 bg-background text-muted-foreground hover:border-border hover:bg-muted/40 hover:text-foreground',
                               )}
                             >
-                              <Check className="h-3 w-3" />
-                            </span>
-                            <span className="min-w-0 truncate font-medium">{sport.name}</span>
-                          </button>
-                        );
-                      })}
+                              <span
+                                className={cn(
+                                  'flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-colors',
+                                  selected
+                                    ? 'border-primary bg-primary text-primary-foreground'
+                                    : 'border-border bg-muted/40 text-transparent group-hover:border-muted-foreground/40',
+                                )}
+                              >
+                                <Check className="h-3 w-3" />
+                              </span>
+                              <span className="min-w-0 truncate font-medium">{sport.name}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                </FormSection>
+                  </section>
+                ))}
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-1.5 border-dashed"
+                  onClick={addEntry}
+                  disabled={saving}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add another member
+                </Button>
 
                 <FormSection
                   icon={UsersRound}
                   title="Team placement"
-                  description="Optional — leave as directory only if you are not assigning yet."
+                  description="Optional — leave as directory only if you are not assigning yet. Applies to everyone added above."
                 >
                   <div className="space-y-1.5">
                     <Label className="text-[12px] font-semibold">
@@ -554,12 +655,12 @@ const MembersPage: React.FC = () => {
                     <Select
                       value={teamId || 'none'}
                       onValueChange={(value) => setTeamId(value === 'none' ? '' : value)}
-                      disabled={form.sports.length === 0}
+                      disabled={allEntrySports.length === 0}
                     >
                       <SelectTrigger className="h-10 bg-background">
                         <SelectValue
                           placeholder={
-                            form.sports.length === 0 ? 'Select a sport first' : 'Directory only'
+                            allEntrySports.length === 0 ? 'Select a sport first' : 'Directory only'
                           }
                         />
                       </SelectTrigger>
@@ -574,7 +675,7 @@ const MembersPage: React.FC = () => {
                       </SelectContent>
                     </Select>
                     <p className="text-[11px] text-muted-foreground">
-                      {form.sports.length === 0
+                      {allEntrySports.length === 0
                         ? 'Pick at least one sport to unlock matching teams.'
                         : eligibleTeamsForForm.length === 0
                           ? 'No teams match the selected sport(s) yet.'
@@ -603,7 +704,11 @@ const MembersPage: React.FC = () => {
                     ) : (
                       <UserPlus className="h-3.5 w-3.5" />
                     )}
-                    {saving ? 'Saving…' : teamId ? 'Save & add to team' : 'Save member'}
+                    {saving
+                      ? 'Saving…'
+                      : teamId
+                        ? `Save${entries.length > 1 ? ' all' : ''} & add to team`
+                        : `Save member${entries.length > 1 ? 's' : ''}`}
                   </Button>
                 </div>
               </DialogFooter>
@@ -773,15 +878,26 @@ const MembersPage: React.FC = () => {
                           </TableCell>
                         )}
                         <TableCell className="py-3 text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="h-8 gap-1.5 border-border/80 bg-background"
-                            onClick={() => openAssignToTeam(member)}
-                          >
-                            <FolderPlus className="h-3.5 w-3.5" />
-                            Add to team
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1.5 border-border/80 bg-background"
+                              onClick={() => openAssignToTeam(member)}
+                            >
+                              <FolderPlus className="h-3.5 w-3.5" />
+                              Add to team
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 shrink-0 border-border/80 bg-background text-muted-foreground hover:text-destructive"
+                              onClick={() => setMemberToDelete(member)}
+                              title="Delete member"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -894,6 +1010,33 @@ const MembersPage: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!memberToDelete} onOpenChange={(open) => !open && !deleting && setMemberToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete member?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {memberToDelete
+                ? `${memberToDelete.firstName} ${memberToDelete.lastName} will be removed from your Members roster. Their existing team memberships and registration history are kept.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleting}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmDeleteMember();
+              }}
+            >
+              {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

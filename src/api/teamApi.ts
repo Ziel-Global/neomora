@@ -7,6 +7,7 @@ export interface CreateTeamPayload {
     name: string;
     sportCategoryGroup: string;
     subCategory: string;
+    expectedTeamIndex?: number;
 }
 
 export const createTeam = async (payload: CreateTeamPayload): Promise<Team> => {
@@ -16,6 +17,7 @@ export const createTeam = async (payload: CreateTeamPayload): Promise<Team> => {
         name: payload.name,
         sportCategoryGroup: payload.sportCategoryGroup,
         subCategory: payload.subCategory,
+        ...(payload.expectedTeamIndex !== undefined ? { expectedTeamIndex: payload.expectedTeamIndex } : {}),
     };
 
     const { data } = await apiClient.post('/teams', body);

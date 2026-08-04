@@ -28,6 +28,7 @@ const ManagerSessionContext = createContext<ManagerSessionContextType | undefine
 
 export const MANAGER_SESSION_KEY = 'ems_manager_session';
 export const MANAGER_TOKEN_KEY = 'ems_manager_token';
+export const MANAGER_REFRESH_TOKEN_KEY = 'ems_manager_refresh_token';
 
 const buildManagerSession = (
   user: Record<string, unknown> | undefined,
@@ -64,10 +65,13 @@ const readStoredManager = (): TeamManager | null => {
   }
 };
 
-const persistManagerSession = (managerData: TeamManager, token?: string) => {
+const persistManagerSession = (managerData: TeamManager, token?: string, refreshToken?: string) => {
   localStorage.setItem(MANAGER_SESSION_KEY, JSON.stringify(managerData));
   if (token) {
     localStorage.setItem(MANAGER_TOKEN_KEY, token);
+  }
+  if (refreshToken) {
+    localStorage.setItem(MANAGER_REFRESH_TOKEN_KEY, refreshToken);
   }
 };
 
@@ -94,7 +98,7 @@ export const ManagerSessionProvider: React.FC<{ children: ReactNode }> = ({ chil
 
       const managerData = buildManagerSession(response.user as Record<string, unknown>, email);
       setManager(managerData);
-      persistManagerSession(managerData, token);
+      persistManagerSession(managerData, token, response.refreshToken);
 
       return managerData;
     } catch (error: any) {
@@ -107,6 +111,7 @@ export const ManagerSessionProvider: React.FC<{ children: ReactNode }> = ({ chil
     setManager(null);
     localStorage.removeItem(MANAGER_SESSION_KEY);
     localStorage.removeItem(MANAGER_TOKEN_KEY);
+    localStorage.removeItem(MANAGER_REFRESH_TOKEN_KEY);
     queryClient.clear();
   }, [queryClient]);
 

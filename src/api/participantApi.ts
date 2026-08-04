@@ -263,6 +263,10 @@ export const getManagerParticipants = async (): Promise<EMSParticipant[]> => {
     .filter(Boolean) as EMSParticipant[];
 };
 
+export const deleteManagerParticipant = async (id: string): Promise<void> => {
+  await apiClient.delete(`/manager/participants/${id}`);
+};
+
 export const updateParticipant = async (id: string, payload: Partial<ParticipantPayload>): Promise<EMSParticipant> => {
   const { data } = await apiClient.put(`/admin/participants/${id}`, payload);
   return normalizeParticipant(data, id) || (data as EMSParticipant);

@@ -1,27 +1,50 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
 import { teamStore, teamMemberStore, Team, TEAM_ROLES } from '@/lib/teamStore';
-import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, Search, CheckCircle2, X } from 'lucide-react';
+import {
+  Plus,
+  Save,
+  Users,
+  UserPlus,
+  Trash2,
+  ChevronLeft,
+  Search,
+  CheckCircle2,
+  X,
+  UserPlus2,
+  LayoutGrid,
+  List,
+  Sparkles,
+  FolderKanban,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Switch } from '@/components/ui/switch';
 import { getMyTeams, addTeamMember, addTeamMembersBulk, listTeamMembers, deleteTeamMember, resolveTeamMembershipId, syncTeamMemberCount } from '@/api/teamApi';
 import { getMyDelegations } from '@/api/delegationApi';
-import { getManagerParticipants } from '@/api/participantApi';
+import { getManagerParticipants, createManagerParticipant, ManagerParticipantPayload } from '@/api/participantApi';
 import {
   getPendingTeamRegistrations,
   removePendingTeamRegistrations,
   RegisteredParticipantOption,
 } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { cn } from '@/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,6 +56,20 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 
+const VIEW_MODE_KEY = 'ems_manager_add_members_view_mode';
+type ViewMode = 'cards' | 'table';
+
+const readStoredViewMode = (): ViewMode => {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'table' ? 'table' : 'cards';
+  } catch {
+    return 'cards';
+  }
+};
+
+const selectTriggerClass =
+  'h-10 rounded-xl border-border/80 bg-card font-medium shadow-sm transition-colors hover:border-border hover:bg-muted/30 focus:ring-primary/25 [&>span]:flex [&>span]:items-center [&>span]:gap-2';
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Participant extends RegisteredParticipantOption {}
@@ -41,12 +78,6 @@ interface MemberRow {
   participantId: string;
   participant: Participant | null;
   role: string;
-  needsVisa: boolean;
-  needsAccommodation: boolean;
-  needsTransport: boolean;
-  originCity: string;
-  dietaryRequirements: string;
-  medicalConditions: string;
   search: string;
   dropdownOpen: boolean;
 }
@@ -81,14 +112,30 @@ const emptyRow = (): MemberRow => ({
   participantId: '',
   participant: null,
   role: '',
-  needsVisa: false,
-  needsAccommodation: false,
-  needsTransport: false,
-  originCity: '',
-  dietaryRequirements: '',
-  medicalConditions: '',
   search: '',
   dropdownOpen: false,
+});
+
+interface NewParticipantForm {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  gender: string;
+  nationality: string;
+  organization: string;
+  jobTitle: string;
+}
+
+const emptyNewParticipantForm = (): NewParticipantForm => ({
+  firstName: '',
+  lastName: '',
+  email: '',
+  phone: '',
+  gender: '',
+  nationality: '',
+  organization: '',
+  jobTitle: '',
 });
 
 // ─── Participant helpers ──────────────────────────────────────────────────────
@@ -227,13 +274,23 @@ const AddMembersPage: React.FC = () => {
   const { manager } = useManagerSession();
 
   const [selectedTeamId, setSelectedTeamId] = useState<string>('');
+  const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
   const [rows, setRows] = useState<MemberRow[]>([emptyRow()]);
   const [isSaving, setIsSaving] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState<CurrentTeamMember | null>(null);
   const [isRemovingMember, setIsRemovingMember] = useState(false);
 
+  // Inline "create a brand new participant" dialog, opened from a row's
+  // search dropdown. Collects the full participant field set (matching the
+  // admin Participants form) rather than a stripped-down subset, and wires
+  // the created participant straight into whichever row opened it.
+  const [creatingParticipantForIndex, setCreatingParticipantForIndex] = useState<number | null>(null);
+  const [newParticipantForm, setNewParticipantForm] = useState<NewParticipantForm>(emptyNewParticipantForm());
+  const [isCreatingParticipant, setIsCreatingParticipant] = useState(false);
+
   const searchRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const scaffoldedForTeamRef = useRef<string | null>(null);
 
   // ── Load teams ──────────────────────────────────────────────────────────────
   const {
@@ -284,6 +341,7 @@ const AddMembersPage: React.FC = () => {
 
   useEffect(() => {
     setRows([emptyRow()]);
+    scaffoldedForTeamRef.current = null;
   }, [selectedTeamId]);
 
   const teamIsReady = !!selectedTeamId && teams.some((entry) => entry.id === selectedTeamId);
@@ -326,6 +384,37 @@ const AddMembersPage: React.FC = () => {
     enabled: teamIsReady,
   });
 
+  // A freshly-created team bound to a declared delegation slot starts its
+  // roster pre-scaffolded: one row per required member, each already
+  // labeled with its role, instead of one blank row the manager has to
+  // configure from scratch. Only applies once per team selection (guarded
+  // by scaffoldedForTeamRef) and only while the team has no members yet, so
+  // it never clobbers in-progress edits or an already-built roster.
+  useEffect(() => {
+    if (!selectedTeamId || isLoadingCurrentMembers) return;
+    if (scaffoldedForTeamRef.current === selectedTeamId) return;
+    scaffoldedForTeamRef.current = selectedTeamId;
+    if (currentMembers.length > 0) return;
+
+    const team = teams.find((t: any) => t.id === selectedTeamId);
+    if (!team || team.expectedTeamIndex === undefined || team.expectedTeamIndex === null) return;
+
+    const delegationId = (team as any).delegationId || (team as any).delegation?.id;
+    const delegation = delegations.find((d: any) => d.id === delegationId);
+    const slot = delegation?.expectedTeams?.[(team as any).expectedTeamIndex];
+    if (!slot?.memberCounts) return;
+
+    const scaffolded: MemberRow[] = [];
+    for (const [role, count] of Object.entries(slot.memberCounts)) {
+      for (let i = 0; i < (Number(count) || 0); i++) {
+        scaffolded.push({ ...emptyRow(), role });
+      }
+    }
+    if (scaffolded.length > 0) {
+      setRows(scaffolded);
+    }
+  }, [selectedTeamId, isLoadingCurrentMembers, currentMembers, teams, delegations]);
+
   const handleConfirmRemoveMember = async () => {
     if (!memberToRemove || !selectedTeamId) return;
 
@@ -359,6 +448,22 @@ const AddMembersPage: React.FC = () => {
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
+  const setViewModeAndPersist = (mode: ViewMode) => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem(VIEW_MODE_KEY, mode);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const sportLabel = (team?: Team | null) => {
+    if (!team) return '';
+    return typeof team.sportCategory === 'string'
+      ? team.sportCategory
+      : (team.sportCategory as any)?.name || '';
+  };
+
   // ── Row helpers ─────────────────────────────────────────────────────────────
 
   const updateRow = <K extends keyof MemberRow>(index: number, key: K, value: MemberRow[K]) => {
@@ -382,8 +487,6 @@ const AddMembersPage: React.FC = () => {
         search: participantName(p),
         dropdownOpen: false,
         role: defaultRole,
-        originCity: next[index].originCity || p.nationality || '',
-        dietaryRequirements: next[index].dietaryRequirements,
       };
       return next;
     });
@@ -406,6 +509,50 @@ const AddMembersPage: React.FC = () => {
   const addRow = () => setRows(prev => [...prev, emptyRow()]);
   const removeRow = (index: number) => {
     if (rows.length > 1) setRows(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const openCreateParticipant = (index: number) => {
+    setCreatingParticipantForIndex(index);
+    setNewParticipantForm(emptyNewParticipantForm());
+  };
+
+  const handleCreateParticipant = async () => {
+    if (creatingParticipantForIndex === null) return;
+    const form = newParticipantForm;
+    if (!form.firstName.trim() || !form.lastName.trim() || !form.email.trim()) {
+      toast.error('First name, last name, and email are required');
+      return;
+    }
+
+    setIsCreatingParticipant(true);
+    try {
+      // form.role is the row's delegation roster category (Athletes/Players
+      // etc.), not Participant.role (a separate VVIP/VIP/Athlete/Official/
+      // Judge/Media/Fan classification) — sending it here fails backend
+      // validation. The row keeps its own role; nothing needs to carry over.
+      const payload: ManagerParticipantPayload = {
+        firstName: form.firstName.trim(),
+        lastName: form.lastName.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim() || undefined,
+        gender: form.gender || undefined,
+        nationality: form.nationality || undefined,
+        organization: form.organization.trim() || undefined,
+        jobTitle: form.jobTitle.trim() || undefined,
+      };
+      const created = await createManagerParticipant(payload);
+      selectParticipant(creatingParticipantForIndex, { ...created, registrationId: created.id } as Participant);
+      toast.success(`${created.firstName} was added to your directory.`);
+      setCreatingParticipantForIndex(null);
+      setNewParticipantForm(emptyNewParticipantForm());
+      await refetchParticipants();
+    } catch (error: any) {
+      console.error('Failed to create participant:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not create participant';
+      toast.error(Array.isArray(msg) ? msg.join(', ') : String(msg));
+    } finally {
+      setIsCreatingParticipant(false);
+    }
   };
 
   // ── Filter participants per row ─────────────────────────────────────────────
@@ -471,22 +618,19 @@ const AddMembersPage: React.FC = () => {
             role: r.role,
             emergencyContact: '',
             emergencyPhone: '',
-            dietaryRequirements: r.dietaryRequirements,
-            medicalConditions: r.medicalConditions,
+            dietaryRequirements: '',
+            medicalConditions: '',
           });
           savedCount++;
         }
         toast.success(`${savedCount} member(s) added successfully!`);
       } else {
+        // Everything else (visa/accommodation/transport needs, dietary,
+        // medical, origin city) is captured later during the participant's
+        // own registration — this step is deliberately just who + what role.
         const mapRowToPayload = (r: MemberRow) => ({
           participantId: r.participantId,
           role: r.role,
-          needsVisa: r.needsVisa,
-          needsAccommodation: r.needsAccommodation,
-          needsTransport: r.needsTransport,
-          originCity: r.originCity,
-          dietaryRequirements: r.dietaryRequirements,
-          medicalConditions: r.medicalConditions,
         });
 
         if (validRows.length === 1) {
@@ -523,236 +667,373 @@ const AddMembersPage: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+        <div
+          className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl"
+          aria-hidden
+        />
+        <div className="relative space-y-4">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ms-2 h-8 gap-1 text-muted-foreground hover:text-foreground"
+            onClick={() => navigate('/manager/teams')}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            Back to Teams
+          </Button>
 
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="sm" onClick={() => navigate('/manager/teams')}>
-          <ChevronLeft className="h-4 w-4 mr-1" />
-          Back to Teams
-        </Button>
-      </div>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+            <div className="max-w-xl space-y-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+                Team Manager Portal
+              </p>
+              <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                Add Team Members
+              </h1>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                Select registered members and place them on a team roster.
+              </p>
+              {selectedTeam && (
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
+                    <FolderKanban className="h-3.5 w-3.5" />
+                    {selectedTeam.name}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-border/70">
+                    <Users className="h-3.5 w-3.5" />
+                    <span className="tabular-nums">{currentMembers.length}</span>
+                    on roster
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </header>
 
-      <div>
-        <h1 className="text-3xl font-bold">Add Team Members</h1>
-        <p className="text-muted-foreground mt-1">
-          Select registered members and add them to the team/delegation
-        </p>
-      </div>
+      {/* Team picker — compact */}
+      <section className="rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground">Select team</p>
+            <p className="text-xs text-muted-foreground">Choose which roster to update</p>
+          </div>
 
-      {/* Team Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Select Team</CardTitle>
-          <CardDescription>Choose which team to add members to</CardDescription>
-        </CardHeader>
-        <CardContent>
           {isLoadingTeams ? (
-            <div className="flex justify-center p-6">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <div className="flex h-10 items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              Loading teams…
             </div>
           ) : teams.length === 0 ? (
-            <div className="text-center py-6">
-              <Users className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
-              <p className="text-muted-foreground mb-3">No teams created yet</p>
-              <Button onClick={() => navigate('/manager/teams')}>Create a Team First</Button>
-            </div>
+            <Button size="sm" className="h-9 shadow-sm" onClick={() => navigate('/manager/teams')}>
+              Create a team first
+            </Button>
           ) : (
             <Select value={selectedTeamId} onValueChange={setSelectedTeamId}>
-              <SelectTrigger className="max-w-md">
-                <SelectValue placeholder="Select a team" />
+              <SelectTrigger className={cn(selectTriggerClass, 'w-full sm:max-w-md')}>
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <Users className="h-3.5 w-3.5" />
+                  </span>
+                  <SelectValue placeholder="Choose a team…" />
+                </div>
               </SelectTrigger>
-              <SelectContent>
-                {teams.map(team => (
+              <SelectContent position="popper" className="max-h-64">
+                {teams.map((team) => (
                   <SelectItem key={team.id} value={team.id}>
-                    {team.name} (
-                    {typeof team.sportCategory === 'string'
-                      ? team.sportCategory
-                      : (team.sportCategory as any)?.name}
-                    )
+                    <span className="flex items-center gap-2">
+                      <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span>
+                        {team.name}
+                        {sportLabel(team) ? (
+                          <span className="text-muted-foreground"> · {sportLabel(team)}</span>
+                        ) : null}
+                      </span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           )}
-        </CardContent>
-      </Card>
-{/*
+        </div>
+      </section>
+
       {selectedTeamId && (
-        <Card className="border-dashed">
-          <CardContent className="py-4">
-            <p className="font-medium">
-              {isLoadingParticipants
-                ? 'Loading registered members…'
-                : `${allParticipants.length} registered member(s) ready to add`}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Only members registered on the Register page for this team/event appear here.
-            </p>
-          </CardContent>
-        </Card>
-      )}
-*/}
-      {selectedTeamId && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">Current Team Members</CardTitle>
-            <CardDescription>
-              Members already on {selectedTeam?.name}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoadingCurrentMembers ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            ) : currentMembers.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
-                <p>No members on this team yet.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {currentMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between gap-3 p-3 border rounded-lg"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <Avatar className="h-10 w-10">
-                        <AvatarFallback>
-                          {(member.firstName[0] || '?').toUpperCase()}
-                          {(member.lastName[0] || '').toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="font-medium truncate">
-                          {member.firstName} {member.lastName}
-                        </p>
-                        <p className="text-sm text-muted-foreground truncate">{member.email}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Badge variant="outline">{member.role}</Badge>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => navigate(`/manager/register-member?membershipId=${member.membershipId}&teamId=${selectedTeamId}`)}
-                      >
-                        Complete Registration
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:text-destructive"
-                        title="Remove from team"
-                        onClick={() => setMemberToRemove(member)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+        <section className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-0.5">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary/60" />
+              <h2 className="text-sm font-semibold text-foreground">
+                Current members
+                <span className="ml-1.5 font-normal text-muted-foreground">({currentMembers.length})</span>
+              </h2>
+            </div>
+            {currentMembers.length > 0 && (
+              <div
+                className="inline-flex items-center rounded-lg border border-border bg-card p-0.5 shadow-sm"
+                role="group"
+                aria-label="Display mode"
+              >
+                <button
+                  type="button"
+                  onClick={() => setViewModeAndPersist('cards')}
+                  className={cn(
+                    'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                    viewMode === 'cards'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  aria-pressed={viewMode === 'cards'}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  Cards
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewModeAndPersist('table')}
+                  className={cn(
+                    'inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors',
+                    viewMode === 'table'
+                      ? 'bg-primary text-primary-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  aria-pressed={viewMode === 'table'}
+                >
+                  <List className="h-3.5 w-3.5" />
+                  Table
+                </button>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+
+          {isLoadingCurrentMembers ? (
+            <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-14">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Loading members…</p>
+            </div>
+          ) : currentMembers.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-10 text-center">
+              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-muted">
+                <Users className="h-5 w-5 text-muted-foreground/50" />
+              </div>
+              <p className="text-sm font-medium text-foreground">No members on this team yet</p>
+              <p className="mt-1 text-xs text-muted-foreground">Add people below to build the roster.</p>
+            </div>
+          ) : viewMode === 'table' ? (
+            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border/70 hover:bg-transparent">
+                      <TableHead className="h-11 bg-muted/55 text-[11px] font-semibold uppercase tracking-[0.06em]">
+                        Member
+                      </TableHead>
+                      <TableHead className="h-11 w-[180px] bg-muted/55 text-[11px] font-semibold uppercase tracking-[0.06em]">
+                        Role
+                      </TableHead>
+                      <TableHead className="h-11 w-[220px] bg-muted/55 text-end text-[11px] font-semibold uppercase tracking-[0.06em]">
+                        Actions
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {currentMembers.map((member) => (
+                      <TableRow key={member.id} className="border-border/65 hover:bg-primary/[0.025]">
+                        <TableCell className="py-3">
+                          <div className="flex items-center gap-3">
+                            <Avatar className="h-9 w-9 border border-primary/10 shadow-sm">
+                              <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
+                                {(member.firstName[0] || '?').toUpperCase()}
+                                {(member.lastName[0] || '').toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold text-foreground">
+                                {member.firstName} {member.lastName}
+                              </p>
+                              <p className="truncate text-xs text-muted-foreground">{member.email}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell className="py-3">
+                          <span className="inline-flex items-center rounded-full border border-primary/10 bg-primary/[0.07] px-2.5 py-1 text-xs font-semibold text-primary">
+                            {member.role}
+                          </span>
+                        </TableCell>
+                        <TableCell className="py-3">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 border-border/80 bg-background shadow-sm"
+                              onClick={() =>
+                                navigate(
+                                  `/manager/register-member?membershipId=${member.membershipId}&teamId=${selectedTeamId}`,
+                                )
+                              }
+                            >
+                              Complete registration
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              title="Remove from team"
+                              onClick={() => setMemberToRemove(member)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              {currentMembers.map((member) => (
+                <article
+                  key={member.id}
+                  className="flex items-center gap-3 rounded-2xl border border-border/80 bg-card p-3.5 shadow-sm transition-shadow hover:shadow-md"
+                >
+                  <Avatar className="h-10 w-10 shrink-0 border border-primary/10 shadow-sm">
+                    <AvatarFallback className="bg-primary/10 text-sm font-semibold text-primary">
+                      {(member.firstName[0] || '?').toUpperCase()}
+                      {(member.lastName[0] || '').toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-foreground">
+                      {member.firstName} {member.lastName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">{member.email}</p>
+                    <span className="mt-1.5 inline-flex items-center rounded-full border border-primary/10 bg-primary/[0.07] px-2 py-0.5 text-[11px] font-semibold text-primary">
+                      {member.role}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-border/80 bg-background px-2.5 text-xs shadow-sm"
+                      onClick={() =>
+                        navigate(
+                          `/manager/register-member?membershipId=${member.membershipId}&teamId=${selectedTeamId}`,
+                        )
+                      }
+                    >
+                      Register
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 self-end text-muted-foreground hover:text-destructive"
+                      title="Remove from team"
+                      onClick={() => setMemberToRemove(member)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
-      {/* Add Members Form */}
+      {/* Add Members Form — compact rows */}
       {selectedTeamId && (
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center">
-              <div>
-                <CardTitle className="text-lg">Add Members</CardTitle>
-                <CardDescription>
-                  Adding to:{' '}
-                  <span className="font-medium text-foreground">{selectedTeam?.name}</span>
-                  {isLoadingParticipants && (
-                    <span className="ml-2 inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" /> Loading participants…
-                    </span>
-                  )}
-                </CardDescription>
-              </div>
-              <Button variant="outline" size="sm" onClick={addRow}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Another
-              </Button>
+        <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-gradient-to-br from-primary/[0.04] via-transparent to-transparent px-4 py-3.5 sm:px-5">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-foreground">Add members</p>
+              <p className="text-xs text-muted-foreground">
+                Adding to{' '}
+                <span className="font-medium text-foreground">{selectedTeam?.name}</span>
+                {isLoadingParticipants && (
+                  <span className="ms-2 inline-flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Loading…
+                  </span>
+                )}
+              </p>
             </div>
-          </CardHeader>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 border-border/80 bg-background shadow-sm" onClick={addRow}>
+              <Plus className="h-3.5 w-3.5" />
+              Add another
+            </Button>
+          </div>
 
-          <CardContent className="space-y-4">
+          <div className="space-y-3 p-4 sm:p-5">
             {rows.map((row, index) => (
               <div
                 key={index}
-                className="border rounded-xl p-5 space-y-5 bg-muted/20"
+                className="rounded-xl border border-border/70 bg-muted/15 p-3.5 sm:p-4"
               >
-                {/* Row header */}
-                <div className="flex justify-between items-center">
-                  <h4 className="font-semibold flex items-center gap-2 text-sm">
-                    <UserPlus className="h-4 w-4 text-primary" />
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <p className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    <UserPlus className="h-3.5 w-3.5 text-primary" />
                     Member {index + 1}
-                    {row.participant && (
-                      <Badge className="text-xs">{participantName(row.participant)}</Badge>
-                    )}
-                  </h4>
+                  </p>
                   {rows.length > 1 && (
-                    <Button variant="ghost" size="sm" onClick={() => removeRow(index)}>
-                      <Trash2 className="h-4 w-4 text-destructive" />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeRow(index)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   )}
                 </div>
 
-                {/* ── Participant Search ── */}
-                <div className="space-y-2">
-                  <Label className="font-medium">
-                    Participant <span className="text-destructive">*</span>
-                  </Label>
+                <div className="grid gap-3 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,0.8fr)]">
+                  {/* Participant */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[12px] font-semibold">
+                      Participant <span className="text-destructive">*</span>
+                    </Label>
 
-                  {row.participant ? (
-                    /* Selected state */
-                    <div className="flex items-center gap-3 p-3 rounded-lg border bg-primary/5 border-primary/20">
-                      <Avatar className="h-9 w-9">
-                        <AvatarFallback className="text-xs font-semibold bg-primary/10 text-primary">
-                          {participantInitials(row.participant)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium text-sm">{participantName(row.participant)}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {row.participant.email || ''}
-                          {row.participant.passportNumber
-                            ? ` • ${row.participant.passportNumber}`
-                            : ''}
-                          {row.participant.nationality
-                            ? ` • ${row.participant.nationality}`
-                            : ''}
-                        </p>
+                    {row.participant ? (
+                      <div className="flex h-10 items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/[0.04] px-2.5 shadow-sm">
+                        <Avatar className="h-7 w-7 shrink-0">
+                          <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">
+                            {participantInitials(row.participant)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium leading-tight">
+                            {participantName(row.participant)}
+                          </p>
+                        </div>
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-status-success" />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 shrink-0"
+                          onClick={() => clearParticipant(index)}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
-                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-7 w-7 shrink-0"
-                        onClick={() => clearParticipant(index)}
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  ) : (
-                    /* Search state */
-                    <div className="relative">
+                    ) : (
                       <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                        <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
                         <Input
-                          ref={el => { searchRefs.current[index] = el; }}
-                          className="pl-9"
-                          placeholder="Search registered member by name, email or passport…"
+                          ref={(el) => {
+                            searchRefs.current[index] = el;
+                          }}
+                          className="h-10 rounded-xl border-border/80 bg-card pl-9 shadow-sm"
+                          placeholder="Search by name, email or passport…"
                           value={row.search}
-                          onChange={e => {
+                          onChange={(e) => {
                             updateRow(index, 'search', e.target.value);
                             updateRow(index, 'dropdownOpen', true);
                           }}
@@ -761,65 +1042,69 @@ const AddMembersPage: React.FC = () => {
                             setTimeout(() => updateRow(index, 'dropdownOpen', false), 150)
                           }
                         />
+
+                        {row.dropdownOpen && (
+                          <div className="absolute z-50 mt-1.5 w-full max-h-64 overflow-y-auto rounded-xl border border-border/80 bg-popover shadow-xl">
+                            {isLoadingParticipants ? (
+                              <div className="flex items-center justify-center py-5">
+                                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                              </div>
+                            ) : (
+                              <>
+                                {filteredParticipants(row, index).length === 0 ? (
+                                  <div className="py-5 text-center text-sm text-muted-foreground">
+                                    No matching members found.
+                                  </div>
+                                ) : (
+                                  filteredParticipants(row, index).map((p) => (
+                                    <button
+                                      key={p.id}
+                                      type="button"
+                                      className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-accent"
+                                      onMouseDown={() => selectParticipant(index, p)}
+                                    >
+                                      <Avatar className="h-8 w-8 shrink-0">
+                                        <AvatarFallback className="bg-primary/10 text-xs font-semibold text-primary">
+                                          {participantInitials(p)}
+                                        </AvatarFallback>
+                                      </Avatar>
+                                      <div className="min-w-0">
+                                        <p className="truncate text-sm font-medium">{participantName(p)}</p>
+                                        <p className="truncate text-xs text-muted-foreground">
+                                          {p.email || ''}
+                                          {p.passportNumber ? ` · ${p.passportNumber}` : ''}
+                                        </p>
+                                      </div>
+                                    </button>
+                                  ))
+                                )}
+                                <button
+                                  type="button"
+                                  className="flex w-full items-center gap-2 border-t border-border/70 px-3.5 py-2.5 text-left text-sm font-medium text-primary transition-colors hover:bg-accent"
+                                  onMouseDown={() => openCreateParticipant(index)}
+                                >
+                                  <UserPlus2 className="h-4 w-4 shrink-0" />
+                                  Create new participant
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
+                    )}
+                  </div>
 
-                      {row.dropdownOpen && (
-                        <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border bg-popover shadow-xl">
-                          {isLoadingParticipants ? (
-                            <div className="flex items-center justify-center py-6">
-                              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                            </div>
-                          ) : filteredParticipants(row, index).length === 0 ? (
-                            <div className="py-6 text-center text-sm text-muted-foreground">
-                              No registered members available. Register them first on the Register page.
-                            </div>
-                          ) : (
-                            filteredParticipants(row, index).map(p => (
-                              <button
-                                key={p.id}
-                                type="button"
-                                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent text-left transition-colors"
-                                onMouseDown={() => selectParticipant(index, p)}
-                              >
-                                <Avatar className="h-8 w-8 shrink-0">
-                                  <AvatarFallback className="text-xs">
-                                    {participantInitials(p)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div className="min-w-0">
-                                  <p className="text-sm font-medium truncate">
-                                    {participantName(p)}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground truncate">
-                                    {p.email || ''}
-                                    {p.passportNumber ? ` • ${p.passportNumber}` : ''}
-                                    {p.nationality ? ` • ${p.nationality}` : ''}
-                                  </p>
-                                </div>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* ── Role + Origin City ── */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label className="font-medium">
+                  {/* Role */}
+                  <div className="space-y-1.5">
+                    <Label className="text-[12px] font-semibold">
                       Role <span className="text-destructive">*</span>
                     </Label>
-                    <Select
-                      value={row.role}
-                      onValueChange={v => updateRow(index, 'role', v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select role" />
+                    <Select value={row.role} onValueChange={(v) => updateRow(index, 'role', v)}>
+                      <SelectTrigger className={selectTriggerClass}>
+                        <SelectValue placeholder="Select role…" />
                       </SelectTrigger>
-                      <SelectContent>
-                        {TEAM_ROLES.map(role => (
+                      <SelectContent position="popper" className="max-h-56">
+                        {TEAM_ROLES.map((role) => (
                           <SelectItem key={role} value={role}>
                             {role}
                           </SelectItem>
@@ -827,81 +1112,22 @@ const AddMembersPage: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
-
-                  <div className="space-y-2">
-                    <Label className="font-medium">Origin City</Label>
-                    <Input
-                      value={row.originCity}
-                      onChange={e => updateRow(index, 'originCity', e.target.value)}
-                      placeholder="e.g. Islamabad"
-                    />
-                  </div>
-                </div>
-
-                {/* ── Toggles ── */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {(
-                    [
-                      { key: 'needsVisa', label: 'Needs Visa' },
-                      { key: 'needsAccommodation', label: 'Needs Accommodation' },
-                      { key: 'needsTransport', label: 'Needs Transport' },
-                    ] as const
-                  ).map(({ key, label }) => (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between rounded-lg border p-3 gap-3"
-                    >
-                      <Label htmlFor={`${key}-${index}`} className="text-sm cursor-pointer">
-                        {label}
-                      </Label>
-                      <Switch
-                        id={`${key}-${index}`}
-                        checked={row[key]}
-                        onCheckedChange={v => updateRow(index, key, v)}
-                      />
-                    </div>
-                  ))}
-                </div>
-
-                {/* ── Dietary + Medical ── */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Dietary Requirements</Label>
-                    <Input
-                      value={row.dietaryRequirements}
-                      onChange={e => updateRow(index, 'dietaryRequirements', e.target.value)}
-                      placeholder="e.g. Halal Protein extensive"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Medical Conditions</Label>
-                    <Input
-                      value={row.medicalConditions}
-                      onChange={e => updateRow(index, 'medicalConditions', e.target.value)}
-                      placeholder="e.g. None"
-                    />
-                  </div>
                 </div>
               </div>
             ))}
 
-            {/* Actions */}
-            <div className="flex justify-end gap-3 pt-4 border-t">
-              <Button variant="outline" onClick={addRow}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add More Members
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border/70 pt-4">
+              <Button variant="outline" className="h-9 gap-1.5 border-border/80 bg-background shadow-sm" onClick={addRow}>
+                <Plus className="h-4 w-4" />
+                Add more
               </Button>
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Save className="h-4 w-4 mr-2" />
-                )}
-                {isSaving ? 'Saving…' : 'Save All Members'}
+              <Button className="h-9 gap-1.5 shadow-sm" onClick={handleSave} disabled={isSaving}>
+                {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {isSaving ? 'Saving…' : 'Save all members'}
               </Button>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       )}
 
       <AlertDialog open={!!memberToRemove} onOpenChange={(open) => !open && !isRemovingMember && setMemberToRemove(null)}>
@@ -936,6 +1162,135 @@ const AddMembersPage: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={creatingParticipantForIndex !== null}
+        onOpenChange={(open) => !open && !isCreatingParticipant && setCreatingParticipantForIndex(null)}
+      >
+        <DialogContent className="flex max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg flex-col gap-0 overflow-hidden rounded-2xl border p-0 shadow-2xl">
+          <DialogHeader className="shrink-0 space-y-0 border-b bg-gradient-to-br from-primary/[0.07] via-card to-card px-5 py-4 pe-12 text-start">
+            <DialogTitle className="text-lg font-semibold tracking-tight">Create new participant</DialogTitle>
+            <DialogDescription className="text-sm">
+              Save them to your directory now. They&apos;ll be added straight to this roster slot.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="min-h-0 flex-1 space-y-3.5 overflow-y-auto px-5 py-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">First name *</Label>
+                <Input
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.firstName}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                  placeholder="e.g. Ahmed"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Last name *</Label>
+                <Input
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.lastName}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                  placeholder="e.g. Khan"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Email *</Label>
+                <Input
+                  type="email"
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.email}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="member@example.com"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Phone</Label>
+                <Input
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.phone}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+92 300 1234567"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Gender</Label>
+                <Select
+                  value={newParticipantForm.gender}
+                  onValueChange={(v) => setNewParticipantForm((prev) => ({ ...prev, gender: v }))}
+                >
+                  <SelectTrigger className={selectTriggerClass}>
+                    <SelectValue placeholder="Select gender" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="male">Male</SelectItem>
+                    <SelectItem value="female">Female</SelectItem>
+                    <SelectItem value="other">Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Nationality</Label>
+                <CountryCombobox
+                  value={newParticipantForm.nationality}
+                  onChange={(v) => setNewParticipantForm((prev) => ({ ...prev, nationality: v }))}
+                  placeholder="Select country"
+                  className="h-10"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Organization</Label>
+                <Input
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.organization}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, organization: e.target.value }))}
+                  placeholder="e.g. National Federation"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Job title</Label>
+                <Input
+                  className="h-10 rounded-xl bg-background shadow-sm"
+                  value={newParticipantForm.jobTitle}
+                  onChange={(e) => setNewParticipantForm((prev) => ({ ...prev, jobTitle: e.target.value }))}
+                  placeholder="e.g. Head Coach"
+                />
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-5 py-3.5">
+            <Button
+              variant="outline"
+              className="h-9"
+              onClick={() => setCreatingParticipantForIndex(null)}
+              disabled={isCreatingParticipant}
+            >
+              Cancel
+            </Button>
+            <Button className="h-9 gap-1.5 shadow-sm" onClick={handleCreateParticipant} disabled={isCreatingParticipant}>
+              {isCreatingParticipant ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Saving…
+                </>
+              ) : (
+                'Save & add to team'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

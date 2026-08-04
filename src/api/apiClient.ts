@@ -8,21 +8,83 @@ const apiClient = axios.create({
   },
 });
 
+interface PortalContext {
+  tokenKey: string;
+  refreshTokenKey: string;
+  sessionKeys: string[];
+  loginPath: string;
+}
+
+const getPortalContext = (path: string): PortalContext | null => {
+  if (path.startsWith('/manager')) {
+    return {
+      tokenKey: 'ems_manager_token',
+      refreshTokenKey: 'ems_manager_refresh_token',
+      sessionKeys: ['ems_manager_session'],
+      loginPath: '/login/manager',
+    };
+  }
+  if (path.startsWith('/portal') || path.startsWith('/participant') || path.startsWith('/register')) {
+    return {
+      tokenKey: 'ems_participant_token',
+      refreshTokenKey: 'ems_participant_refresh_token',
+      sessionKeys: ['ems_participant_session'],
+      loginPath: '/login/participant',
+    };
+  }
+  if (path.startsWith('/subadmin')) {
+    return {
+      tokenKey: 'ems_token',
+      refreshTokenKey: 'ems_refresh_token',
+      sessionKeys: ['ems_user'],
+      loginPath: '/login/staff',
+    };
+  }
+  if (path.startsWith('/admin') || path.startsWith('/login/admin')) {
+    return {
+      tokenKey: 'ems_token',
+      refreshTokenKey: 'ems_refresh_token',
+      sessionKeys: ['ems_user'],
+      loginPath: '/login/admin',
+    };
+  }
+  return null;
+};
+
+const clearAllAuthStorage = () => {
+  localStorage.removeItem('ems_token');
+  localStorage.removeItem('ems_user');
+  localStorage.removeItem('ems_refresh_token');
+  localStorage.removeItem('ems_manager_token');
+  localStorage.removeItem('ems_manager_session');
+  localStorage.removeItem('ems_manager_refresh_token');
+  localStorage.removeItem('ems_participant_token');
+  localStorage.removeItem('ems_participant_session');
+  localStorage.removeItem('ems_participant_refresh_token');
+};
+
+const clearAndRedirect = (context: PortalContext | null, path: string) => {
+  if (context) {
+    localStorage.removeItem(context.tokenKey);
+    localStorage.removeItem(context.refreshTokenKey);
+    context.sessionKeys.forEach((key) => localStorage.removeItem(key));
+    if (!path.startsWith('/login')) {
+      window.location.href = context.loginPath;
+    }
+  } else {
+    clearAllAuthStorage();
+    if (!path.startsWith('/login')) {
+      window.location.href = '/';
+    }
+  }
+};
+
 // Request interceptor: attach Bearer token based on the portal context
 apiClient.interceptors.request.use((config) => {
   const path = window.location.pathname;
-  const isManager = path.startsWith('/manager');
-  const isParticipant = path.startsWith('/portal') || path.startsWith('/participant') || path.startsWith('/register');
-  const isSubadmin = path.startsWith('/subadmin');
+  const context = getPortalContext(path);
 
-  let token = null;
-  if (isManager) {
-    token = localStorage.getItem('ems_manager_token');
-  } else if (isParticipant) {
-    token = localStorage.getItem('ems_participant_token');
-  } else if (isSubadmin) {
-    token = localStorage.getItem('ems_token');
-  }
+  let token = context ? localStorage.getItem(context.tokenKey) : null;
 
   // Fallback to any available token if the specific one is missing
   if (!token) {
@@ -37,54 +99,64 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// Silent token refresh: a single in-flight refresh call is shared by every
+// request that hits a 401 at the same time, so concurrent requests don't
+// each fire their own /auth/refresh call.
+let refreshPromise: Promise<string> | null = null;
+
+const refreshAccessToken = (context: PortalContext): Promise<string> => {
+  if (!refreshPromise) {
+    const refreshToken = localStorage.getItem(context.refreshTokenKey);
+    if (!refreshToken) {
+      refreshPromise = Promise.reject(new Error('No refresh token available'));
+    } else {
+      refreshPromise = axios
+        .post(`${import.meta.env.VITE_API_BASE_URL}/auth/refresh`, { refreshToken })
+        .then(({ data }) => {
+          localStorage.setItem(context.tokenKey, data.token);
+          localStorage.setItem(context.refreshTokenKey, data.refreshToken);
+          return data.token as string;
+        });
+    }
+    refreshPromise.finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+};
+
 // Response interceptor: handle 401 globally
 apiClient.interceptors.response.use(
   (response) => response,
-  (error) => {
-    if (error.response?.status === 401) {
-      const path = window.location.pathname;
-      const isManager = path.startsWith('/manager');
-      const isParticipant = path.startsWith('/portal') || path.startsWith('/participant') || path.startsWith('/register');
-      const isSubadmin = path.startsWith('/subadmin');
-      const isAdmin = path.startsWith('/admin') || path.startsWith('/login/admin');
+  async (error) => {
+    const originalRequest = error.config;
+    const path = window.location.pathname;
+    const context = getPortalContext(path);
 
-      if (isManager) {
-        localStorage.removeItem('ems_manager_token');
-        localStorage.removeItem('ems_manager_session');
-        if (!path.startsWith('/login')) {
-          window.location.href = '/login/manager';
-        }
-      } else if (isParticipant) {
-        localStorage.removeItem('ems_participant_token');
-        localStorage.removeItem('ems_participant_session');
-        if (!path.startsWith('/login')) {
-          window.location.href = '/login/participant';
-        }
-      } else if (isSubadmin) {
-        localStorage.removeItem('ems_token');
-        localStorage.removeItem('ems_user');
-        if (!path.startsWith('/login')) {
-          window.location.href = '/login/staff';
-        }
-      } else if (isAdmin) {
-        localStorage.removeItem('ems_token');
-        localStorage.removeItem('ems_user');
-        if (!path.startsWith('/login')) {
-          window.location.href = '/login/admin';
-        }
-      } else {
-        localStorage.removeItem('ems_token');
-        localStorage.removeItem('ems_user');
-        localStorage.removeItem('ems_manager_token');
-        localStorage.removeItem('ems_manager_session');
-        localStorage.removeItem('ems_participant_token');
-        localStorage.removeItem('ems_participant_session');
+    if (error.response?.status === 401 && context && !path.startsWith('/login') && !originalRequest?._retriedAfterRefresh) {
+      const hasRefreshToken = !!localStorage.getItem(context.refreshTokenKey);
 
-        if (!path.startsWith('/login')) {
-          window.location.href = '/';
+      if (hasRefreshToken) {
+        try {
+          const newToken = await refreshAccessToken(context);
+          originalRequest._retriedAfterRefresh = true;
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers.Authorization = `Bearer ${newToken}`;
+          return apiClient(originalRequest);
+        } catch {
+          clearAndRedirect(context, path);
+          return Promise.reject(error);
         }
       }
+
+      clearAndRedirect(context, path);
+      return Promise.reject(error);
     }
+
+    if (error.response?.status === 401) {
+      clearAndRedirect(context, path);
+    }
+
     return Promise.reject(error);
   }
 );

@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -992,36 +993,13 @@ const RegisterPage: React.FC = () => {
             <div className="grid sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="nationality">Nationality *</Label>
-                <Select value={formData.nationality} onValueChange={(v) => updateField('nationality', v)}>
-                  <SelectTrigger className={cn(touched.nationality && errors.nationality && "border-red-500")}>
-                    <SelectValue placeholder="Select country" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="UAE">United Arab Emirates</SelectItem>
-                    <SelectItem value="Saudi Arabia">Saudi Arabia</SelectItem>
-                    <SelectItem value="Qatar">Qatar</SelectItem>
-                    <SelectItem value="Kuwait">Kuwait</SelectItem>
-                    <SelectItem value="Bahrain">Bahrain</SelectItem>
-                    <SelectItem value="Oman">Oman</SelectItem>
-                    <SelectItem value="Jordan">Jordan</SelectItem>
-                    <SelectItem value="Egypt">Egypt</SelectItem>
-                    <SelectItem value="Lebanon">Lebanon</SelectItem>
-                    <SelectItem value="Iraq">Iraq</SelectItem>
-                    <SelectItem value="Morocco">Morocco</SelectItem>
-                    <SelectItem value="Tunisia">Tunisia</SelectItem>
-                    <SelectItem value="Pakistan">Pakistan</SelectItem>
-                    <SelectItem value="USA">United States</SelectItem>
-                    <SelectItem value="UK">United Kingdom</SelectItem>
-                    <SelectItem value="India">India</SelectItem>
-                    <SelectItem value="Germany">Germany</SelectItem>
-                    <SelectItem value="France">France</SelectItem>
-                    <SelectItem value="Japan">Japan</SelectItem>
-                    <SelectItem value="China">China</SelectItem>
-                    <SelectItem value="South Korea">South Korea</SelectItem>
-                    <SelectItem value="Singapore">Singapore</SelectItem>
-                    <SelectItem value="Malaysia">Malaysia</SelectItem>
-                  </SelectContent>
-                </Select>
+                <CountryCombobox
+                  id="nationality"
+                  value={formData.nationality}
+                  onChange={(v) => updateField('nationality', v)}
+                  placeholder="Select country"
+                  error={touched.nationality && !!errors.nationality}
+                />
                 {touched.nationality && errors.nationality && (
                   <p className="text-sm text-red-500">{errors.nationality}</p>
                 )}

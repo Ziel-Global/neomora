@@ -415,9 +415,16 @@ export const getInvitationByToken = async (token: string): Promise<Invitation> =
     return data;
 };
 
-// Respond to an invitation (no auth needed usually, uses token)
-export const respondToInvitation = async (token: string, response: 'Accepted' | 'Declined' | 'Maybe'): Promise<Invitation> => {
-    const { data } = await apiClient.post(`/invitations/token/${token}/respond`, { response });
+// Respond to an invitation (no auth needed, uses token)
+export const respondToInvitation = async (
+    token: string,
+    response: 'Accepted' | 'Declined' | 'Maybe',
+    notes?: string,
+): Promise<Invitation> => {
+    const { data } = await apiClient.post(`/invitations/token/${token}/respond`, {
+        response,
+        ...(notes?.trim() ? { notes: notes.trim() } : {}),
+    });
     return data;
 };
 

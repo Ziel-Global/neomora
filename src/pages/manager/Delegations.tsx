@@ -9,11 +9,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
-import { Team, Delegation, TeamMember } from '@/lib/teamStore';
+import { Team, Delegation, TeamMember, SPORT_CATEGORIES } from '@/lib/teamStore';
 import { eventStore, participantStore, registrationStore, travelStore } from '@/lib/emsStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Flag, Users, Send, CheckCircle, Clock, AlertCircle, Plus, Minus, Plane, Trash2, ClipboardList, AlertTriangle, Loader2, Calendar, UserCog, HeartPulse, Building2, MoreHorizontal, Sparkles, CheckCircle2, ArrowRight, LayoutGrid, List } from 'lucide-react';
+import { Flag, Users, Send, Clock, AlertCircle, Plus, Minus, Plane, Trash2, ClipboardList, AlertTriangle, Loader2, Calendar, UserCog, HeartPulse, Building2, MoreHorizontal, Sparkles, CheckCircle2, ArrowRight, LayoutGrid, List } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -35,6 +35,86 @@ const readStoredViewMode = (): ViewMode => {
   } catch {
     return 'cards';
   }
+};
+
+type DelegationStatusTone = {
+  icon: React.ElementType;
+  chip: string;
+  dot: string;
+  bar: string;
+};
+
+const getDelegationStatusTone = (status: string, fullyApproved?: boolean): DelegationStatusTone => {
+  if (fullyApproved || status === 'Approved') {
+    return {
+      icon: CheckCircle2,
+      chip: 'border-status-success/25 bg-status-success-bg text-status-success',
+      dot: 'bg-status-success',
+      bar: 'bg-status-success',
+    };
+  }
+  switch (status) {
+    case 'Submitted':
+    case 'Roster Submitted':
+      return {
+        icon: Clock,
+        chip: 'border-status-info/25 bg-status-info-bg text-status-info',
+        dot: 'bg-status-info',
+        bar: 'bg-primary',
+      };
+    case 'Rejected':
+      return {
+        icon: AlertCircle,
+        chip: 'border-status-error/25 bg-status-error-bg text-status-error',
+        dot: 'bg-status-error',
+        bar: 'bg-status-error',
+      };
+    case 'Update Requested':
+      return {
+        icon: AlertTriangle,
+        chip: 'border-amber-500/25 bg-amber-50 text-amber-800',
+        dot: 'bg-amber-500',
+        bar: 'bg-amber-500',
+      };
+    default:
+      return {
+        icon: Clock,
+        chip: 'border-border/80 bg-muted/60 text-muted-foreground',
+        dot: 'bg-muted-foreground/50',
+        bar: 'bg-amber-500',
+      };
+  }
+};
+
+const DelegationStatusChip = ({
+  status,
+  fullyApproved,
+  compact,
+}: {
+  status: string;
+  fullyApproved?: boolean;
+  compact?: boolean;
+}) => {
+  const tone = getDelegationStatusTone(status, fullyApproved);
+  const Icon = tone.icon;
+  const label = fullyApproved
+    ? 'Approved'
+    : status === 'Roster Submitted'
+      ? 'Roster sent'
+      : status;
+
+  return (
+    <span
+      className={cn(
+        'inline-flex max-w-full items-center gap-1.5 rounded-full border font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]',
+        compact ? 'px-2 py-0.5 text-[11px]' : 'px-2.5 py-1 text-xs',
+        tone.chip,
+      )}
+    >
+      <Icon className={cn('shrink-0', compact ? 'h-3 w-3' : 'h-3.5 w-3.5')} />
+      <span className="truncate">{label}</span>
+    </span>
+  );
 };
 
 const CATEGORY_GROUP_META: Record<string, { icon: React.ElementType; hint: string }> = {
@@ -152,6 +232,97 @@ const CategoryGroupSection = ({
   );
 };
 
+interface HeadcountTeamDraft {
+  name: string;
+  counts: Record<string, number>;
+}
+
+const TeamPlanEditor = ({
+  teams,
+  onChange,
+  disabled,
+}: {
+  teams: HeadcountTeamDraft[];
+  onChange: (next: HeadcountTeamDraft[]) => void;
+  disabled?: boolean;
+}) => {
+  const addTeam = () => onChange([...teams, { name: '', counts: {} }]);
+  const removeTeam = (index: number) => onChange(teams.filter((_, i) => i !== index));
+  const renameTeam = (index: number, name: string) =>
+    onChange(teams.map((t, i) => (i === index ? { ...t, name } : t)));
+  const updateCount = (index: number, label: string, value: number) =>
+    onChange(teams.map((t, i) => (i === index ? { ...t, counts: { ...t.counts, [label]: value } } : t)));
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between px-0.5">
+        <Label className="text-[12px] font-semibold">
+          Number of teams: <span className="tabular-nums">{teams.length}</span>
+        </Label>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-8 gap-1.5"
+          onClick={addTeam}
+          disabled={disabled}
+        >
+          <Plus className="h-3.5 w-3.5" />
+          Add team
+        </Button>
+      </div>
+
+      <div className="space-y-4">
+        {teams.map((team, index) => {
+          const teamTotal = Object.values(team.counts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+          return (
+            <section key={index} className="space-y-3 rounded-2xl border border-border/70 bg-card p-4 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Input
+                  value={team.name}
+                  onChange={(e) => renameTeam(index, e.target.value)}
+                  placeholder={`Team ${index + 1}`}
+                  disabled={disabled}
+                  className="h-9 flex-1"
+                />
+                <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
+                  <Users className="h-3 w-3" />
+                  <span className="tabular-nums">{teamTotal}</span>
+                </span>
+                {teams.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                    onClick={() => removeTeam(index)}
+                    disabled={disabled}
+                    aria-label={`Remove team ${index + 1}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
+              <div className="space-y-2">
+                {Object.entries(groupedDelegationCategories()).map(([group, categories]) => (
+                  <CategoryGroupSection
+                    key={group}
+                    group={group}
+                    categories={categories}
+                    counts={team.counts}
+                    disabled={disabled}
+                    onChange={(label, value) => updateCount(index, label, value)}
+                  />
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 const AIRPORTS = [
   { code: 'RUH', name: 'Riyadh (King Khalid)' },
   { code: 'JED', name: 'Jeddah (King Abdulaziz)' },
@@ -218,10 +389,13 @@ const DelegationsPage: React.FC = () => {
   const [bulkProgress, setBulkProgress] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
 
-  // Headcount declaration state
+  // Headcount declaration state — one entry per declared team-slot, each
+  // with its own name and category breakdown.
   const [isHeadcountOpen, setIsHeadcountOpen] = useState(false);
   const [headcountDelegation, setHeadcountDelegation] = useState<Delegation | null>(null);
-  const [headcountCounts, setHeadcountCounts] = useState<Record<string, number>>({});
+  const [headcountTeams, setHeadcountTeams] = useState<{ name: string; counts: Record<string, number> }[]>([
+    { name: '', counts: {} },
+  ]);
   const [isSavingHeadcount, setIsSavingHeadcount] = useState(false);
   const [submittingRosterId, setSubmittingRosterId] = useState<string | null>(null);
 
@@ -230,6 +404,14 @@ const DelegationsPage: React.FC = () => {
   const [selectTeamDelegation, setSelectTeamDelegation] = useState<Delegation | null>(null);
   const [selectTeamIds, setSelectTeamIds] = useState<string[]>([]);
   const [isSavingTeamSelection, setIsSavingTeamSelection] = useState(false);
+
+  // "Create new team for a declared slot" mini-flow, inside the Select Team dialog
+  const [creatingSlotIndex, setCreatingSlotIndex] = useState<number | null>(null);
+  const [newTeamName, setNewTeamName] = useState('');
+  const [newTeamSport, setNewTeamSport] = useState('');
+  const [isCreatingTeamForSlot, setIsCreatingTeamForSlot] = useState(false);
+  const [removingTeamId, setRemovingTeamId] = useState<string | null>(null);
+  const [assigningExistingTeamSlot, setAssigningExistingTeamSlot] = useState<number | null>(null);
   const [rosterCategoryTab, setRosterCategoryTab] = useState<string>('__all__');
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
@@ -467,29 +649,10 @@ const DelegationsPage: React.FC = () => {
     return events.find(e => e.id === eid)?.name || 'Unknown Event';
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'Approved': return <CheckCircle className="h-4 w-4 text-status-success" />;
-      case 'Submitted': return <Clock className="h-4 w-4 text-status-info" />;
-      case 'Roster Submitted': return <Clock className="h-4 w-4 text-status-info" />;
-      case 'Rejected': return <AlertCircle className="h-4 w-4 text-status-error" />;
-      case 'Update Requested': return <AlertTriangle className="h-4 w-4 text-amber-600" />;
-      default: return <Clock className="h-4 w-4 text-muted-foreground" />;
-    }
+  const getStatusIcon = (status: string, fullyApproved?: boolean) => {
+    const Icon = getDelegationStatusTone(status, fullyApproved).icon;
+    return <Icon className="h-4 w-4" />;
   };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'Approved': return 'bg-status-success-bg text-status-success';
-      case 'Submitted': return 'bg-status-info-bg text-status-info';
-      case 'Roster Submitted': return 'bg-status-info-bg text-status-info';
-      case 'Rejected': return 'bg-status-error-bg text-status-error';
-      case 'Update Requested': return 'bg-amber-100 text-amber-800';
-      default: return 'bg-muted text-muted-foreground';
-    }
-  };
-
-  const getStatusLabel = (status: string) => (status === 'Roster Submitted' ? 'Submitted' : status);
 
   const handleSelectTeam = (teamId: string) => {
     setSelectedTeamIds(prev => prev.includes(teamId) ? prev.filter(id => id !== teamId) : [...prev, teamId]);
@@ -519,6 +682,14 @@ const DelegationsPage: React.FC = () => {
     if (individualGames.includes(id)) return 'individual-games';
     return 'hybrid-games';
   };
+
+  const buildExpectedTeams = () =>
+    headcountTeams.map((team) => ({
+      name: team.name.trim() || undefined,
+      memberCounts: Object.fromEntries(
+        Object.entries(team.counts).filter(([, value]) => Number(value) > 0),
+      ),
+    }));
 
   const handleSendRegistration = async () => {
     if (!manager) return;
@@ -554,11 +725,9 @@ const DelegationsPage: React.FC = () => {
         return;
       }
 
-      const counts = Object.fromEntries(
-        Object.entries(headcountCounts).filter(([, value]) => Number(value) > 0),
-      );
-      if (Object.keys(counts).length > 0) {
-        await updateDelegation(delegationId, { expectedMemberCounts: counts });
+      const expectedTeams = buildExpectedTeams();
+      if (expectedTeams.length > 0) {
+        await updateDelegation(delegationId, { expectedTeams });
       }
 
       await submitDelegation(delegationId);
@@ -566,7 +735,7 @@ const DelegationsPage: React.FC = () => {
       toast.success('Registration sent for admin approval');
       setSelectedEventId('');
       setSelectedTeamIds([]);
-      setHeadcountCounts({});
+      setHeadcountTeams([{ name: '', counts: {} }]);
       setCreateFromInvitationEventId(null);
       setCreateFromInvitationEventName('');
       setIsCreateOpen(false);
@@ -612,6 +781,82 @@ const DelegationsPage: React.FC = () => {
       toast.error(msg);
     } finally {
       setIsSavingTeamSelection(false);
+    }
+  };
+
+  const openCreateTeamForSlot = (slotIndex: number, slotName: string) => {
+    setCreatingSlotIndex(slotIndex);
+    setNewTeamName(slotName || '');
+    setNewTeamSport('');
+  };
+
+  const handleCreateTeamForSlot = async () => {
+    if (!selectTeamDelegation || creatingSlotIndex === null) return;
+    if (!newTeamName.trim() || !newTeamSport) {
+      toast.error('Enter a team name and choose its sport');
+      return;
+    }
+    const selectedSport = SPORT_CATEGORIES.find((category) => category.name === newTeamSport);
+    if (!selectedSport) return;
+
+    setIsCreatingTeamForSlot(true);
+    try {
+      const teamBasedIds = ['football', 'basketball', 'volleyball', 'esports'];
+      const created = await createTeam({
+        delegationId: selectTeamDelegation.id,
+        name: newTeamName.trim(),
+        sportCategoryGroup: teamBasedIds.includes(selectedSport.id) ? 'team-based-games' : 'individual-games',
+        subCategory: selectedSport.name,
+        expectedTeamIndex: creatingSlotIndex,
+      });
+      toast.success('Team created — add its roster now.');
+      setCreatingSlotIndex(null);
+      setNewTeamName('');
+      setNewTeamSport('');
+      setIsSelectTeamOpen(false);
+      setSelectTeamDelegation(null);
+      await refetch();
+      if (created?.id) {
+        navigate(`/manager/add-members?teamId=${created.id}`);
+      }
+    } catch (error: any) {
+      console.error('Failed to create team for slot:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not create team';
+      toast.error(msg);
+    } finally {
+      setIsCreatingTeamForSlot(false);
+    }
+  };
+
+  const handleRemoveTeamFromSlot = async (team: Team) => {
+    setRemovingTeamId(team.id);
+    try {
+      // Detach only — the team and its roster stay intact, just unassigned,
+      // so it's reusable and the slot opens back up to pick or create again.
+      await updateTeam(team.id, { delegationId: null });
+      toast.success(`${team.name} removed from this delegation.`);
+      await refetch();
+    } catch (error: any) {
+      console.error('Failed to remove team from delegation:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not remove this team';
+      toast.error(msg);
+    } finally {
+      setRemovingTeamId(null);
+    }
+  };
+
+  const handleUseExistingTeamForSlot = async (delegationId: string, slotIndex: number, teamId: string) => {
+    setAssigningExistingTeamSlot(slotIndex);
+    try {
+      await updateTeam(teamId, { delegationId, expectedTeamIndex: slotIndex });
+      toast.success('Team assigned to this slot.');
+      await refetch();
+    } catch (error: any) {
+      console.error('Failed to assign existing team to slot:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not assign this team';
+      toast.error(msg);
+    } finally {
+      setAssigningExistingTeamSlot(null);
     }
   };
 
@@ -775,8 +1020,68 @@ const DelegationsPage: React.FC = () => {
     matches: boolean;
   }
 
+  interface TeamSlotBreakdown {
+    slotIndex: number;
+    slotName: string;
+    team?: Team;
+    categories: CategoryBreakdown[];
+  }
+
+  const getDelegationTeamObjects = (delegation: Delegation): Team[] =>
+    (delegation.teamIds || [])
+      .map((teamId) => teams.find((t: any) => t.id === teamId))
+      .filter(Boolean) as Team[];
+
+  // Per declared team-slot (not one flat delegation-wide total): each slot's
+  // "actual" only counts members on the team actually bound to that slot via
+  // Team.expectedTeamIndex, so a slot with no team yet — or a team short a
+  // member — is visible on its own, not hidden inside an aggregate total.
+  const getTeamSlotBreakdown = (delegation: Delegation): TeamSlotBreakdown[] => {
+    const expectedTeams = delegation.expectedTeams || [];
+    const delegationTeams = getDelegationTeamObjects(delegation);
+
+    return expectedTeams.map((slot, index) => {
+      const team = delegationTeams.find((t: any) => t.expectedTeamIndex === index);
+      const members = team ? (membersByTeam.get(team.id) || []) : [];
+      const actualCounts: Record<string, number> = {};
+      for (const member of members) {
+        const category = member.role || '';
+        actualCounts[category] = (actualCounts[category] || 0) + 1;
+      }
+
+      const expectedCounts = slot.memberCounts || {};
+      const categories = new Set([...Object.keys(expectedCounts), ...Object.keys(actualCounts)]);
+      const categoryBreakdown = Array.from(categories).map((category) => {
+        const expected = Number(expectedCounts[category] || 0);
+        const actual = actualCounts[category] || 0;
+        return {
+          category: category === '' ? 'Uncategorized' : category,
+          expected,
+          actual,
+          matches: expected === actual,
+        };
+      });
+
+      return {
+        slotIndex: index,
+        slotName: slot.name || `Team ${index + 1}`,
+        team,
+        categories: categoryBreakdown,
+      };
+    });
+  };
+
+  // Delegation-wide aggregate (all slots' categories summed together) — used
+  // for the roster review modal's browse-by-role view, where the manager
+  // doesn't care which physical team an athlete belongs to. Not used for
+  // gating send/approval anymore — see getTeamSlotBreakdown for that.
   const getCategoryBreakdown = (delegation: Delegation): CategoryBreakdown[] => {
-    const expectedCounts = delegation.expectedMemberCounts || {};
+    const expectedCounts: Record<string, number> = {};
+    for (const slot of delegation.expectedTeams || []) {
+      for (const [category, count] of Object.entries(slot.memberCounts || {})) {
+        expectedCounts[category] = (expectedCounts[category] || 0) + Number(count || 0);
+      }
+    }
     const actualCounts: Record<string, number> = {};
     for (const member of getDelegationRoster(delegation)) {
       const category = member.role || '';
@@ -785,7 +1090,7 @@ const DelegationsPage: React.FC = () => {
 
     const categories = new Set([...Object.keys(expectedCounts), ...Object.keys(actualCounts)]);
     return Array.from(categories).map((category) => {
-      const expected = Number(expectedCounts[category] || 0);
+      const expected = expectedCounts[category] || 0;
       const actual = actualCounts[category] || 0;
       return {
         category: category === '' ? 'Uncategorized' : category,
@@ -796,18 +1101,25 @@ const DelegationsPage: React.FC = () => {
     });
   };
 
+  // Ready to send only once every declared team-slot has a team created for
+  // it AND that team's category counts match the slot exactly — matches the
+  // backend's submitRoster validation, so "you can send" never lies.
   const isRosterReadyToSend = (delegation: Delegation): boolean => {
-    const breakdown = getCategoryBreakdown(delegation);
-    return breakdown.length > 0 && breakdown.every((entry) => entry.matches);
+    const slots = getTeamSlotBreakdown(delegation);
+    if (slots.length === 0) return false;
+    return slots.every((slot) => !!slot.team && slot.categories.every((c) => c.matches));
   };
 
   // "Approved" is reused for two different moments: admin approving the
   // declared headcount (before any roster is sent), and the delegation
   // reaching full completion after every individual member's registration
   // has been approved. Only the second one is truly done — distinguish it by
-  // checking that a roster actually exists and every member in it is Approved.
+  // requiring the roster to be complete (every slot filled and matching) AND
+  // every member in it Approved. Previously this only checked the second
+  // half, so a roster short a whole declared member could still read as done.
   const isDelegationFullyApproved = (delegation: Delegation): boolean => {
     if (delegation.status !== 'Approved') return false;
+    if (!isRosterReadyToSend(delegation)) return false;
     const roster = getDelegationRoster(delegation);
     return roster.length > 0 && roster.every((member: any) => member.status === 'Approved');
   };
@@ -873,7 +1185,12 @@ const DelegationsPage: React.FC = () => {
 
   const openHeadcountDialog = (delegation: Delegation) => {
     setHeadcountDelegation(delegation);
-    setHeadcountCounts({ ...(delegation.expectedMemberCounts || {}) });
+    const existing = delegation.expectedTeams;
+    setHeadcountTeams(
+      existing && existing.length > 0
+        ? existing.map((slot) => ({ name: slot.name || '', counts: { ...(slot.memberCounts || {}) } }))
+        : [{ name: '', counts: {} }],
+    );
     setIsHeadcountOpen(true);
   };
 
@@ -882,17 +1199,15 @@ const DelegationsPage: React.FC = () => {
 
     setIsSavingHeadcount(true);
     try {
-      const counts = Object.fromEntries(
-        Object.entries(headcountCounts).filter(([, value]) => Number(value) > 0),
-      );
-      await updateDelegation(headcountDelegation.id, { expectedMemberCounts: counts });
-      toast.success('Attendee counts saved');
+      const expectedTeams = buildExpectedTeams();
+      await updateDelegation(headcountDelegation.id, { expectedTeams });
+      toast.success('Team plan saved');
       setIsHeadcountOpen(false);
       setHeadcountDelegation(null);
       void refetch();
     } catch (error: any) {
       console.error('Failed to save headcount:', error);
-      const msg = error?.response?.data?.message || error?.message || 'Failed to save attendee counts';
+      const msg = error?.response?.data?.message || error?.message || 'Failed to save team plan';
       toast.error(msg);
     } finally {
       setIsSavingHeadcount(false);
@@ -900,7 +1215,10 @@ const DelegationsPage: React.FC = () => {
   };
 
   const getTotalHeadcount = (delegation: Delegation) =>
-    Object.values(delegation.expectedMemberCounts || {}).reduce((sum, n) => sum + (Number(n) || 0), 0);
+    (delegation.expectedTeams || []).reduce(
+      (sum, slot) => sum + Object.values(slot.memberCounts || {}).reduce((s, n) => s + (Number(n) || 0), 0),
+      0,
+    );
 
   const handleSendDelegation = async (delegationId: string) => {
     setSubmittingRosterId(delegationId);
@@ -1131,39 +1449,17 @@ const DelegationsPage: React.FC = () => {
               </section>
 
               <section className="space-y-3">
-                <div className="flex flex-wrap items-end justify-between gap-3 px-0.5">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-primary/60" />
-                      <h2 className="text-sm font-semibold text-foreground">Attendee headcount</h2>
-                    </div>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      You'll add their names later, once this is approved.
-                    </p>
+                <div className="px-0.5">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary/60" />
+                    <h2 className="text-sm font-semibold text-foreground">Team plan</h2>
                   </div>
-                  <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
-                    <Users className="h-3.5 w-3.5" />
-                    <span className="tabular-nums">
-                      {Object.values(headcountCounts).reduce((sum, n) => sum + (Number(n) || 0), 0)}
-                    </span>
-                    <span className="font-medium text-primary/70">total</span>
-                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Declare how many teams you'll bring and each team's expected roster. You'll add people's names later, once this is approved.
+                  </p>
                 </div>
 
-                <div className="space-y-3">
-                  {Object.entries(groupedDelegationCategories()).map(([group, categories]) => (
-                    <CategoryGroupSection
-                      key={group}
-                      group={group}
-                      categories={categories}
-                      counts={headcountCounts}
-                      disabled={isCreating}
-                      onChange={(label, value) =>
-                        setHeadcountCounts((prev) => ({ ...prev, [label]: value }))
-                      }
-                    />
-                  ))}
-                </div>
+                <TeamPlanEditor teams={headcountTeams} onChange={setHeadcountTeams} disabled={isCreating} />
               </section>
             </div>
 
@@ -1259,80 +1555,115 @@ const DelegationsPage: React.FC = () => {
           </div>
 
           {viewMode === 'table' ? (
-            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.18)]">
               <div className="overflow-x-auto">
-                <Table className="w-full table-fixed">
+                <Table className="w-full min-w-[760px]">
                   <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="h-11 min-w-0 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Delegation</TableHead>
-                      <TableHead className="h-11 w-[120px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Status</TableHead>
-                      <TableHead className="h-11 w-[90px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Teams</TableHead>
-                      <TableHead className="h-11 w-[100px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Members</TableHead>
-                      <TableHead className="h-11 w-[140px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Roster</TableHead>
-                      <TableHead className="h-11 w-[220px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">Actions</TableHead>
+                    <TableRow className="border-border/70 hover:bg-transparent">
+                      <TableHead className="h-12 bg-muted/55 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Delegation
+                      </TableHead>
+                      <TableHead className="h-12 w-[150px] bg-muted/55 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Status
+                      </TableHead>
+                      <TableHead className="h-12 w-[88px] bg-muted/55 text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Teams
+                      </TableHead>
+                      <TableHead className="h-12 w-[110px] bg-muted/55 text-center text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Members
+                      </TableHead>
+                      <TableHead className="h-12 w-[160px] bg-muted/55 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Roster
+                      </TableHead>
+                      <TableHead className="h-12 w-[200px] bg-muted/55 text-end text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                        Actions
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {delegations.map((delegation) => {
                       const row = summarizeDelegation(delegation);
+                      const tone = getDelegationStatusTone(delegation.status, row.fullyApproved);
                       return (
                         <TableRow
                           key={delegation.id}
-                          className="border-border/60 transition-colors hover:bg-muted/25"
+                          className="border-border/65 transition-colors hover:bg-primary/[0.025]"
                         >
-                          <TableCell className="min-w-0 py-3">
+                          <TableCell className="py-4">
                             <div className="flex items-center gap-3">
-                              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-primary/10">
+                              <div className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-primary/10 shadow-sm">
                                 <Flag className="h-4 w-4" />
+                                <span
+                                  className={cn(
+                                    'absolute -bottom-0.5 -end-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-card',
+                                    tone.dot,
+                                  )}
+                                  aria-hidden
+                                />
                               </div>
                               <div className="min-w-0">
-                                <p className="truncate text-sm font-semibold text-foreground">
+                                <p className="truncate text-sm font-semibold tracking-tight text-foreground">
                                   {row.countryLabel} Delegation
                                 </p>
                                 <p className="truncate text-xs text-muted-foreground">{row.eventName}</p>
                               </div>
                             </div>
                           </TableCell>
-                          <TableCell className="py-3">
-                            <Badge className={cn('font-medium', getStatusColor(delegation.status))}>
-                              {row.fullyApproved ? 'Delegation Approved' : getStatusLabel(delegation.status)}
-                            </Badge>
+                          <TableCell className="py-4">
+                            <DelegationStatusChip
+                              status={delegation.status}
+                              fullyApproved={row.fullyApproved}
+                            />
                           </TableCell>
-                          <TableCell className="py-3 text-sm tabular-nums text-muted-foreground">
-                            {row.teamCount}
+                          <TableCell className="py-4 text-center">
+                            <span className="inline-flex min-w-[2rem] items-center justify-center rounded-lg bg-muted/50 px-2 py-1 text-sm font-semibold tabular-nums text-foreground ring-1 ring-inset ring-border/60">
+                              {row.teamCount}
+                            </span>
                           </TableCell>
-                          <TableCell className="py-3 text-sm tabular-nums text-muted-foreground">
-                            {row.memberCount}
-                            {row.expectedCount > 0 ? (
-                              <span className="text-muted-foreground/70"> / {row.expectedCount}</span>
-                            ) : null}
+                          <TableCell className="py-4 text-center">
+                            <span className="inline-flex items-center justify-center rounded-lg bg-muted/50 px-2.5 py-1 text-sm font-semibold tabular-nums text-foreground ring-1 ring-inset ring-border/60">
+                              {row.memberCount}
+                              {row.expectedCount > 0 ? (
+                                <span className="ms-0.5 font-medium text-muted-foreground">/{row.expectedCount}</span>
+                              ) : null}
+                            </span>
                           </TableCell>
-                          <TableCell className="py-3">
+                          <TableCell className="py-4">
                             {row.breakdown.length === 0 ? (
-                              <span className="text-xs text-muted-foreground">Not declared</span>
+                              <span className="inline-flex items-center rounded-full border border-dashed border-border px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                                Not declared
+                              </span>
                             ) : (
-                              <div className="space-y-1.5">
+                              <div className="min-w-[120px] space-y-1.5 rounded-xl border border-border/70 bg-muted/25 px-2.5 py-2">
                                 <div className="flex items-center justify-between gap-2 text-[11px]">
-                                  <span className="font-medium tabular-nums text-foreground">
+                                  <span className="font-semibold tabular-nums text-foreground">
                                     {row.matchedRoles}/{row.breakdown.length}
                                   </span>
                                   <span
                                     className={cn(
-                                      'font-semibold tabular-nums',
+                                      'font-bold tabular-nums',
                                       row.mismatched.length === 0 ? 'text-status-success' : 'text-amber-700',
                                     )}
                                   >
                                     {row.rosterProgress}%
                                   </span>
                                 </div>
-                                <Progress value={row.rosterProgress} className="h-1" />
+                                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                                  <div
+                                    className={cn(
+                                      'h-full rounded-full transition-all',
+                                      row.mismatched.length === 0 ? 'bg-status-success' : 'bg-primary',
+                                    )}
+                                    style={{ width: `${Math.min(100, Math.max(0, row.rosterProgress))}%` }}
+                                  />
+                                </div>
                               </div>
                             )}
                           </TableCell>
-                          <TableCell className="py-3">
-                            <div className="flex flex-wrap items-center gap-1.5">
+                          <TableCell className="py-4">
+                            <div className="flex flex-wrap items-center justify-end gap-1.5">
                               {delegation.status === 'Approved' && row.teamCount === 0 && (
-                                <Button size="sm" className="h-8" onClick={() => openSelectTeamDialog(delegation)}>
+                                <Button size="sm" className="h-8 shadow-sm" onClick={() => openSelectTeamDialog(delegation)}>
                                   Select team
                                 </Button>
                               )}
@@ -1340,9 +1671,10 @@ const DelegationsPage: React.FC = () => {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-8"
+                                  className="h-8 gap-1.5 border-border/80 bg-background shadow-sm"
                                   onClick={() => openMemberRegistrations(delegation)}
                                 >
+                                  <ClipboardList className="h-3.5 w-3.5" />
                                   Roster
                                 </Button>
                               )}
@@ -1351,14 +1683,15 @@ const DelegationsPage: React.FC = () => {
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-8"
+                                    className="h-8 gap-1.5 border-border/80 bg-background shadow-sm"
                                     onClick={() => openMemberRegistrations(delegation)}
                                   >
+                                    <ClipboardList className="h-3.5 w-3.5" />
                                     Roster
                                   </Button>
                                   <Button
                                     size="sm"
-                                    className="h-8"
+                                    className="h-8 shadow-sm"
                                     onClick={() => handleSendDelegation(delegation.id)}
                                     disabled={submittingRosterId === delegation.id || !row.readyToSend}
                                   >
@@ -1375,7 +1708,7 @@ const DelegationsPage: React.FC = () => {
                                 delegation.status === 'Update Requested') && (
                                 <Button
                                   size="sm"
-                                  className="h-8"
+                                  className="h-8 shadow-sm"
                                   onClick={() => handleSubmitDelegation(delegation.id)}
                                 >
                                   Submit
@@ -1385,9 +1718,10 @@ const DelegationsPage: React.FC = () => {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-8"
+                                  className="h-8 gap-1.5 border-border/80 bg-background shadow-sm"
                                   onClick={() => openBulkTravel(delegation)}
                                 >
+                                  <Plane className="h-3.5 w-3.5" />
                                   Travel
                                 </Button>
                               )}
@@ -1395,9 +1729,10 @@ const DelegationsPage: React.FC = () => {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  className="h-8"
+                                  className="h-8 gap-1.5 border-border/80 bg-background shadow-sm"
                                   onClick={() => openMemberRegistrations(delegation)}
                                 >
+                                  <ClipboardList className="h-3.5 w-3.5" />
                                   Roster
                                 </Button>
                               )}
@@ -1423,10 +1758,7 @@ const DelegationsPage: React.FC = () => {
                     <div
                       className={cn(
                         'absolute inset-y-0 left-0 w-1',
-                        delegation.status === 'Approved' && 'bg-status-success',
-                        delegation.status === 'Submitted' && 'bg-primary',
-                        (delegation.status === 'Draft' || delegation.status === 'Update Requested') && 'bg-amber-500',
-                        delegation.status === 'Rejected' && 'bg-status-error',
+                        getDelegationStatusTone(delegation.status, row.fullyApproved).bar,
                       )}
                       aria-hidden
                     />
@@ -1435,16 +1767,24 @@ const DelegationsPage: React.FC = () => {
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 space-y-1">
                           <div className="flex flex-wrap items-center gap-2">
-                            {getStatusIcon(delegation.status)}
+                            <span
+                              className={cn(
+                                'flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset',
+                                getDelegationStatusTone(delegation.status, row.fullyApproved).chip,
+                              )}
+                            >
+                              {getStatusIcon(delegation.status, row.fullyApproved)}
+                            </span>
                             <h3 className="text-lg font-semibold tracking-tight text-foreground">
                               {row.countryLabel} Delegation
                             </h3>
                           </div>
                           <p className="text-sm text-muted-foreground">{row.eventName}</p>
                         </div>
-                        <Badge className={cn('shrink-0', getStatusColor(delegation.status))}>
-                          {row.fullyApproved ? 'Delegation Approved' : getStatusLabel(delegation.status)}
-                        </Badge>
+                        <DelegationStatusChip
+                          status={delegation.status}
+                          fullyApproved={row.fullyApproved}
+                        />
                       </div>
 
                       {delegation.status === 'Update Requested' && delegation.reviewMessage && (
@@ -1961,37 +2301,17 @@ const DelegationsPage: React.FC = () => {
                   Delegation roster
                 </p>
                 <DialogTitle className="text-xl font-semibold tracking-tight">
-                  Declare Attendee Counts
+                  Declare Team Plan
                 </DialogTitle>
                 <DialogDescription className="text-sm leading-relaxed">
-                  Set how many people will attend in each category. Names come later after approval.
+                  Set how many teams you'll bring and each team's expected roster. Names come later after approval.
                 </DialogDescription>
               </div>
             </div>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-5">
-            <div className="flex justify-end">
-              <div className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
-                <Users className="h-3.5 w-3.5" />
-                <span className="tabular-nums">
-                  {Object.values(headcountCounts).reduce((sum, n) => sum + (Number(n) || 0), 0)}
-                </span>
-                <span className="font-medium text-primary/70">total</span>
-              </div>
-            </div>
-            {Object.entries(groupedDelegationCategories()).map(([group, categories]) => (
-              <CategoryGroupSection
-                key={group}
-                group={group}
-                categories={categories}
-                counts={headcountCounts}
-                disabled={isSavingHeadcount}
-                onChange={(label, value) =>
-                  setHeadcountCounts((prev) => ({ ...prev, [label]: value }))
-                }
-              />
-            ))}
+            <TeamPlanEditor teams={headcountTeams} onChange={setHeadcountTeams} disabled={isSavingHeadcount} />
           </div>
 
           <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-6 py-3.5 sm:justify-end">
@@ -2021,50 +2341,203 @@ const DelegationsPage: React.FC = () => {
         if (!open) {
           setSelectTeamDelegation(null);
           setSelectTeamIds([]);
+          setCreatingSlotIndex(null);
+          setNewTeamName('');
+          setNewTeamSport('');
         }
       }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+        <DialogContent className="flex max-h-[85vh] max-w-xl flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-6 py-4">
             <DialogTitle>Select Team</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Only unassigned teams whose sport is offered by this event are shown. You can select more than one.
-          </p>
-          {teams.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              No teams created yet — go to Teams to create one first.
-            </p>
-          ) : (
-            <div className="space-y-2 max-h-72 overflow-y-auto border rounded-lg p-3">
-              {selectableTeamsForDelegation.map(team => (
-                <div key={team.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded">
-                  <Checkbox
-                    id={`select-team-${team.id}`}
-                    checked={selectTeamIds.includes(team.id)}
-                    onCheckedChange={() => handleToggleSelectTeam(team.id)}
-                  />
-                  <label htmlFor={`select-team-${team.id}`} className="flex-1 cursor-pointer text-sm">
-                    <p className="font-medium">{team.name}</p>
-                    <p className="text-muted-foreground">
-                      {(team as any).sportName || team.subCategory || (team.sportCategory as any)?.subCategory || team.sportCategory}
-                    </p>
-                  </label>
+
+          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-4">
+            {selectTeamDelegation?.expectedTeams && selectTeamDelegation.expectedTeams.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold">Declared team slots</Label>
+                <div className="space-y-2">
+                  {selectTeamDelegation.expectedTeams.map((slot, index) => {
+                    const boundTeam = getDelegationTeamObjects(selectTeamDelegation).find(
+                      (t: any) => t.expectedTeamIndex === index,
+                    );
+                    const slotSummary = Object.entries(slot.memberCounts || {})
+                      .map(([category, count]) => `${count} ${category}`)
+                      .join(', ') || 'No roster declared';
+
+                    return (
+                      <div
+                        key={index}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm transition-colors hover:border-border"
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 text-[11px] font-bold text-primary ring-1 ring-inset ring-primary/10">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-[15px] font-bold tracking-tight text-foreground">
+                              {slot.name || `Team ${index + 1}`}
+                            </p>
+                            <p className="truncate text-xs text-muted-foreground">{slotSummary}</p>
+                          </div>
+                        </div>
+                        {boundTeam ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-status-success/25 bg-status-success-bg px-2.5 py-1 text-xs font-semibold text-status-success">
+                              <CheckCircle2 className="h-3 w-3 shrink-0" />
+                              <span className="max-w-[9rem] truncate">{boundTeam.name}</span>
+                            </span>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 gap-1.5 rounded-full px-3 text-xs font-medium text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => handleRemoveTeamFromSlot(boundTeam)}
+                              disabled={removingTeamId === boundTeam.id}
+                            >
+                              {removingTeamId === boundTeam.id ? (
+                                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3 w-3 shrink-0" />
+                              )}
+                              {removingTeamId === boundTeam.id ? 'Removing' : 'Remove'}
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {selectableTeamsForDelegation.length > 0 && (
+                              <Select
+                                value=""
+                                onValueChange={(teamId) =>
+                                  handleUseExistingTeamForSlot(selectTeamDelegation.id, index, teamId)
+                                }
+                                disabled={assigningExistingTeamSlot === index}
+                              >
+                                <SelectTrigger className="h-8 w-[168px] rounded-full border-border/80 text-xs shadow-sm">
+                                  <SelectValue
+                                    placeholder={
+                                      assigningExistingTeamSlot === index ? 'Assigning…' : 'Use existing team'
+                                    }
+                                  />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {selectableTeamsForDelegation.map((team) => (
+                                    <SelectItem key={team.id} value={team.id}>{team.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                            <Button
+                              size="sm"
+                              className="h-8 shrink-0 gap-1.5 rounded-full px-3.5 text-xs font-semibold shadow-sm"
+                              onClick={() => openCreateTeamForSlot(index, slot.name || '')}
+                            >
+                              <Plus className="h-3 w-3 shrink-0" />
+                              Create team
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
-              {selectableTeamsForDelegation.length === 0 && (
-                <p className="text-sm text-center py-4 text-muted-foreground">
-                  No eligible unassigned teams for this event's sports. Create a matching team first.
+
+                {creatingSlotIndex !== null && (
+                  <div className="space-y-3 rounded-lg border border-primary/30 bg-primary/[0.03] p-3">
+                    <p className="text-xs font-semibold text-primary">
+                      New team for {selectTeamDelegation.expectedTeams[creatingSlotIndex]?.name || `Team ${creatingSlotIndex + 1}`}
+                    </p>
+                    <div className="space-y-2">
+                      <Input
+                        value={newTeamName}
+                        onChange={(e) => setNewTeamName(e.target.value)}
+                        placeholder="Team name"
+                        className="h-9"
+                        disabled={isCreatingTeamForSlot}
+                      />
+                      <Select value={newTeamSport} onValueChange={setNewTeamSport} disabled={isCreatingTeamForSlot}>
+                        <SelectTrigger className="h-9">
+                          <SelectValue placeholder="Choose the team sport" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SPORT_CATEGORIES.map((category) => (
+                            <SelectItem key={category.id} value={category.name}>{category.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCreatingSlotIndex(null)}
+                        disabled={isCreatingTeamForSlot}
+                      >
+                        Cancel
+                      </Button>
+                      <Button size="sm" onClick={handleCreateTeamForSlot} disabled={isCreatingTeamForSlot}>
+                        {isCreatingTeamForSlot ? 'Creating…' : 'Create & add members'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Delegations declared before the team-plan feature existed have
+                no expectedTeams — fall back to the original free-form,
+                multi-select team picker so they still work. Once a plan is
+                declared, the per-slot pickers above are the only way in,
+                since every team must be bound to a specific slot. */}
+            {(!selectTeamDelegation?.expectedTeams || selectTeamDelegation.expectedTeams.length === 0) && (
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold">Or pick an existing team</Label>
+                <p className="text-sm text-muted-foreground">
+                  Only unassigned teams whose sport is offered by this event are shown. You can select more than one.
                 </p>
-              )}
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsSelectTeamOpen(false)} disabled={isSavingTeamSelection}>
-              Cancel
-            </Button>
-            <Button onClick={handleConfirmTeamSelection} disabled={isSavingTeamSelection}>
-              {isSavingTeamSelection ? 'Saving...' : 'Confirm Team'}
-            </Button>
+                {teams.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4 text-center">
+                    No teams created yet — create one above, or go to Teams to create one first.
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-56 overflow-y-auto border rounded-lg p-3">
+                    {selectableTeamsForDelegation.map(team => (
+                      <div key={team.id} className="flex items-center gap-3 p-2 hover:bg-muted/50 rounded">
+                        <Checkbox
+                          id={`select-team-${team.id}`}
+                          checked={selectTeamIds.includes(team.id)}
+                          onCheckedChange={() => handleToggleSelectTeam(team.id)}
+                        />
+                        <label htmlFor={`select-team-${team.id}`} className="flex-1 cursor-pointer text-sm">
+                          <p className="font-medium">{team.name}</p>
+                          <p className="text-muted-foreground">
+                            {(team as any).sportName || team.subCategory || (team.sportCategory as any)?.subCategory || team.sportCategory}
+                          </p>
+                        </label>
+                      </div>
+                    ))}
+                    {selectableTeamsForDelegation.length === 0 && (
+                      <p className="text-sm text-center py-4 text-muted-foreground">
+                        No eligible unassigned teams for this event's sports. Create a matching team first.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="shrink-0 border-t px-6 py-3.5">
+            {selectTeamDelegation?.expectedTeams && selectTeamDelegation.expectedTeams.length > 0 ? (
+              <Button onClick={() => setIsSelectTeamOpen(false)}>Close</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setIsSelectTeamOpen(false)} disabled={isSavingTeamSelection}>
+                  Cancel
+                </Button>
+                <Button onClick={handleConfirmTeamSelection} disabled={isSavingTeamSelection || selectTeamIds.length === 0}>
+                  {isSavingTeamSelection ? 'Saving...' : 'Confirm Team'}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

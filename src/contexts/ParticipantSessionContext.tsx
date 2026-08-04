@@ -41,6 +41,7 @@ const ParticipantSessionContext = createContext<ParticipantSessionContextType | 
 
 const SESSION_KEY = 'ems_participant_session';
 const PARTICIPANT_TOKEN_KEY = 'ems_participant_token';
+const PARTICIPANT_REFRESH_TOKEN_KEY = 'ems_participant_refresh_token';
 
 const buildParticipantSession = (
   user: Record<string, unknown> | undefined,
@@ -140,6 +141,9 @@ export const ParticipantSessionProvider: React.FC<{ children: React.ReactNode }>
     try {
       const response = await participantLoginApi(email, password);
       localStorage.setItem(PARTICIPANT_TOKEN_KEY, response.token);
+      if (response.refreshToken) {
+        localStorage.setItem(PARTICIPANT_REFRESH_TOKEN_KEY, response.refreshToken);
+      }
       sessionStorage.removeItem('ems_participant_api_cache');
 
       let profileId: string | undefined;
@@ -175,6 +179,7 @@ export const ParticipantSessionProvider: React.FC<{ children: React.ReactNode }>
     setTeamMemberData(null);
     localStorage.removeItem(SESSION_KEY);
     localStorage.removeItem(PARTICIPANT_TOKEN_KEY);
+    localStorage.removeItem(PARTICIPANT_REFRESH_TOKEN_KEY);
   }, []);
 
   const isTeamMember = !!participant?.isTeamMember;

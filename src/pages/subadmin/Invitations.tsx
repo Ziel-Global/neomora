@@ -804,6 +804,8 @@ const SubAdminInvitationsPage: React.FC = () => {
 
     setPendingCreateAction(delivery);
     setIsActionLoading(true);
+    // Yield so the button spinner can paint before sync audience work blocks the main thread.
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     try {
       const selectedTemplate = templates.find(item => item.id === selectedTemplateId);
       const tempCampaignId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -867,9 +869,9 @@ const SubAdminInvitationsPage: React.FC = () => {
       const finalCampaignId = backendCampaignId || tempCampaignId;
 
       if (delivery === 'send') {
-        await handleSendCampaign(finalCampaignId);
+        await handleSendCampaign(finalCampaignId, { manageLoading: false });
       } else if (delivery === 'schedule') {
-        await handleScheduleCampaign(finalCampaignId, scheduledAt);
+        await handleScheduleCampaign(finalCampaignId, scheduledAt, { manageLoading: false });
       } else {
         const participantCount = createdInvitations.filter(inv => inv.recipientType !== 'manager').length;
         const managerCount = createdInvitations.filter(inv => inv.recipientType === 'manager').length;
@@ -964,8 +966,12 @@ const SubAdminInvitationsPage: React.FC = () => {
     return [...existing, ...created, ...createdManagers];
   };
 
-  const handleSendCampaign = async (campaignId: string) => {
-    setIsActionLoading(true);
+  const handleSendCampaign = async (
+    campaignId: string,
+    options?: { manageLoading?: boolean },
+  ) => {
+    const manageLoading = options?.manageLoading !== false;
+    if (manageLoading) setIsActionLoading(true);
     try {
       const created = ensureLocalInvitationsForCampaign(campaignId);
       const sent = invitationStore.sendCampaign(campaignId);
@@ -990,11 +996,15 @@ const SubAdminInvitationsPage: React.FC = () => {
       console.error('Failed to send campaign:', error);
       toast({ title: 'Error', description: 'Failed to send campaign', variant: 'destructive' });
     } finally {
-      setIsActionLoading(false);
+      if (manageLoading) setIsActionLoading(false);
     }
   };
 
-  const handleScheduleCampaign = async (campaignId: string, scheduleValue: string) => {
+  const handleScheduleCampaign = async (
+    campaignId: string,
+    scheduleValue: string,
+    options?: { manageLoading?: boolean },
+  ) => {
     if (!scheduleValue) {
       toast({
         title: t('invitations.schedule_required_title', { defaultValue: 'Schedule time required' }),
@@ -1014,7 +1024,8 @@ const SubAdminInvitationsPage: React.FC = () => {
       return;
     }
 
-    setIsActionLoading(true);
+    const manageLoading = options?.manageLoading !== false;
+    if (manageLoading) setIsActionLoading(true);
     try {
       ensureLocalInvitationsForCampaign(campaignId);
 
@@ -1041,7 +1052,7 @@ const SubAdminInvitationsPage: React.FC = () => {
       console.error('Failed to schedule campaign:', error);
       toast({ title: 'Error', description: t('invitations.schedule_failed', { defaultValue: 'Failed to schedule campaign' }), variant: 'destructive' });
     } finally {
-      setIsActionLoading(false);
+      if (manageLoading) setIsActionLoading(false);
     }
   };
 
@@ -1651,12 +1662,18 @@ const SubAdminInvitationsPage: React.FC = () => {
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" disabled={isActionLoading} onClick={() => openScheduleDialog(selectedCampaign.id)}>
-                  <Clock className="h-4 w-4 mr-2" />
+                  <Clock className="h-4 w-4" />
                   {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
                 </Button>
                 <Button disabled={isActionLoading} onClick={() => handleSendCampaign(selectedCampaign.id)}>
-                  <Send className="h-4 w-4 mr-2" />
-                  {t('invitations.send_now')}
+                  {isActionLoading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Send className="h-4 w-4" />
+                  )}
+                  {isActionLoading
+                    ? t('invitations.sending', { defaultValue: 'Sending...' })
+                    : t('invitations.send_now')}
                 </Button>
               </div>
             </div>
@@ -1676,8 +1693,14 @@ const SubAdminInvitationsPage: React.FC = () => {
                 </p>
               </div>
               <Button variant="outline" disabled={isActionLoading} onClick={() => handleSendCampaign(selectedCampaign.id)}>
-                <Send className="h-4 w-4 mr-2" />
-                {t('invitations.send_now')}
+                {isActionLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+                {isActionLoading
+                  ? t('invitations.sending', { defaultValue: 'Sending...' })
+                  : t('invitations.send_now')}
               </Button>
             </div>
           )}
@@ -1734,7 +1757,11 @@ const SubAdminInvitationsPage: React.FC = () => {
         title={t('invitations.title')}
         description={t('invitations.description')}
         action={
-          <Dialog open={isCreateOpen} onOpenChange={(open) => { setIsCreateOpen(open); if (!open) resetWizard(); }}>
+          <Dialog open={isCreateOpen} onOpenChange={(open) => {
+            if (isActionLoading) return;
+            setIsCreateOpen(open);
+            if (!open) resetWizard();
+          }}>
             <DialogTrigger asChild>
               <Button><Plus className="h-4 w-4 me-2" />{t('invitations.create_campaign')}</Button>
             </DialogTrigger>
@@ -1755,7 +1782,7 @@ const SubAdminInvitationsPage: React.FC = () => {
               </div>
               {renderWizardStep()}
               <DialogFooter className="mt-6">
-                <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1}>
+                <Button variant="outline" onClick={() => setWizardStep(Math.max(1, wizardStep - 1))} disabled={wizardStep === 1 || isActionLoading}>
                   {t('invitations.previous')}
                 </Button>
                 {wizardStep < 4 ? (
@@ -1773,25 +1800,31 @@ const SubAdminInvitationsPage: React.FC = () => {
                   <div className="flex gap-2">
                     <Button variant="outline" disabled={isActionLoading} onClick={() => handleCreateCampaign('draft')}>
                       {isActionLoading && pendingCreateAction === 'draft' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : null}
-                      {t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
+                      {isActionLoading && pendingCreateAction === 'draft'
+                        ? t('common.saving', { defaultValue: 'Saving...' })
+                        : t('invitations.save_as_draft', { defaultValue: 'Save as Draft' })}
                     </Button>
                     <Button variant="outline" disabled={isActionLoading || !scheduledAt} onClick={() => handleCreateCampaign('schedule')}>
                       {isActionLoading && pendingCreateAction === 'schedule' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Clock className="h-4 w-4 mr-2" />
+                        <Clock className="h-4 w-4" />
                       )}
-                      {t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
+                      {isActionLoading && pendingCreateAction === 'schedule'
+                        ? t('invitations.scheduling', { defaultValue: 'Scheduling...' })
+                        : t('invitations.schedule_campaign', { defaultValue: 'Schedule Campaign' })}
                     </Button>
                     <Button disabled={isActionLoading} onClick={() => handleCreateCampaign('send')}>
                       {isActionLoading && pendingCreateAction === 'send' ? (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
-                        <Send className="h-4 w-4 mr-2" />
+                        <Send className="h-4 w-4" />
                       )}
-                      {t('invitations.send_now')}
+                      {isActionLoading && pendingCreateAction === 'send'
+                        ? t('invitations.sending', { defaultValue: 'Sending...' })
+                        : t('invitations.send_now')}
                     </Button>
                   </div>
                 )}

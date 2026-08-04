@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { invitationStore, eventStore, participantStore, initializeStore } from '@/lib/emsStore';
+import { getInvitationByToken, respondToInvitation, markInvitationOpened, Invitation } from '@/api/invitationApi';
 import { Calendar, MapPin, Check, X, HelpCircle, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,6 +8,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
+
+interface RSVPRecipient {
+  firstName?: string;
+  lastName?: string;
+  [key: string]: unknown;
+}
 
 const RSVPLanding: React.FC = () => {
   const { token } = useParams<{ token: string }>();
@@ -15,41 +22,41 @@ const RSVPLanding: React.FC = () => {
   const [step, setStep] = useState<'loading' | 'rsvp' | 'dietary' | 'confirmed' | 'error'>('loading');
   const [response, setResponse] = useState<'yes' | 'no' | 'maybe' | null>(null);
   const [dietaryNotes, setDietaryNotes] = useState('');
-  const [invitation, setInvitation] = useState<ReturnType<typeof invitationStore.getByToken>>(undefined);
-  const [event, setEvent] = useState<ReturnType<typeof eventStore.getById>>(undefined);
-  const [participant, setParticipant] = useState<ReturnType<typeof participantStore.getById>>(undefined);
+  const [submitting, setSubmitting] = useState(false);
+  const [invitation, setInvitation] = useState<Invitation | null>(null);
+  const [recipient, setRecipient] = useState<RSVPRecipient | null>(null);
 
   useEffect(() => {
-    initializeStore();
-
     if (!token) {
       setStep('error');
       return;
     }
 
-    const inv = invitationStore.getByToken(token);
-    if (!inv) {
-      setStep('error');
-      return;
-    }
+    let cancelled = false;
 
-    // Mark as opened
-    invitationStore.markOpened(inv.id);
+    (async () => {
+      try {
+        const inv = await getInvitationByToken(token);
+        if (cancelled) return;
 
-    const evt = eventStore.getById(inv.eventId);
-    const part = participantStore.getById(inv.participantId);
+        setInvitation(inv);
+        setRecipient((inv as any)?.participant || (inv as any)?.teamManager || null);
 
-    setInvitation(inv);
-    setEvent(evt);
-    setParticipant(part);
+        if (['Accepted', 'Declined', 'Maybe'].includes(inv.status)) {
+          setResponse(inv.status === 'Accepted' ? 'yes' : inv.status === 'Declined' ? 'no' : 'maybe');
+          setStep('confirmed');
+        } else {
+          setStep('rsvp');
+          markInvitationOpened(token);
+        }
+      } catch {
+        if (!cancelled) setStep('error');
+      }
+    })();
 
-    // Check if already responded
-    if (['Accepted', 'Declined', 'Maybe'].includes(inv.status)) {
-      setResponse(inv.status === 'Accepted' ? 'yes' : inv.status === 'Declined' ? 'no' : 'maybe');
-      setStep('confirmed');
-    } else {
-      setStep('rsvp');
-    }
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
 
   const handleSubmit = () => {
@@ -60,17 +67,23 @@ const RSVPLanding: React.FC = () => {
     }
   };
 
-  const handleFinalSubmit = () => {
-    if (!invitation || !response) return;
+  const handleFinalSubmit = async () => {
+    if (!invitation || !response || !token) return;
 
     const statusMap = { yes: 'Accepted', no: 'Declined', maybe: 'Maybe' } as const;
-    invitationStore.respond(invitation.id, statusMap[response], dietaryNotes);
 
-    // No need to create draft registration here
-    // Registration will be created when the form is submitted with 'Submitted' status
-
-    setStep('confirmed');
+    setSubmitting(true);
+    try {
+      await respondToInvitation(token, statusMap[response], dietaryNotes);
+      setStep('confirmed');
+    } catch (error: any) {
+      toast.error(error?.response?.data?.message || 'Could not submit your RSVP. Please try again.');
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const event = invitation?.event;
 
   if (step === 'loading') {
     return (
@@ -80,7 +93,7 @@ const RSVPLanding: React.FC = () => {
     );
   }
 
-  if (step === 'error' || !event || !participant) {
+  if (step === 'error' || !event || !recipient) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-background to-muted flex items-center justify-center p-4">
         <Card className="max-w-lg w-full text-center">
@@ -140,7 +153,7 @@ const RSVPLanding: React.FC = () => {
               </div>
             )}
             {response === 'yes' ? (
-              <Button onClick={() => navigate(`/register?invitationId=${invitation.id}&eventId=${invitation.eventId}`)}>Continue to Registration</Button>
+              <Button onClick={() => navigate(`/register?invitationId=${invitation.id}&eventId=${event.id}`)}>Continue to Registration</Button>
             ) : (
               <Button onClick={() => navigate('/')}>Return to Home</Button>
             )}
@@ -169,8 +182,10 @@ const RSVPLanding: React.FC = () => {
               />
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => setStep('rsvp')} className="flex-1">Back</Button>
-              <Button onClick={handleFinalSubmit} className="flex-1">Submit RSVP</Button>
+              <Button variant="outline" onClick={() => setStep('rsvp')} className="flex-1" disabled={submitting}>Back</Button>
+              <Button onClick={handleFinalSubmit} className="flex-1" disabled={submitting}>
+                {submitting ? 'Submitting...' : 'Submit RSVP'}
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -207,12 +222,12 @@ const RSVPLanding: React.FC = () => {
               <MapPin className="h-4 w-4 text-muted-foreground" />
               <span>{event.city}</span>
             </div>
-            <p className="text-sm text-muted-foreground">{event.theme}</p>
+            {(event as any).theme && <p className="text-sm text-muted-foreground">{(event as any).theme}</p>}
           </div>
 
           <div className="text-center">
             <p className="text-sm text-muted-foreground">Dear</p>
-            <p className="text-lg font-semibold">{participant.firstName} {participant.lastName}</p>
+            <p className="text-lg font-semibold">{recipient.firstName} {recipient.lastName}</p>
           </div>
 
           <div className="space-y-3">
@@ -243,7 +258,9 @@ const RSVPLanding: React.FC = () => {
             </RadioGroup>
           </div>
 
-          <Button onClick={handleSubmit} disabled={!response} className="w-full">Continue</Button>
+          <Button onClick={handleSubmit} disabled={!response || submitting} className="w-full">
+            {submitting ? 'Submitting...' : 'Continue'}
+          </Button>
         </CardContent>
       </Card>
     </div>

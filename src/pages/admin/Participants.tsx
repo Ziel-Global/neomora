@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { PageHeader } from '@/components/common/PageHeader';
 import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { participantStore, invitationStore, registrationStore, EMSParticipant } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
 import { AdminHomeHeader } from '@/components/layout/AdminHomeHeader';
@@ -19,7 +20,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  Plus,
   Download,
   Mail,
   Filter,
@@ -31,7 +31,11 @@ import {
   UserPlus,
   UserRound,
   Heart,
-  CalendarArrowDown,
+  Home,
+  ChevronRight,
+  Search,
+  Globe2,
+  BadgeCheck,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -47,7 +51,6 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Card, CardContent } from '@/components/ui/card';
 import { toast } from 'sonner';
 
 interface ParticipantWithStatus extends EMSParticipant {
@@ -68,6 +71,7 @@ const ParticipantsPage: React.FC = () => {
   const { t } = useTranslation();
   const [participants, setParticipants] = useState<EMSParticipant[]>([]);
   const [roleFilter, setRoleFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
@@ -257,11 +261,28 @@ const ParticipantsPage: React.FC = () => {
     };
   }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Apply filters
-  const filteredData = participantsWithStatus.filter(p => {
-    if (roleFilter !== 'all' && p.role !== roleFilter) return false;
-    return true;
-  });
+  const filteredData = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    return participantsWithStatus.filter((p) => {
+      if (roleFilter !== 'all' && p.role !== roleFilter) return false;
+      if (!query) return true;
+      return (
+        `${p.firstName} ${p.lastName}`.toLowerCase().includes(query) ||
+        (p.email && p.email.toLowerCase().includes(query)) ||
+        (p.organization && p.organization.toLowerCase().includes(query)) ||
+        (p.nationality && p.nationality.toLowerCase().includes(query)) ||
+        (p.role && p.role.toLowerCase().includes(query))
+      );
+    });
+  }, [participantsWithStatus, roleFilter, searchQuery]);
+
+  const registeredCount = useMemo(
+    () =>
+      participantsWithStatus.filter(
+        (p) => p.registrationStatus && p.registrationStatus !== 'Draft',
+      ).length,
+    [participantsWithStatus],
+  );
 
   const columns: Column<ParticipantWithStatus>[] = [
     {
@@ -271,7 +292,7 @@ const ParticipantsPage: React.FC = () => {
       accessor: (row) => (
         <div className="flex items-center gap-3">
           <Avatar className="h-10 w-10 border border-primary/10 shadow-sm">
-            <AvatarFallback className="bg-primary/10 text-primary text-sm font-semibold">
+            <AvatarFallback className="bg-primary/10 text-sm font-semibold text-primary">
               {row.firstName.charAt(0)}{row.lastName.charAt(0)}
             </AvatarFallback>
           </Avatar>
@@ -288,7 +309,7 @@ const ParticipantsPage: React.FC = () => {
       sortable: true,
       accessor: (row) => (
         <span className="inline-flex items-center rounded-full border border-primary/10 bg-primary/[0.07] px-2.5 py-1 text-xs font-semibold text-primary">
-          {row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '-'}
+          {row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '—'}
         </span>
       ),
     },
@@ -296,14 +317,20 @@ const ParticipantsPage: React.FC = () => {
       key: 'nationality',
       header: t('participants.nationality'),
       sortable: true,
-      accessor: (row) => row.nationality || '-',
+      className: 'hidden md:table-cell',
+      accessor: (row) => (
+        <span className="inline-flex items-center gap-1.5 text-sm font-medium text-foreground/85">
+          <Globe2 className="h-3.5 w-3.5 text-muted-foreground" />
+          {row.nationality || '—'}
+        </span>
+      ),
     },
     {
       key: 'organization',
       header: t('participants.organization'),
       sortable: true,
       accessor: (row) => (
-        <span className="font-medium text-foreground/85">{row.organization || '-'}</span>
+        <span className="font-medium text-foreground/85">{row.organization || '—'}</span>
       ),
     },
     {
@@ -313,7 +340,7 @@ const ParticipantsPage: React.FC = () => {
       accessor: (row) => {
         const createdAt = new Date(row.createdAt);
         const addedDate = Number.isNaN(createdAt.getTime())
-          ? '-'
+          ? '—'
           : createdAt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
         return <span className="text-sm font-medium text-muted-foreground">{addedDate}</span>;
@@ -340,7 +367,7 @@ const ParticipantsPage: React.FC = () => {
         row.registrationStatus ? (
           <StatusBadge status={row.registrationStatus} size="sm" />
         ) : (
-          <span className="text-muted-foreground text-sm">-</span>
+          <span className="text-sm text-muted-foreground">—</span>
         )
       ),
     },
@@ -370,7 +397,7 @@ const ParticipantsPage: React.FC = () => {
             </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => handleDeleteClick(row)}
-              className="flex items-center gap-2 text-destructive"
+              className="flex items-center gap-2 text-destructive focus:text-destructive"
             >
               <Trash2 className="h-4 w-4" />
               {t('common.delete')}
@@ -502,13 +529,12 @@ const ParticipantsPage: React.FC = () => {
           </div>
           <div className="grid gap-2">
             <Label htmlFor="nationality">{t('participants.nationality')}</Label>
-            <Input
+            <CountryCombobox
               id="nationality"
-              autoComplete="country-name"
-              placeholder={t('participants.nationality')}
               value={formData.nationality}
+              onChange={(nationality) => setFormData(prev => ({ ...prev, nationality }))}
+              placeholder={t('participants.nationality')}
               className={fieldClassName}
-              onChange={(e) => setFormData(prev => ({ ...prev, nationality: e.target.value }))}
             />
           </div>
           <div className="grid gap-2">
@@ -583,100 +609,150 @@ const ParticipantsPage: React.FC = () => {
     <div className="min-h-screen bg-background flex flex-col">
       <AdminHomeHeader />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-6 animate-fade-in">
-        <PageHeader
-          title={t('members.title')}
-          subtitle={t('common.members_count', { count: filteredData.length })}
-          breadcrumbs={[{ label: t('members.title') }]}
-          actions={
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm">
-                <Download className="h-4 w-4 me-2" />
-                {t('common.export')}
-              </Button>
-              <Button size="sm" onClick={() => setIsAddOpen(true)}>
-                <Plus className="h-4 w-4 me-2" />
-                {t('members.add_member')}
-              </Button>
+      <main className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-4 py-10 animate-fade-in sm:px-6 lg:px-8">
+        <header className="relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-primary/[0.06] via-card to-card px-6 py-6 shadow-sm sm:px-8 sm:py-7">
+          <div
+            className="pointer-events-none absolute -right-16 -top-20 h-56 w-56 rounded-full bg-primary/[0.07] blur-3xl"
+            aria-hidden
+          />
+          <div
+            className="pointer-events-none absolute -bottom-24 left-1/3 h-40 w-40 rounded-full bg-accent/10 blur-3xl"
+            aria-hidden
+          />
+
+          <div className="relative space-y-4">
+            <nav className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Link to="/" className="transition-colors hover:text-foreground">
+                <Home className="h-4 w-4" />
+              </Link>
+              <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+              <span className="font-medium text-foreground">Team Members</span>
+            </nav>
+
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div className="max-w-xl space-y-1.5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-primary/70">
+                  Event operations
+                </p>
+                <h1 className="text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+                  Team Members
+                </h1>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  View and manage all members across the system.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
+                    <Users className="h-3.5 w-3.5" />
+                    <span className="tabular-nums">{participants.length}</span>
+                    total
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-status-success-bg px-2.5 py-1 text-xs font-semibold text-status-success ring-1 ring-inset ring-status-success/20">
+                    <BadgeCheck className="h-3.5 w-3.5" />
+                    <span className="tabular-nums">{registeredCount}</span>
+                    registered
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" className="h-10 shrink-0 gap-1.5 bg-card shadow-sm">
+                  <Download className="h-4 w-4" />
+                  {t('common.export')}
+                </Button>
+                <Button className="h-10 shrink-0 gap-1.5 shadow-sm" onClick={() => setIsAddOpen(true)}>
+                  <UserPlus className="h-4 w-4" />
+                  {t('members.add_member')}
+                </Button>
+              </div>
             </div>
-          }
-        />
-
-        {/* Loading State */}
-        {isLoading && (
-          <div className="flex flex-col items-center justify-center p-24 text-muted-foreground animate-pulse">
-            <Loader2 className="h-10 w-10 animate-spin mb-4" />
-            <p>Loading members...</p>
           </div>
-        )}
+        </header>
 
-        {/* Empty State */}
-        {!isLoading && participants.length === 0 && (
-          <Card>
-            <CardContent className="p-12 text-center">
-              <Users className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-              <h3 className="text-lg font-semibold mb-2">{t('members.no_members')}</h3>
-              <p className="text-muted-foreground mb-4">{t('members.no_members_desc')}</p>
-              <Button onClick={() => setIsAddOpen(true)}>
-                <Plus className="h-4 w-4 mr-2" />{t('members.add_member')}
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {!isLoading && participants.length > 0 && (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-card/40 py-24">
+            <Loader2 className="h-9 w-9 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Loading members…</p>
+          </div>
+        ) : participants.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-20 text-center">
+            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+              <Users className="h-7 w-7 text-muted-foreground/50" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground">{t('members.no_members')}</h3>
+            <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+              {t('members.no_members_desc')}
+            </p>
+            <Button className="mt-5 gap-1.5 shadow-sm" onClick={() => setIsAddOpen(true)}>
+              <UserPlus className="h-4 w-4" />
+              {t('members.add_member')}
+            </Button>
+          </div>
+        ) : (
           <>
-            {/* Filters */}
             <div className="flex flex-col gap-3 rounded-2xl border border-border/70 bg-card p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-3">
                 <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
                   <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
                     <Filter className="h-4 w-4" />
                   </span>
-                  {t('common.filter')}
+                  Member list
                 </div>
 
                 <Select value={roleFilter} onValueChange={setRoleFilter}>
-                  <SelectTrigger className="h-9 w-36 rounded-xl border-border/80 bg-background">
+                  <SelectTrigger className="h-9 w-36 rounded-xl border-border/80 bg-background shadow-sm">
                     <SelectValue placeholder="Role" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">{t('common.all_roles')}</SelectItem>
-                    {ROLES.map(role => (
-                      <SelectItem key={role} value={role}>{t(`participants.roles.${role.toLowerCase()}`)}</SelectItem>
+                    {ROLES.map((role) => (
+                      <SelectItem key={role} value={role}>
+                        {t(`participants.roles.${role.toLowerCase()}`)}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
 
                 {roleFilter !== 'all' && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setRoleFilter('all')}
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => setRoleFilter('all')}>
                     {t('participants.clear_filters')}
                   </Button>
                 )}
+
+                <span className="text-xs font-medium text-muted-foreground">
+                  {filteredData.length === participants.length
+                    ? `${participants.length} registered`
+                    : `${filteredData.length} of ${participants.length} matching`}
+                </span>
               </div>
 
-              <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                <CalendarArrowDown className="h-4 w-4 text-primary" />
-                {t('members.newest_first')}
+              <div className="relative w-full sm:w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder={t('participants.search_placeholder') || 'Search members...'}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="h-9 rounded-xl border-border/80 bg-background pl-9 shadow-sm"
+                />
               </div>
             </div>
 
-            <DataTable
-              data={filteredData}
-              columns={columns}
-              keyExtractor={(row) => row.id}
-              searchable
-              searchPlaceholder={t('participants.search_placeholder') || 'Search...'}
-              searchKey={(row) => `${row.firstName} ${row.lastName} ${row.email} ${row.organization}`}
-              selectable
-              onSelectionChange={(ids) => console.log('Selected:', ids)}
-              pageSize={25}
-              className="space-y-5 [&>div:last-child]:overflow-hidden [&>div:last-child]:rounded-2xl [&>div:last-child]:border-border/70 [&>div:last-child]:shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.22)] [&_thead_tr]:border-border/70 [&_thead_tr]:bg-muted/55 [&_thead_th]:h-14 [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_tbody_td]:py-4 [&_tbody_tr]:border-border/65 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-primary/[0.025]"
-            />
+            {filteredData.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-border bg-card/50 px-6 py-16 text-center">
+                <Search className="mx-auto mb-3 h-8 w-8 text-muted-foreground/40" />
+                <p className="font-medium text-foreground">No matching members</p>
+                <p className="mt-1 text-sm text-muted-foreground">Try another name, email, role, or organization.</p>
+              </div>
+            ) : (
+              <DataTable
+                data={filteredData}
+                columns={columns}
+                keyExtractor={(row) => row.id}
+                searchable={false}
+                pageSize={25}
+                emptyMessage={t('members.no_members')}
+                className="space-y-5 [&>div:last-child]:overflow-hidden [&>div:last-child]:rounded-2xl [&>div:last-child]:border-border/70 [&>div:last-child]:shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.22)] [&_thead_tr]:border-border/70 [&_thead_tr]:bg-muted/55 [&_thead_th]:h-14 [&_thead_th]:text-xs [&_thead_th]:font-semibold [&_thead_th]:uppercase [&_thead_th]:tracking-[0.06em] [&_tbody_td]:py-4 [&_tbody_tr]:border-border/65 [&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-primary/[0.025]"
+              />
+            )}
           </>
         )}
       </main>

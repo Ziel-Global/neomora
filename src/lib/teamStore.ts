@@ -59,16 +59,26 @@ export interface TeamMember {
   updatedAt: string;
 }
 
+// A delegation for a team-based/hybrid event declares how many teams it will
+// bring and, per team-slot, the expected category breakdown (e.g. "Team 1:
+// 11 Athletes, 2 Coaches"). A Team binds to a slot via Team.expectedTeamIndex
+// (the array index here).
+export interface ExpectedTeamSlot {
+  name?: string;
+  memberCounts: Record<string, number>;
+}
+
 export interface Team {
   id: string;
   managerId: string;
-  delegationId?: string;
+  delegationId?: string | null;
   name: string;
   country: string;
   sportCategory: string;
   subCategory?: string;
   eventId?: string;
   memberCount: number;
+  expectedTeamIndex?: number;
   status: 'Draft' | 'Submitted' | 'Under Review' | 'Approved' | 'Rejected';
   createdAt: string;
   updatedAt: string;
@@ -85,7 +95,7 @@ export interface Delegation {
   serverDelegationId?: string;
   rejectionReason?: string;
   reviewMessage?: string;
-  expectedMemberCounts?: Record<string, number>;
+  expectedTeams?: ExpectedTeamSlot[];
   reviewedAt?: string;
   submittedAt?: string;
   createdAt: string;

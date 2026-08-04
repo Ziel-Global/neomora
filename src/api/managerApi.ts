@@ -174,5 +174,11 @@ export const resendManagerSetupEmail = async (id: string): Promise<{ message: st
   return data;
 };
 
+/** Admin deletes (soft) a team manager — DELETE /admin/team-managers/:id */
+export const deleteTeamManager = async (id: string): Promise<{ message: string }> => {
+  const { data } = await apiClient.delete(`/admin/team-managers/${id}`);
+  return data;
+};
+
 /** @deprecated use getAllManagers */
 export const getManagers = getAllManagers;

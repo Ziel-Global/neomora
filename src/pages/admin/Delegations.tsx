@@ -981,12 +981,19 @@ const DelegationsPage: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {selectedDelegation?.expectedMemberCounts && Object.keys(selectedDelegation.expectedMemberCounts).length > 0 && (
+            {selectedDelegation?.expectedTeams && selectedDelegation.expectedTeams.length > 0 && (
               <div className="space-y-2">
-                <Label>Declared Attendee Counts</Label>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(selectedDelegation.expectedMemberCounts).map(([category, count]) => (
-                    <Badge key={category} variant="outline">{category}: {count as number}</Badge>
+                <Label>Declared Team Plan</Label>
+                <div className="space-y-2">
+                  {selectedDelegation.expectedTeams.map((slot, index) => (
+                    <div key={index}>
+                      <p className="text-xs font-medium text-muted-foreground">{slot.name || `Team ${index + 1}`}</p>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {Object.entries(slot.memberCounts || {}).map(([category, count]) => (
+                          <Badge key={category} variant="outline">{category}: {count as number}</Badge>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1023,12 +1030,19 @@ const DelegationsPage: React.FC = () => {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {selectedDelegation?.expectedMemberCounts && Object.keys(selectedDelegation.expectedMemberCounts).length > 0 && (
+            {selectedDelegation?.expectedTeams && selectedDelegation.expectedTeams.length > 0 && (
               <div className="space-y-2">
-                <Label>Declared Attendee Counts</Label>
-                <div className="flex flex-wrap gap-2">
-                  {Object.entries(selectedDelegation.expectedMemberCounts).map(([category, count]) => (
-                    <Badge key={category} variant="outline">{category}: {count as number}</Badge>
+                <Label>Declared Team Plan</Label>
+                <div className="space-y-2">
+                  {selectedDelegation.expectedTeams.map((slot, index) => (
+                    <div key={index}>
+                      <p className="text-xs font-medium text-muted-foreground">{slot.name || `Team ${index + 1}`}</p>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        {Object.entries(slot.memberCounts || {}).map(([category, count]) => (
+                          <Badge key={category} variant="outline">{category}: {count as number}</Badge>
+                        ))}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>

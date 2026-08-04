@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { useManagerSession } from '@/contexts/ManagerSessionContext';
 import { teamStore, teamMemberStore, Team, SPORT_CATEGORIES, TEAM_ROLES } from '@/lib/teamStore';
 import { Plus, Save, Users, UserPlus, Trash2, ChevronLeft, ChevronDown } from 'lucide-react';
@@ -25,12 +26,6 @@ import { addPendingTeamRegistration } from '@/api/registrationApi';
 import { Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-
-const COUNTRIES = [
-  'Saudi Arabia', 'United Arab Emirates', 'Egypt', 'Jordan', 'Kuwait',
-  'Qatar', 'Bahrain', 'Oman', 'Morocco', 'Tunisia', 'Algeria', 'Iraq',
-  'USA', 'UK', 'Germany', 'France', 'Japan', 'China', 'Brazil', 'Australia'
-];
 
 interface MemberForm {
   firstName: string;
@@ -750,19 +745,11 @@ const ManagerRegisterPage: React.FC = () => {
                   </div>
                   <div className="space-y-2">
                     <Label>Nationality</Label>
-                    <Select
+                    <CountryCombobox
                       value={member.nationality}
-                      onValueChange={(v) => updateMember(index, 'nationality', v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select country" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {COUNTRIES.map(c => (
-                          <SelectItem key={c} value={c}>{c}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onChange={(v) => updateMember(index, 'nationality', v)}
+                      placeholder="Select country"
+                    />
                   </div>
                   <div className="space-y-2">
                     <Label>Date of Birth</Label>

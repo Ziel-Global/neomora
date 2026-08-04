@@ -64,6 +64,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setToken(authToken);
       localStorage.setItem('ems_user', JSON.stringify(loggedInUser));
       localStorage.setItem('ems_token', authToken);
+      if (response.refreshToken) {
+        localStorage.setItem('ems_refresh_token', response.refreshToken);
+      }
 
       return true;
     } catch (error: any) {
@@ -78,6 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setToken(null);
     localStorage.removeItem('ems_user');
     localStorage.removeItem('ems_token');
+    localStorage.removeItem('ems_refresh_token');
 
     if (currentRole) {
       const loginRoute = roleLoginRoutes[currentRole];

@@ -585,7 +585,7 @@ const Invitations: React.FC = () => {
             invitation,
             registeredInvitationIds,
             registrations,
-        );
+        ) && !isInvitationDeclined(invitation);
         const responseStatus = getInvitationResponseStatus(invitation);
         return {
             invitation,
@@ -683,6 +683,18 @@ const Invitations: React.FC = () => {
     const renderRegisterControl = (row: InvitationRowModel, variant: 'card' | 'table' = 'card') => {
         const isTable = variant === 'table';
 
+        if (isInvitationDeclined(row.invitation)) {
+            return (
+                <span
+                    className={cn(
+                        'inline-flex h-8 items-center whitespace-nowrap rounded-md bg-muted px-2.5 text-[11px] font-medium text-muted-foreground',
+                        isTable && 'w-full justify-center px-2',
+                    )}
+                >
+                    Declined
+                </span>
+            );
+        }
         if (row.alreadyRegistered) {
             return (
                 <span
@@ -694,18 +706,6 @@ const Invitations: React.FC = () => {
                 >
                     <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
                     {isTable ? 'Registered' : 'Registration complete'}
-                </span>
-            );
-        }
-        if (isInvitationDeclined(row.invitation)) {
-            return (
-                <span
-                    className={cn(
-                        'inline-flex h-8 items-center whitespace-nowrap rounded-md bg-muted px-2.5 text-[11px] font-medium text-muted-foreground',
-                        isTable && 'w-full justify-center px-2',
-                    )}
-                >
-                    Declined
                 </span>
             );
         }

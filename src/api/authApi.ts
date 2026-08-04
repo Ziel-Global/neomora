@@ -2,6 +2,7 @@ import apiClient from './apiClient';
 
 export interface LoginResponse {
   token: string;
+  refreshToken?: string;
   user: {
     id: string;
     email: string;
