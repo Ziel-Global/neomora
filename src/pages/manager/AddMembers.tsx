@@ -460,19 +460,65 @@ const AddMembersPage: React.FC = () => {
       ).trim()
     : '';
 
-  // Roles this specific team is allowed to have, per its delegation's
-  // declared plan — falls back to the full taxonomy for teams that predate
-  // the team-plan feature (no delegation, or no expectedTeamIndex).
-  const declaredRoleOptions = (() => {
-    if (!selectedTeam) return TEAM_ROLES;
+  // The declared team-slot this team is bound to, if any — falls back to
+  // null for teams that predate the team-plan feature (no delegation, or no
+  // expectedTeamIndex), which skips all capacity gating below.
+  const expectedTeamSlot = (() => {
+    if (!selectedTeam) return null;
     const delegationId = (selectedTeam as any).delegationId || (selectedTeam as any).delegation?.id;
     const slotIndex = (selectedTeam as any).expectedTeamIndex;
-    if (!delegationId || slotIndex === undefined || slotIndex === null) return TEAM_ROLES;
+    if (!delegationId || slotIndex === undefined || slotIndex === null) return null;
     const delegation = delegations.find((d: any) => d.id === delegationId);
-    const slot = delegation?.expectedTeams?.[slotIndex];
-    const declared = slot?.memberCounts ? Object.keys(slot.memberCounts) : [];
-    return declared.length > 0 ? declared : TEAM_ROLES;
+    return delegation?.expectedTeams?.[slotIndex] || null;
   })();
+
+  const expectedCounts: Record<string, number> = expectedTeamSlot?.memberCounts || {};
+  const hasDeclaredPlan = Object.keys(expectedCounts).length > 0;
+
+  // Roles this specific team is allowed to have, per its delegation's
+  // declared plan — falls back to the full taxonomy for teams with no plan.
+  const declaredRoleOptions = hasDeclaredPlan ? Object.keys(expectedCounts) : TEAM_ROLES;
+
+  const currentCountsByRole = (() => {
+    const counts: Record<string, number> = {};
+    for (const member of currentMembers) {
+      const role = member.role || '';
+      counts[role] = (counts[role] || 0) + 1;
+    }
+    return counts;
+  })();
+
+  // The team's already-saved roster already fills every declared role to
+  // its required count — nothing more can be added until someone is
+  // removed, so the whole "add members" form gets replaced with a banner.
+  const isTeamFullyStaffed =
+    hasDeclaredPlan &&
+    Object.entries(expectedCounts).every(
+      ([role, count]) => (currentCountsByRole[role] || 0) >= (Number(count) || 0),
+    );
+
+  // Per-row remaining capacity, accounting for both the saved roster AND
+  // whichever roles the *other* draft rows already claim — so two blank
+  // rows can't both pick the last remaining slot for the same role.
+  const remainingCapacityForRow = (rowIndex: number): Record<string, number> => {
+    const draftCountsByRole: Record<string, number> = {};
+    rows.forEach((r, i) => {
+      if (i === rowIndex || !r.role) return;
+      draftCountsByRole[r.role] = (draftCountsByRole[r.role] || 0) + 1;
+    });
+    const remaining: Record<string, number> = {};
+    for (const role of Object.keys(expectedCounts)) {
+      const used = (currentCountsByRole[role] || 0) + (draftCountsByRole[role] || 0);
+      remaining[role] = (Number(expectedCounts[role]) || 0) - used;
+    }
+    return remaining;
+  };
+
+  const roleOptionsForRow = (row: MemberRow, rowIndex: number): string[] => {
+    if (!hasDeclaredPlan) return TEAM_ROLES;
+    const remaining = remainingCapacityForRow(rowIndex);
+    return declaredRoleOptions.filter((role) => (remaining[role] || 0) > 0 || role === row.role);
+  };
 
   const setViewModeAndPersist = (mode: ViewMode) => {
     setViewMode(mode);
@@ -621,6 +667,7 @@ const AddMembersPage: React.FC = () => {
 
   const handleSave = async () => {
     if (!selectedTeamId) { toast.error('Please select a team first'); return; }
+    if (isTeamFullyStaffed) { toast.error('This team is already fully staffed'); return; }
 
     const validRows = rows.filter(r => r.participantId && r.role);
     if (validRows.length === 0) {
@@ -987,7 +1034,20 @@ const AddMembersPage: React.FC = () => {
       )}
 
       {/* Add Members Form — compact rows */}
-      {selectedTeamId && (
+      {selectedTeamId && isTeamFullyStaffed ? (
+        <section className="overflow-hidden rounded-2xl border border-status-success/25 bg-status-success-bg px-5 py-6 text-center shadow-sm">
+          <CheckCircle2 className="mx-auto mb-2 h-8 w-8 text-status-success" />
+          <p className="text-sm font-semibold text-status-success">
+            {selectedTeam?.name} is fully staffed
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-status-success/80">
+            Every role this team's delegation slot requires (
+            {Object.values(expectedCounts).reduce((sum, n) => sum + (Number(n) || 0), 0)} member
+            {Object.values(expectedCounts).reduce((sum, n) => sum + (Number(n) || 0), 0) === 1 ? '' : 's'}) is already assigned.
+            Remove someone above first if you need to swap a member out.
+          </p>
+        </section>
+      ) : selectedTeamId && (
         <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-gradient-to-br from-primary/[0.04] via-transparent to-transparent px-4 py-3.5 sm:px-5">
             <div className="min-w-0">
@@ -1142,7 +1202,7 @@ const AddMembersPage: React.FC = () => {
                         <SelectValue placeholder="Select role…" />
                       </SelectTrigger>
                       <SelectContent position="popper" className="max-h-56">
-                        {declaredRoleOptions.map((role) => (
+                        {roleOptionsForRow(row, index).map((role) => (
                           <SelectItem key={role} value={role}>
                             {role}
                           </SelectItem>
