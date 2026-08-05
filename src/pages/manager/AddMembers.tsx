@@ -230,6 +230,8 @@ const loadRegisteredParticipantsForTeam = async (
       passportNumber: participant.passportNumber,
       gender: participant.gender,
       role: participant.role,
+      sports: participant.sports,
+      teamRole: participant.teamRole,
     });
   }
 
@@ -448,6 +450,30 @@ const AddMembersPage: React.FC = () => {
 
   const selectedTeam = teams.find(t => t.id === selectedTeamId);
 
+  const selectedTeamSport = selectedTeam
+    ? String(
+        (selectedTeam as any).sportName ||
+          selectedTeam.subCategory ||
+          (selectedTeam.sportCategory as any)?.subCategory ||
+          selectedTeam.sportCategory ||
+          '',
+      ).trim()
+    : '';
+
+  // Roles this specific team is allowed to have, per its delegation's
+  // declared plan — falls back to the full taxonomy for teams that predate
+  // the team-plan feature (no delegation, or no expectedTeamIndex).
+  const declaredRoleOptions = (() => {
+    if (!selectedTeam) return TEAM_ROLES;
+    const delegationId = (selectedTeam as any).delegationId || (selectedTeam as any).delegation?.id;
+    const slotIndex = (selectedTeam as any).expectedTeamIndex;
+    if (!delegationId || slotIndex === undefined || slotIndex === null) return TEAM_ROLES;
+    const delegation = delegations.find((d: any) => d.id === delegationId);
+    const slot = delegation?.expectedTeams?.[slotIndex];
+    const declared = slot?.memberCounts ? Object.keys(slot.memberCounts) : [];
+    return declared.length > 0 ? declared : TEAM_ROLES;
+  })();
+
   const setViewModeAndPersist = (mode: ViewMode) => {
     setViewMode(mode);
     try {
@@ -478,7 +504,7 @@ const AddMembersPage: React.FC = () => {
     setRows(prev => {
       const next = [...prev];
       const defaultRole =
-        p.role && TEAM_ROLES.includes(p.role as any) ? p.role : next[index].role;
+        p.teamRole && declaredRoleOptions.includes(p.teamRole) ? p.teamRole : next[index].role;
 
       next[index] = {
         ...next[index],
@@ -526,10 +552,10 @@ const AddMembersPage: React.FC = () => {
 
     setIsCreatingParticipant(true);
     try {
-      // form.role is the row's delegation roster category (Athletes/Players
-      // etc.), not Participant.role (a separate VVIP/VIP/Athlete/Official/
-      // Judge/Media/Fan classification) — sending it here fails backend
-      // validation. The row keeps its own role; nothing needs to carry over.
+      // The row this dialog was opened from already has a role selected —
+      // that's the whole reason we're creating someone to fill it, so the
+      // new participant inherits it as their standing teamRole rather than
+      // asking the manager to pick it again here.
       const payload: ManagerParticipantPayload = {
         firstName: form.firstName.trim(),
         lastName: form.lastName.trim(),
@@ -539,6 +565,7 @@ const AddMembersPage: React.FC = () => {
         nationality: form.nationality || undefined,
         organization: form.organization.trim() || undefined,
         jobTitle: form.jobTitle.trim() || undefined,
+        teamRole: rows[creatingParticipantForIndex]?.role || undefined,
       };
       const created = await createManagerParticipant(payload);
       selectParticipant(creatingParticipantForIndex, { ...created, registrationId: created.id } as Participant);
@@ -565,9 +592,20 @@ const AddMembersPage: React.FC = () => {
         .filter(Boolean),
     );
 
-    const available = allParticipants.filter(
+    let available = allParticipants.filter(
       (participant) => !selectedElsewhere.has(participant.id),
     );
+
+    // Only people who play this team's sport...
+    if (selectedTeamSport) {
+      available = available.filter((p) => (p.sports || []).includes(selectedTeamSport));
+    }
+
+    // ...and whose own declared role matches whichever role this row is
+    // currently set to (no filtering yet if the row's role isn't picked).
+    if (row.role) {
+      available = available.filter((p) => p.teamRole === row.role);
+    }
 
     const q = row.search.toLowerCase().trim();
     if (!q) return available;
@@ -1104,7 +1142,7 @@ const AddMembersPage: React.FC = () => {
                         <SelectValue placeholder="Select role…" />
                       </SelectTrigger>
                       <SelectContent position="popper" className="max-h-56">
-                        {TEAM_ROLES.map((role) => (
+                        {declaredRoleOptions.map((role) => (
                           <SelectItem key={role} value={role}>
                             {role}
                           </SelectItem>

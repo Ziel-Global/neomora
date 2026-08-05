@@ -299,10 +299,10 @@ const MembersPage: React.FC = () => {
       const label = entry.firstName.trim() || 'Member';
       try {
         // entry.role is the delegation roster category (Athletes/Players,
-        // Head Coach/Coach, etc.) — only meaningful for TeamMembership.role
-        // below. Participant.role is a separate, unrelated classification
-        // (VVIP/VIP/Athlete/Official/Judge/Media/Fan) — sending the former
-        // there fails backend validation.
+        // Head Coach/Coach, etc.) — persisted as teamRole, a standing
+        // attribute of the participant. Participant.role is a separate,
+        // unrelated classification (VVIP/VIP/Athlete/Official/Judge/Media/
+        // Fan) — sending it there instead fails backend validation.
         const member = await createManagerParticipant({
           firstName: entry.firstName.trim(),
           lastName: entry.lastName.trim(),
@@ -310,6 +310,7 @@ const MembersPage: React.FC = () => {
           phone: entry.phone || undefined,
           nationality: entry.nationality || undefined,
           sports: entry.sports,
+          teamRole: entry.role || undefined,
         });
         successCount += 1;
 

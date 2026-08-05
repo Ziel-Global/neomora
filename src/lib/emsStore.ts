@@ -84,6 +84,8 @@ export interface EMSParticipant {
   accessibilityNeeds: string;
   emergencyContact?: string;
   sports?: string[];
+  /** The delegation category this person generally plays (Athletes/Players, etc.) — distinct from `role` above. */
+  teamRole?: string;
   createdAt: string;
   updatedAt: string;
 }

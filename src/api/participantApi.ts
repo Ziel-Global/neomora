@@ -46,6 +46,8 @@ export interface ManagerParticipantPayload {
   dietaryRequirements?: string;
   medicalConditions?: string;
   sports?: string[];
+  /** The delegation category this person generally plays (Athletes/Players, etc.) — distinct from `role` above. */
+  teamRole?: string;
 }
 
 const unwrapList = (data: unknown): any[] => {
@@ -107,6 +109,7 @@ export const normalizeParticipant = (raw: any, fallbackId?: string): EMSParticip
     dietaryNotes: source.dietaryNotes || source.dietary_notes || '',
     accessibilityNeeds: source.accessibilityNeeds || source.accessibility_needs || '',
     sports: Array.isArray(source.sports) ? source.sports : (Array.isArray(raw.sports) ? raw.sports : undefined),
+    teamRole: source.teamRole || source.team_role || raw.teamRole || raw.team_role || undefined,
     createdAt: source.createdAt || source.created_at || raw.createdAt || raw.created_at || new Date().toISOString(),
     updatedAt: source.updatedAt || source.updated_at || raw.updatedAt || raw.updated_at || new Date().toISOString(),
   };

@@ -102,6 +102,9 @@ export interface RegisteredParticipantOption {
     teamId?: string;
     eventId?: string;
     status?: string;
+    sports?: string[];
+    /** The delegation category this person generally plays (Athletes/Players, etc.) — distinct from `role` above. */
+    teamRole?: string;
 }
 
 const PENDING_TEAM_REGISTRATIONS_KEY = 'ems_pending_registrations_by_team';

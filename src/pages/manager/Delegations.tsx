@@ -13,14 +13,15 @@ import { Team, Delegation, TeamMember, SPORT_CATEGORIES } from '@/lib/teamStore'
 import { eventStore, participantStore, registrationStore, travelStore } from '@/lib/emsStore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Flag, Users, Send, Clock, AlertCircle, Plus, Minus, Plane, Trash2, ClipboardList, AlertTriangle, Loader2, Calendar, UserCog, HeartPulse, Building2, MoreHorizontal, Sparkles, CheckCircle2, ArrowRight, LayoutGrid, List } from 'lucide-react';
+import { Flag, Users, Send, Clock, AlertCircle, Plus, Minus, Plane, Trash2, ClipboardList, AlertTriangle, Loader2, Calendar, UserCog, HeartPulse, Building2, MoreHorizontal, Sparkles, CheckCircle2, ArrowRight, LayoutGrid, List, Search, UserPlus2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Progress } from '@/components/ui/progress';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { getMyDelegations, createDelegation, submitDelegation, updateDelegation, deleteDelegation, extractDelegationId, submitDelegationRoster } from '@/api/delegationApi';
 import { getEvents } from '@/api/eventApi';
-import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam } from '@/api/teamApi';
+import { getMyTeams, createTeam, listTeamMembers, updateTeamMember, updateTeam, deleteTeamMember, resolveTeamMembershipId, addTeamMember } from '@/api/teamApi';
+import { getManagerParticipants, createManagerParticipant } from '@/api/participantApi';
 import { EMSEvent } from '@/lib/emsStore';
 import { DelegationCategory, groupedDelegationCategories } from '@/lib/delegationCategories';
 import { CountryCombobox } from '@/components/common/CountryCombobox';
@@ -412,6 +413,29 @@ const DelegationsPage: React.FC = () => {
   const [isCreatingTeamForSlot, setIsCreatingTeamForSlot] = useState(false);
   const [removingTeamId, setRemovingTeamId] = useState<string | null>(null);
   const [assigningExistingTeamSlot, setAssigningExistingTeamSlot] = useState<number | null>(null);
+
+  // "Trim excess members" modal — opened when a team attached to a slot has
+  // more people in a category than that slot declared.
+  const [trimmingTeam, setTrimmingTeam] = useState<Team | null>(null);
+  const [removingExcessMembershipId, setRemovingExcessMembershipId] = useState<string | null>(null);
+
+  // "Missing roles" modal — lists what a slot-bound team still needs, each
+  // with an "Add" button that opens the scoped add-member modal below.
+  const [missingRolesTeam, setMissingRolesTeam] = useState<Team | null>(null);
+
+  // Scoped "add a member for this exact role" modal, opened from the
+  // missing-roles list. Search-existing-or-quick-create-new, matching the
+  // same pattern as the AddMembers page's inline creation flow.
+  const [addingRoleFor, setAddingRoleFor] = useState<{ team: Team; category: string } | null>(null);
+  const [addMemberSearch, setAddMemberSearch] = useState('');
+  const [addMemberCandidates, setAddMemberCandidates] = useState<any[]>([]);
+  const [isLoadingAddMemberCandidates, setIsLoadingAddMemberCandidates] = useState(false);
+  const [addingParticipantId, setAddingParticipantId] = useState<string | null>(null);
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [quickCreateForm, setQuickCreateForm] = useState({
+    firstName: '', lastName: '', email: '', phone: '', nationality: '',
+  });
+  const [isQuickCreating, setIsQuickCreating] = useState(false);
   const [rosterCategoryTab, setRosterCategoryTab] = useState<string>('__all__');
   const [viewMode, setViewMode] = useState<ViewMode>(readStoredViewMode);
 
@@ -860,6 +884,132 @@ const DelegationsPage: React.FC = () => {
     }
   };
 
+  const handleRemoveExcessMember = async (member: any) => {
+    const membershipId = resolveTeamMembershipId(member);
+    setRemovingExcessMembershipId(membershipId);
+    try {
+      await deleteTeamMember(membershipId);
+      toast.success('Member removed from team.');
+      await refetch();
+    } catch (error: any) {
+      console.error('Failed to remove excess member:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not remove this member';
+      toast.error(msg);
+    } finally {
+      setRemovingExcessMembershipId(null);
+    }
+  };
+
+  const teamSportOf = (team: Team): string =>
+    String(
+      (team as any).sportName || team.subCategory || (team.sportCategory as any)?.subCategory || team.sportCategory || '',
+    ).trim();
+
+  const openAddMemberForRole = async (team: Team, category: string) => {
+    setAddingRoleFor({ team, category });
+    setAddMemberSearch('');
+    setShowQuickCreate(false);
+    setQuickCreateForm({ firstName: '', lastName: '', email: '', phone: '', nationality: '' });
+    setIsLoadingAddMemberCandidates(true);
+    try {
+      const all = await getManagerParticipants();
+      setAddMemberCandidates(all);
+    } catch (error) {
+      console.error('Failed to load participants:', error);
+      toast.error('Failed to load your directory');
+      setAddMemberCandidates([]);
+    } finally {
+      setIsLoadingAddMemberCandidates(false);
+    }
+  };
+
+  const filteredAddMemberCandidates = () => {
+    if (!addingRoleFor) return [];
+    const { team, category } = addingRoleFor;
+    const sport = teamSportOf(team);
+    const alreadyOnTeam = new Set(
+      (membersByTeam.get(team.id) || [])
+        .map((m: any) => m.participant?.id || m.participantId)
+        .filter(Boolean),
+    );
+
+    let list = addMemberCandidates.filter((p: any) => !alreadyOnTeam.has(p.id));
+    if (sport) list = list.filter((p: any) => (p.sports || []).includes(sport));
+    list = list.filter((p: any) => p.teamRole === category);
+
+    const q = addMemberSearch.trim().toLowerCase();
+    if (q) {
+      list = list.filter((p: any) => {
+        const name = `${p.firstName || ''} ${p.lastName || ''}`.toLowerCase();
+        return name.includes(q) || (p.email || '').toLowerCase().includes(q);
+      });
+    }
+    return list;
+  };
+
+  const handleAddExistingMemberForRole = async (participant: any) => {
+    if (!addingRoleFor) return;
+    const { team, category } = addingRoleFor;
+    setAddingParticipantId(participant.id);
+    try {
+      await addTeamMember(team.id, {
+        participantId: participant.id,
+        role: category,
+        needsVisa: false,
+        needsAccommodation: false,
+        needsTransport: false,
+      });
+      toast.success(`${participant.firstName} added to ${team.name}.`);
+      await refetch();
+      setAddingRoleFor(null);
+    } catch (error: any) {
+      console.error('Failed to add member:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not add this member';
+      toast.error(msg);
+    } finally {
+      setAddingParticipantId(null);
+    }
+  };
+
+  const handleQuickCreateAndAdd = async () => {
+    if (!addingRoleFor) return;
+    const { team, category } = addingRoleFor;
+    if (!quickCreateForm.firstName.trim() || !quickCreateForm.lastName.trim() || !quickCreateForm.email.trim()) {
+      toast.error('First name, last name, and email are required');
+      return;
+    }
+
+    setIsQuickCreating(true);
+    try {
+      const sport = teamSportOf(team);
+      const created = await createManagerParticipant({
+        firstName: quickCreateForm.firstName.trim(),
+        lastName: quickCreateForm.lastName.trim(),
+        email: quickCreateForm.email.trim(),
+        phone: quickCreateForm.phone.trim() || undefined,
+        nationality: quickCreateForm.nationality || undefined,
+        sports: sport ? [sport] : undefined,
+        teamRole: category,
+      });
+      await addTeamMember(team.id, {
+        participantId: created.id,
+        role: category,
+        needsVisa: false,
+        needsAccommodation: false,
+        needsTransport: false,
+      });
+      toast.success(`${created.firstName} was created and added to ${team.name}.`);
+      await refetch();
+      setAddingRoleFor(null);
+    } catch (error: any) {
+      console.error('Failed to create and add member:', error);
+      const msg = error?.response?.data?.message || error?.message || 'Could not create this member';
+      toast.error(Array.isArray(msg) ? msg.join(', ') : String(msg));
+    } finally {
+      setIsQuickCreating(false);
+    }
+  };
+
   const openCountryDialog = (delegationId: string, isDraft: boolean, initialCountry?: string) => {
     setPendingSubmission({ delegationId, isDraft });
     setCountryInput(initialCountry || manager?.country || '');
@@ -1069,6 +1219,42 @@ const DelegationsPage: React.FC = () => {
         categories: categoryBreakdown,
       };
     });
+  };
+
+  // Members of a slot-bound team sitting in a category that's over its
+  // declared count — e.g. slot needs 2 Athletes/Players, team already has 3
+  // (commonly from attaching a pre-existing team that wasn't built for this
+  // plan). Every member in an over-filled category is equally "extra" — no
+  // single one is more removable than another — so all of them come back
+  // here, and the set only shrinks once enough are actually removed.
+  const getExcessMembersForTeam = (team: Team, delegation: Delegation): any[] => {
+    if (team.expectedTeamIndex === undefined || team.expectedTeamIndex === null) return [];
+    const slotBreakdown = getTeamSlotBreakdown(delegation).find((s) => s.slotIndex === team.expectedTeamIndex);
+    if (!slotBreakdown) return [];
+
+    const overCategories = new Set(
+      slotBreakdown.categories.filter((c) => c.actual > c.expected).map((c) => c.category),
+    );
+    if (overCategories.size === 0) return [];
+
+    const members = membersByTeam.get(team.id) || [];
+    return members.filter((m: any) => overCategories.has(m.role || 'Uncategorized'));
+  };
+
+  // Categories where a slot-bound team still has fewer people than declared
+  // — e.g. slot needs 1 Nutritionist, team has 0. Complements
+  // getExcessMembersForTeam: that flags too many, this flags too few.
+  const getMissingRolesForTeam = (
+    team: Team,
+    delegation: Delegation,
+  ): { category: string; missing: number }[] => {
+    if (team.expectedTeamIndex === undefined || team.expectedTeamIndex === null) return [];
+    const slotBreakdown = getTeamSlotBreakdown(delegation).find((s) => s.slotIndex === team.expectedTeamIndex);
+    if (!slotBreakdown) return [];
+
+    return slotBreakdown.categories
+      .filter((c) => c.actual < c.expected)
+      .map((c) => ({ category: c.category, missing: c.expected - c.actual }));
   };
 
   // Delegation-wide aggregate (all slots' categories summed together) — used
@@ -2360,6 +2546,16 @@ const DelegationsPage: React.FC = () => {
                     const boundTeam = getDelegationTeamObjects(selectTeamDelegation).find(
                       (t: any) => t.expectedTeamIndex === index,
                     );
+                    const excessMembers = boundTeam
+                      ? getExcessMembersForTeam(boundTeam, selectTeamDelegation)
+                      : [];
+                    const missingRoles = boundTeam
+                      ? getMissingRolesForTeam(boundTeam, selectTeamDelegation)
+                      : [];
+                    const missingTotal = missingRoles.reduce((sum, m) => sum + m.missing, 0);
+                    const missingTitle = missingRoles
+                      .map((m) => `${m.missing} ${m.category}`)
+                      .join(', ');
                     const slotSummary = Object.entries(slot.memberCounts || {})
                       .map(([category, count]) => `${count} ${category}`)
                       .join(', ') || 'No roster declared';
@@ -2381,11 +2577,40 @@ const DelegationsPage: React.FC = () => {
                           </div>
                         </div>
                         {boundTeam ? (
-                          <div className="flex shrink-0 items-center gap-1">
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-status-success/25 bg-status-success-bg px-2.5 py-1 text-xs font-semibold text-status-success">
-                              <CheckCircle2 className="h-3 w-3 shrink-0" />
-                              <span className="max-w-[9rem] truncate">{boundTeam.name}</span>
-                            </span>
+                          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                            {excessMembers.length === 0 && missingTotal === 0 && (
+                              <span className="inline-flex items-center gap-1.5 rounded-full border border-status-success/25 bg-status-success-bg px-2.5 py-1 text-xs font-semibold text-status-success">
+                                <CheckCircle2 className="h-3 w-3 shrink-0" />
+                                <span className="max-w-[9rem] truncate">{boundTeam.name}</span>
+                              </span>
+                            )}
+                            {missingTotal > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsSelectTeamOpen(false);
+                                  setMissingRolesTeam(boundTeam);
+                                }}
+                                title={missingTitle}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 transition-colors hover:bg-amber-100"
+                              >
+                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                {missingTotal} role{missingTotal === 1 ? '' : 's'} missing
+                              </button>
+                            )}
+                            {excessMembers.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsSelectTeamOpen(false);
+                                  setTrimmingTeam(boundTeam);
+                                }}
+                                className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-2.5 py-1 text-xs font-semibold text-destructive transition-colors hover:bg-destructive/15"
+                              >
+                                <AlertTriangle className="h-3 w-3 shrink-0" />
+                                {excessMembers.length} extra member{excessMembers.length === 1 ? '' : 's'}
+                              </button>
+                            )}
                             <Button
                               size="sm"
                               variant="ghost"
@@ -2458,7 +2683,9 @@ const DelegationsPage: React.FC = () => {
                           <SelectValue placeholder="Choose the team sport" />
                         </SelectTrigger>
                         <SelectContent>
-                          {SPORT_CATEGORIES.map((category) => (
+                          {SPORT_CATEGORIES.filter((category) =>
+                            selectedEventSports.has(category.name.toLowerCase()),
+                          ).map((category) => (
                             <SelectItem key={category.id} value={category.name}>{category.name}</SelectItem>
                           ))}
                         </SelectContent>
@@ -2538,6 +2765,293 @@ const DelegationsPage: React.FC = () => {
                 </Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Trim Excess Members Dialog */}
+      <Dialog open={!!trimmingTeam} onOpenChange={(open) => !open && setTrimmingTeam(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Trim {trimmingTeam?.name}'s roster</DialogTitle>
+            <DialogDescription>
+              This team has more people in a category than the delegation plan declared. Every member
+              below is equally over — remove enough to bring each category back down to what's needed.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const excess = trimmingTeam && selectTeamDelegation
+              ? getExcessMembersForTeam(trimmingTeam, selectTeamDelegation)
+              : [];
+            const byCategory = excess.reduce((groups: Record<string, any[]>, member: any) => {
+              const category = member.role || 'Uncategorized';
+              (groups[category] ||= []).push(member);
+              return groups;
+            }, {});
+
+            if (excess.length === 0) {
+              return (
+                <div className="flex flex-col items-center gap-2 py-8 text-center">
+                  <CheckCircle2 className="h-8 w-8 text-status-success" />
+                  <p className="text-sm font-medium text-foreground">All categories are back in line.</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="max-h-80 space-y-4 overflow-y-auto">
+                {Object.entries(byCategory).map(([category, members]) => (
+                  <div key={category} className="space-y-2">
+                    <p className="text-xs font-semibold text-destructive">
+                      {category} — {members.length} too many
+                    </p>
+                    <div className="space-y-1.5">
+                      {members.map((member: any) => {
+                        const p = member.participant || {};
+                        const membershipId = resolveTeamMembershipId(member);
+                        const initials =
+                          `${p.firstName?.[0] || ''}${p.lastName?.[0] || ''}`.toUpperCase() || '?';
+                        return (
+                          <div
+                            key={membershipId}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-destructive/25 bg-destructive/[0.04] p-2.5"
+                          >
+                            <div className="flex min-w-0 items-center gap-2.5">
+                              <Avatar className="h-8 w-8 shrink-0 ring-1 ring-inset ring-destructive/20">
+                                <AvatarFallback className="bg-destructive/10 text-xs font-semibold text-destructive">
+                                  {initials}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium text-foreground">
+                                  {p.firstName} {p.lastName}
+                                </p>
+                                <p className="truncate text-xs text-muted-foreground">{p.email || 'No email'}</p>
+                              </div>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-medium text-destructive hover:bg-destructive/10"
+                              onClick={() => handleRemoveExcessMember(member)}
+                              disabled={removingExcessMembershipId === membershipId}
+                            >
+                              {removingExcessMembershipId === membershipId ? (
+                                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3 w-3 shrink-0" />
+                              )}
+                              Remove
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTrimmingTeam(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Missing Roles Dialog */}
+      <Dialog open={!!missingRolesTeam} onOpenChange={(open) => !open && setMissingRolesTeam(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Fill {missingRolesTeam?.name}'s roster</DialogTitle>
+            <DialogDescription>
+              These roles are still short of what the delegation plan declared for this team.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(() => {
+            const missing = missingRolesTeam && selectTeamDelegation
+              ? getMissingRolesForTeam(missingRolesTeam, selectTeamDelegation)
+              : [];
+
+            if (missing.length === 0) {
+              return (
+                <div className="flex flex-col items-center gap-2 py-8 text-center">
+                  <CheckCircle2 className="h-8 w-8 text-status-success" />
+                  <p className="text-sm font-medium text-foreground">All declared roles are filled.</p>
+                </div>
+              );
+            }
+
+            return (
+              <div className="space-y-2">
+                {missing.map(({ category, missing: count }) => (
+                  <div
+                    key={category}
+                    className="flex items-center justify-between gap-3 rounded-lg border border-amber-500/25 bg-amber-50 p-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-amber-900">{category}</p>
+                      <p className="text-xs text-amber-700">{count} still needed</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs font-semibold"
+                      onClick={() => missingRolesTeam && openAddMemberForRole(missingRolesTeam, category)}
+                    >
+                      <Plus className="h-3 w-3 shrink-0" />
+                      Add
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMissingRolesTeam(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Member For Role Dialog — opened from the Missing Roles list */}
+      <Dialog open={!!addingRoleFor} onOpenChange={(open) => !open && setAddingRoleFor(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add {addingRoleFor?.category}</DialogTitle>
+            <DialogDescription>
+              To {addingRoleFor?.team.name}. Only people who play this team's sport and are declared as{' '}
+              {addingRoleFor?.category} show up here.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!showQuickCreate ? (
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  placeholder="Search by name or email…"
+                  value={addMemberSearch}
+                  onChange={(e) => setAddMemberSearch(e.target.value)}
+                />
+              </div>
+              <div className="max-h-64 space-y-1.5 overflow-y-auto">
+                {isLoadingAddMemberCandidates ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                  </div>
+                ) : filteredAddMemberCandidates().length === 0 ? (
+                  <p className="py-6 text-center text-sm text-muted-foreground">
+                    No matching members found — create one below.
+                  </p>
+                ) : (
+                  filteredAddMemberCandidates().map((p: any) => {
+                    const initials = `${p.firstName?.[0] || ''}${p.lastName?.[0] || ''}`.toUpperCase() || '?';
+                    return (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border/70 p-2.5"
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <Avatar className="h-8 w-8 shrink-0">
+                            <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">{p.firstName} {p.lastName}</p>
+                            <p className="truncate text-xs text-muted-foreground">{p.email}</p>
+                          </div>
+                        </div>
+                        <Button
+                          size="sm"
+                          className="h-8 shrink-0 rounded-full px-3 text-xs"
+                          onClick={() => handleAddExistingMemberForRole(p)}
+                          disabled={addingParticipantId === p.id}
+                        >
+                          {addingParticipantId === p.id ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            'Add'
+                          )}
+                        </Button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+              <Button variant="outline" className="w-full gap-1.5" onClick={() => setShowQuickCreate(true)}>
+                <UserPlus2 className="h-3.5 w-3.5" />
+                Can't find them? Create new
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-[12px] font-semibold">First name *</Label>
+                  <Input
+                    value={quickCreateForm.firstName}
+                    onChange={(e) => setQuickCreateForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                    placeholder="e.g. Ahmed"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[12px] font-semibold">Last name *</Label>
+                  <Input
+                    value={quickCreateForm.lastName}
+                    onChange={(e) => setQuickCreateForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                    placeholder="e.g. Khan"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[12px] font-semibold">Email *</Label>
+                <Input
+                  type="email"
+                  value={quickCreateForm.email}
+                  onChange={(e) => setQuickCreateForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="member@example.com"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-[12px] font-semibold">Phone</Label>
+                  <Input
+                    value={quickCreateForm.phone}
+                    onChange={(e) => setQuickCreateForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    placeholder="+92 300 1234567"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[12px] font-semibold">Nationality</Label>
+                  <CountryCombobox
+                    value={quickCreateForm.nationality}
+                    onChange={(nationality) => setQuickCreateForm((prev) => ({ ...prev, nationality }))}
+                    placeholder="Select country"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-between gap-2 pt-1">
+                <Button variant="ghost" onClick={() => setShowQuickCreate(false)} disabled={isQuickCreating}>
+                  Back to search
+                </Button>
+                <Button onClick={handleQuickCreateAndAdd} disabled={isQuickCreating}>
+                  {isQuickCreating ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 mr-2 animate-spin" />
+                      Creating…
+                    </>
+                  ) : (
+                    'Create & add'
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddingRoleFor(null)}>Cancel</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
