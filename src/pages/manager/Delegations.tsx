@@ -1287,13 +1287,21 @@ const DelegationsPage: React.FC = () => {
     });
   };
 
+  const isMemberRegistrationComplete = (member: any) => {
+    const p = member.participant || {};
+    return Boolean(p.passportNumber && p.organization && p.jobTitle);
+  };
+
   // Ready to send only once every declared team-slot has a team created for
-  // it AND that team's category counts match the slot exactly — matches the
-  // backend's submitRoster validation, so "you can send" never lies.
+  // it, that team's category counts match the slot exactly, AND every member
+  // on the roster has actually filled in their registration form — matches
+  // the backend's submitRoster validation, so "you can send" never lies.
   const isRosterReadyToSend = (delegation: Delegation): boolean => {
     const slots = getTeamSlotBreakdown(delegation);
     if (slots.length === 0) return false;
-    return slots.every((slot) => !!slot.team && slot.categories.every((c) => c.matches));
+    if (!slots.every((slot) => !!slot.team && slot.categories.every((c) => c.matches))) return false;
+    const roster = getDelegationRoster(delegation);
+    return roster.length > 0 && roster.every((member) => isMemberRegistrationComplete(member));
   };
 
   // "Approved" is reused for two different moments: admin approving the
@@ -1322,11 +1330,6 @@ const DelegationsPage: React.FC = () => {
       toast.error('Failed to fetch team members');
     }
     return allMembers;
-  };
-
-  const isMemberRegistrationComplete = (member: any) => {
-    const p = member.participant || {};
-    return Boolean(p.passportNumber && p.organization && p.jobTitle);
   };
 
   /**
