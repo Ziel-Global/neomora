@@ -17,7 +17,7 @@ import {
   InvitationStatus,
 } from '@/lib/emsStore';
 import { ParticipantRole } from '@/data/mockData';
-import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog, Home, ChevronRight } from 'lucide-react';
+import { Mail, Send, Users, CheckCircle, Plus, Search, Eye, MoreHorizontal, FileText, Clock, XCircle, HelpCircle, Copy, ExternalLink, Trash2, Play, RefreshCw, Crown, Star, UserCog, UserPlus, Home, ChevronRight, IdCard, Lock, Building2, Phone, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,7 +42,7 @@ import { getAllDelegations } from '@/api/delegationApi';
 import { extractInvitationTemplatesFromCampaigns } from '@/api/invitationTemplateApi';
 import {
   getAllManagers,
-  createTeamManager,
+  inviteTeamManager,
   getManagerDisplayName,
   EMSManager,
 } from '@/api/managerApi';
@@ -120,6 +120,33 @@ const ROLES: ParticipantRole[] = ['VVIP', 'VIP', 'Athlete', 'Official', 'Judge',
 interface InvitationManager extends EMSManager {}
 
 const RequiredMark = () => <span className="text-destructive">*</span>;
+
+const FormSection = ({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: React.ElementType;
+  title: string;
+  description?: string;
+  children: React.ReactNode;
+}) => (
+  <section className="space-y-3.5 rounded-2xl border border-border/70 bg-card p-4 shadow-sm sm:p-5">
+    <div className="flex items-start gap-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 text-primary ring-1 ring-inset ring-primary/10">
+        <Icon className="h-4 w-4" />
+      </span>
+      <div className="min-w-0 pt-0.5">
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
+        {description && (
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</p>
+        )}
+      </div>
+    </div>
+    <div className="space-y-3">{children}</div>
+  </section>
+);
 
 const campaignInvitationKey = (inv: Pick<EMSInvitation, 'id' | 'participantId' | 'managerId'>) => {
   if (inv.participantId) return `p:${inv.participantId}`;
@@ -290,8 +317,6 @@ const InvitationsPage: React.FC = () => {
     firstName: '',
     lastName: '',
     email: '',
-    password: '',
-    confirmPassword: '',
     phone: '',
     country: '',
     organization: '',
@@ -811,8 +836,6 @@ const InvitationsPage: React.FC = () => {
       firstName: '',
       lastName: '',
       email: '',
-      password: '',
-      confirmPassword: '',
       phone: '',
       country: '',
       organization: '',
@@ -861,32 +884,12 @@ const InvitationsPage: React.FC = () => {
     }
     setNewManagerPhoneError('');
 
-    if (!newManagerForm.password) {
-      toast({
-        title: 'Password required',
-        description: 'Please set a password for the manager account.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    if (newManagerForm.password !== newManagerForm.confirmPassword) {
-      toast({
-        title: 'Passwords do not match',
-        description: 'Password and confirm password must be the same.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
     setIsCreatingManager(true);
     try {
-      const created = await createTeamManager({
+      const { teamManager: created, setupEmailSent } = await inviteTeamManager({
         firstName,
         lastName,
         email,
-        password: newManagerForm.password,
-        confirmPassword: newManagerForm.confirmPassword,
         phone,
         country,
         organization,
@@ -903,10 +906,18 @@ const InvitationsPage: React.FC = () => {
         prev.includes(created.id) ? prev : [...prev, created.id],
       );
 
-      toast({
-        title: 'Manager created',
-        description: `${getManagerDisplayName(created)} can log in at /login/manager with their email and password.`,
-      });
+      if (setupEmailSent) {
+        toast({
+          title: 'Invite sent',
+          description: `Invite sent to ${created.email}. They'll set their own password to log in.`,
+        });
+      } else {
+        toast({
+          title: 'Manager created',
+          description: `${getManagerDisplayName(created)} was created, but the invite email failed to send. Use "Resend invite" from the Managers page to try again.`,
+          variant: 'destructive',
+        });
+      }
 
       resetNewManagerForm();
       setIsCreateManagerOpen(false);
@@ -2886,127 +2897,200 @@ const InvitationsPage: React.FC = () => {
         setIsCreateManagerOpen(open);
         if (!open) resetNewManagerForm();
       }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Create Team Manager</DialogTitle>
-            <DialogDescription>
-              Add a new team manager to the system. They will be selected for this campaign automatically.
-            </DialogDescription>
+        <DialogContent className="flex w-[calc(100vw-1.5rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl max-h-[90vh]">
+          <DialogHeader className="shrink-0 space-y-0 border-b bg-gradient-to-br from-primary/[0.07] via-card to-card px-5 py-4 pe-12 text-start sm:px-6 sm:py-5">
+            <div className="flex items-start gap-3.5">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary ring-1 ring-inset ring-primary/15 shadow-sm">
+                <UserPlus className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary/70">
+                  Campaign recipients
+                </p>
+                <DialogTitle className="text-xl font-semibold tracking-tight">
+                  Create Team Manager
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-relaxed">
+                  Add a new manager — they will be selected for this campaign automatically.
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="grid gap-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="manager-first-name">First Name <RequiredMark /></Label>
-                <Input
-                  id="manager-first-name"
-                  placeholder="e.g. Ahmed"
-                  value={newManagerForm.firstName}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, firstName: e.target.value }))}
-                />
+
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6 sm:py-5">
+            <FormSection
+              icon={IdCard}
+              title="Personal details"
+              description="Name as it should appear on invitations and communications."
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-first-name" className="text-[12px] font-semibold">
+                    First Name <RequiredMark />
+                  </Label>
+                  <Input
+                    id="manager-first-name"
+                    placeholder="e.g. Ahmed"
+                    value={newManagerForm.firstName}
+                    onChange={(e) => setNewManagerForm(prev => ({ ...prev, firstName: e.target.value }))}
+                    className="h-10 bg-background"
+                    autoComplete="given-name"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-last-name" className="text-[12px] font-semibold">
+                    Last Name <RequiredMark />
+                  </Label>
+                  <Input
+                    id="manager-last-name"
+                    placeholder="e.g. Khan"
+                    value={newManagerForm.lastName}
+                    onChange={(e) => setNewManagerForm(prev => ({ ...prev, lastName: e.target.value }))}
+                    className="h-10 bg-background"
+                    autoComplete="family-name"
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="manager-last-name">Last Name <RequiredMark /></Label>
-                <Input
-                  id="manager-last-name"
-                  placeholder="e.g. Khan"
-                  value={newManagerForm.lastName}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, lastName: e.target.value }))}
-                />
+            </FormSection>
+
+            <FormSection
+              icon={Lock}
+              title="Account access"
+              description="We'll email them a secure link to set their own password."
+            >
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-email" className="text-[12px] font-semibold">
+                    Email <RequiredMark />
+                  </Label>
+                  <div className="relative">
+                    <Mail className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="manager-email"
+                      type="email"
+                      placeholder="e.g. manager@example.com"
+                      value={newManagerForm.email}
+                      onChange={(e) => setNewManagerForm(prev => ({ ...prev, email: e.target.value }))}
+                      className="h-10 bg-background ps-9"
+                      autoComplete="email"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-phone" className="text-[12px] font-semibold">
+                    Phone <RequiredMark />
+                  </Label>
+                  <div
+                    className={cn(
+                      'flex h-10 overflow-hidden rounded-md border border-input bg-background shadow-sm transition-colors focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2',
+                      newManagerPhoneError && 'border-destructive focus-within:ring-destructive',
+                    )}
+                  >
+                    <span className="inline-flex shrink-0 items-center gap-1.5 border-e border-border/80 bg-muted/40 px-2.5 text-xs font-semibold text-muted-foreground">
+                      <Phone className="h-3.5 w-3.5" />
+                      Intl
+                    </span>
+                    <input
+                      id="manager-phone"
+                      type="tel"
+                      inputMode="tel"
+                      placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
+                      value={newManagerForm.phone}
+                      onChange={(e) => {
+                        const phone = sanitizePhoneInput(e.target.value);
+                        setNewManagerForm(prev => ({ ...prev, phone }));
+                        if (newManagerPhoneError) {
+                          setNewManagerPhoneError(validateInternationalPhone(phone) || '');
+                        }
+                      }}
+                      onBlur={() => setNewManagerPhoneError(validateInternationalPhone(newManagerForm.phone) || '')}
+                      className="min-w-0 flex-1 bg-transparent px-3 text-sm outline-none placeholder:text-muted-foreground"
+                      autoComplete="tel"
+                    />
+                  </div>
+                  <p className={cn('text-[11px] leading-tight', newManagerPhoneError ? 'text-destructive' : 'text-muted-foreground')}>
+                    {newManagerPhoneError || 'Include country code, e.g. +92 326 5488525'}
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="manager-email">Email <RequiredMark /></Label>
-              <Input
-                id="manager-email"
-                type="email"
-                placeholder="e.g. manager@example.com"
-                value={newManagerForm.email}
-                onChange={(e) => setNewManagerForm(prev => ({ ...prev, email: e.target.value }))}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="manager-password">Password <RequiredMark /></Label>
-                <Input
-                  id="manager-password"
-                  type="password"
-                  placeholder="Enter password"
-                  value={newManagerForm.password}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, password: e.target.value }))}
-                  autoComplete="new-password"
-                />
+            </FormSection>
+
+            <FormSection
+              icon={Building2}
+              title="Organization"
+              description="Country and federation help route them to the right events."
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-country" className="text-[12px] font-semibold">
+                    Country <RequiredMark />
+                  </Label>
+                  <Input
+                    id="manager-country"
+                    placeholder="e.g. Pakistan"
+                    value={newManagerForm.country}
+                    onChange={(e) => setNewManagerForm(prev => ({ ...prev, country: e.target.value }))}
+                    className="h-10 bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="manager-organization" className="text-[12px] font-semibold">
+                    Organization <RequiredMark />
+                  </Label>
+                  <Input
+                    id="manager-organization"
+                    placeholder="e.g. National Sports Council"
+                    value={newManagerForm.organization}
+                    onChange={(e) => setNewManagerForm(prev => ({ ...prev, organization: e.target.value }))}
+                    className="h-10 bg-background"
+                  />
+                </div>
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="manager-federation" className="text-[12px] font-semibold">
+                    Sport Federation <RequiredMark />
+                  </Label>
+                  <div className="relative">
+                    <Building2 className="pointer-events-none absolute start-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="manager-federation"
+                      placeholder="e.g. Saudi Sports Federation"
+                      value={newManagerForm.federation}
+                      onChange={(e) => setNewManagerForm(prev => ({ ...prev, federation: e.target.value }))}
+                      className="h-10 bg-background ps-9"
+                    />
+                  </div>
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="manager-confirm-password">Confirm Password <RequiredMark /></Label>
-                <Input
-                  id="manager-confirm-password"
-                  type="password"
-                  placeholder="Re-enter password"
-                  value={newManagerForm.confirmPassword}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                  autoComplete="new-password"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="manager-phone">Phone <RequiredMark /></Label>
-              <Input
-                id="manager-phone"
-                type="tel"
-                placeholder={INTERNATIONAL_PHONE_PLACEHOLDER}
-                value={newManagerForm.phone}
-                onChange={(e) => {
-                  const phone = sanitizePhoneInput(e.target.value);
-                  setNewManagerForm(prev => ({ ...prev, phone }));
-                  if (newManagerPhoneError) {
-                    setNewManagerPhoneError(validateInternationalPhone(phone) || '');
-                  }
-                }}
-                onBlur={() => setNewManagerPhoneError(validateInternationalPhone(newManagerForm.phone) || '')}
-                className={newManagerPhoneError ? 'border-red-500' : undefined}
-              />
-              {newManagerPhoneError && (
-                <p className="text-sm text-red-500">{newManagerPhoneError}</p>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="manager-country">Country <RequiredMark /></Label>
-                <Input
-                  id="manager-country"
-                  placeholder="e.g. Pakistan"
-                  value={newManagerForm.country}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, country: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="manager-organization">Organization <RequiredMark /></Label>
-                <Input
-                  id="manager-organization"
-                  placeholder="e.g. National Sports Council"
-                  value={newManagerForm.organization}
-                  onChange={(e) => setNewManagerForm(prev => ({ ...prev, organization: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="manager-federation">Sport Federation <RequiredMark /></Label>
-              <Input
-                id="manager-federation"
-                placeholder="e.g. Saudi Sports Federation"
-                value={newManagerForm.federation}
-                onChange={(e) => setNewManagerForm(prev => ({ ...prev, federation: e.target.value }))}
-              />
-            </div>
+            </FormSection>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCreateManagerOpen(false)} disabled={isCreatingManager}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateManager} disabled={isCreatingManager}>
-              {isCreatingManager ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserCog className="h-4 w-4 mr-2" />}
-              Create Manager
-            </Button>
+
+          <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-5 py-3.5 sm:px-6 sm:justify-between">
+            <p className="hidden items-center gap-1.5 text-[11px] text-muted-foreground sm:flex">
+              <ShieldCheck className="h-3.5 w-3.5 text-primary/60" />
+              They choose their own password from the email link — selected for this campaign after create.
+            </p>
+            <div className="flex w-full gap-2 sm:w-auto">
+              <Button
+                variant="outline"
+                className="h-9 flex-1 sm:flex-none"
+                onClick={() => setIsCreateManagerOpen(false)}
+                disabled={isCreatingManager}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="h-9 flex-1 gap-1.5 shadow-sm sm:flex-none"
+                onClick={handleCreateManager}
+                disabled={isCreatingManager}
+              >
+                {isCreatingManager ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <UserCog className="h-4 w-4" />
+                )}
+                {isCreatingManager ? 'Sending…' : 'Send Invite'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
