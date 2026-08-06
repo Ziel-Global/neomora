@@ -309,7 +309,7 @@ const ParticipantsPage: React.FC = () => {
       sortable: true,
       accessor: (row) => (
         <span className="inline-flex items-center rounded-full border border-primary/10 bg-primary/[0.07] px-2.5 py-1 text-xs font-semibold text-primary">
-          {row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '—'}
+          {row.teamRole || (row.role ? t(`participants.roles.${row.role.toLowerCase()}`) : '—')}
         </span>
       ),
     },

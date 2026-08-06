@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -30,7 +29,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CountryCombobox } from '@/components/common/CountryCombobox';
 import { addTeamMember, getMyTeams, listTeamMembers } from '@/api/teamApi';
 import { createManagerParticipant, deleteManagerParticipant, getManagerParticipants } from '@/api/participantApi';
-import { DELEGATION_CATEGORY_LABELS } from '@/lib/delegationCategories';
+import { DELEGATION_CATEGORIES, DELEGATION_CATEGORY_LABELS } from '@/lib/delegationCategories';
 import { SPORT_CATEGORIES } from '@/lib/teamStore';
 import {
   INTERNATIONAL_PHONE_PLACEHOLDER,
@@ -58,6 +57,40 @@ import { toast } from 'sonner';
 const ALL_SPORTS_TAB = '__all__';
 const NO_SPORT_TAB = 'No sport set';
 const SPORT_FILTER_KEY = 'ems_manager_members_sport_tab';
+
+const ROLE_TONE: Record<string, string> = {
+  'Athletes/Players': 'border-sky-500/20 bg-sky-500/10 text-sky-800',
+  'Team Officials': 'border-violet-500/20 bg-violet-500/10 text-violet-800',
+  'Support Staff': 'border-emerald-500/20 bg-emerald-500/10 text-emerald-800',
+  Administrative: 'border-amber-500/20 bg-amber-500/10 text-amber-900',
+  Others: 'border-border/70 bg-muted/60 text-foreground/75',
+};
+
+const roleGroupFor = (role: string) =>
+  DELEGATION_CATEGORIES.find((c) => c.label === role)?.group || 'Others';
+
+/** Compact label for table chips — keep full text in title tooltip. */
+const shortRoleLabel = (role: string) => {
+  if (!role) return 'Member';
+  if (role.includes('/')) return role.split('/')[0].trim();
+  return role;
+};
+
+const RoleChip = ({ role }: { role?: string | null }) => {
+  const full = (role || 'Member').trim() || 'Member';
+  const tone = ROLE_TONE[roleGroupFor(full)] || ROLE_TONE.Others;
+  return (
+    <span
+      title={full}
+      className={cn(
+        'inline-flex max-w-full items-center rounded-lg border px-2.5 py-1 text-xs font-semibold leading-tight',
+        tone,
+      )}
+    >
+      <span className="truncate">{shortRoleLabel(full)}</span>
+    </span>
+  );
+};
 
 const readStoredSportTab = (): string => {
   try {
@@ -817,23 +850,23 @@ const MembersPage: React.FC = () => {
             </p>
           </div>
         ) : (
-          <div className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-sm">
+          <div className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.14)]">
             <div className="overflow-x-auto">
               <Table className="w-full table-fixed">
                 <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="h-11 min-w-0 bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">
+                  <TableRow className="border-b border-border/60 hover:bg-transparent">
+                    <TableHead className="h-11 bg-muted/35 px-4 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
                       Member
                     </TableHead>
-                    <TableHead className="h-11 w-[160px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">
+                    <TableHead className="h-11 w-[200px] bg-muted/35 px-4 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
                       Role
                     </TableHead>
                     {activeSportTab === ALL_SPORTS_TAB && (
-                      <TableHead className="h-11 w-[180px] bg-muted/40 text-[11px] font-semibold uppercase tracking-wider">
+                      <TableHead className="h-11 w-[160px] bg-muted/35 px-4 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
                         Sports
                       </TableHead>
                     )}
-                    <TableHead className="h-11 w-[140px] bg-muted/40 text-right text-[11px] font-semibold uppercase tracking-wider">
+                    <TableHead className="h-11 w-[200px] bg-muted/35 px-4 text-end text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">
                       Actions
                     </TableHead>
                   </TableRow>
@@ -849,11 +882,11 @@ const MembersPage: React.FC = () => {
                     return (
                       <TableRow
                         key={member.id}
-                        className="border-border/60 transition-colors hover:bg-muted/25"
+                        className="border-border/40 transition-colors hover:bg-muted/20"
                       >
-                        <TableCell className="min-w-0 py-3">
+                        <TableCell className="min-w-0 px-4 py-3.5">
                           <div className="flex items-center gap-3">
-                            <Avatar className="h-9 w-9 shrink-0 ring-1 ring-inset ring-border/70">
+                            <Avatar className="h-9 w-9 shrink-0 ring-1 ring-inset ring-border/60">
                               <AvatarFallback className="bg-gradient-to-br from-primary/15 to-primary/5 text-xs font-semibold text-primary">
                                 {initials}
                               </AvatarFallback>
@@ -868,22 +901,22 @@ const MembersPage: React.FC = () => {
                             </div>
                           </div>
                         </TableCell>
-                        <TableCell className="py-3">
-                          <Badge variant="outline" className="max-w-full truncate font-normal">
-                            {member.role || 'Member'}
-                          </Badge>
+                        <TableCell className="px-4 py-3.5">
+                          <RoleChip role={member.teamRole || member.role} />
                         </TableCell>
                         {activeSportTab === ALL_SPORTS_TAB && (
-                          <TableCell className="min-w-0 py-3">
-                            <p className="truncate text-sm text-muted-foreground">{sportsLabel}</p>
+                          <TableCell className="min-w-0 px-4 py-3.5">
+                            <p className="truncate text-sm text-muted-foreground" title={sportsLabel}>
+                              {sportsLabel}
+                            </p>
                           </TableCell>
                         )}
-                        <TableCell className="py-3 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
+                        <TableCell className="px-4 py-3.5 text-end">
+                          <div className="inline-flex items-center justify-end gap-1.5">
                             <Button
                               variant="outline"
                               size="sm"
-                              className="h-8 gap-1.5 border-border/80 bg-background"
+                              className="h-8 gap-1.5 border-border/70 bg-background shadow-sm"
                               onClick={() => openAssignToTeam(member)}
                             >
                               <FolderPlus className="h-3.5 w-3.5" />
@@ -892,7 +925,7 @@ const MembersPage: React.FC = () => {
                             <Button
                               variant="outline"
                               size="icon"
-                              className="h-8 w-8 shrink-0 border-border/80 bg-background text-muted-foreground hover:text-destructive"
+                              className="h-8 w-8 shrink-0 border-border/70 bg-background text-muted-foreground shadow-sm hover:border-destructive/30 hover:bg-destructive/5 hover:text-destructive"
                               onClick={() => setMemberToDelete(member)}
                               title="Delete member"
                             >
