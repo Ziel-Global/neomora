@@ -38,6 +38,7 @@ const statusConfigs: Record<string, StatusConfig> = {
   // Registration
   'Draft': { variant: 'neutral', icon: FileText },
   'Submitted': { variant: 'info', icon: Send },
+  'Roster Submitted': { variant: 'info', icon: Send },
   'Under Review': { variant: 'warning', icon: Clock },
   'Approved': { variant: 'success', icon: CheckCircle2 },
   'Rejected': { variant: 'error', icon: XCircle },
@@ -91,6 +92,8 @@ const variantStyles: Record<StatusVariant, string> = {
 
 interface StatusBadgeProps {
   status?: string;
+  /** Optional display text override (status still drives icon/color). */
+  label?: string;
   showIcon?: boolean;
   size?: 'sm' | 'md' | 'default';
   variant?: 'success' | 'error' | 'warning' | 'info' | 'pending' | 'neutral' | 'destructive' | 'secondary' | 'default';
@@ -99,6 +102,7 @@ interface StatusBadgeProps {
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({
   status,
+  label,
   showIcon = true,
   size = 'md',
   variant,
@@ -124,18 +128,21 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
     ? { variant: mapVariant(variant), icon: statusConfigs[safeStatus]?.icon || HelpCircle }
     : (statusConfigs[safeStatus] || { variant: 'neutral' as StatusVariant, icon: HelpCircle });
   const Icon = config.icon;
+  const displayLabel =
+    label ??
+    t(`common.${safeStatus.toLowerCase().replace(/\s+/g, '_')}`, { defaultValue: safeStatus });
 
   return (
     <span
       className={cn(
-        'status-badge',
+        'status-badge whitespace-nowrap',
         variantStyles[config.variant],
         (size === 'sm' || size === 'default') && size === 'sm' && 'text-[10px] px-2 py-0.5',
         className
       )}
     >
-      {showIcon && <Icon className={cn('h-3 w-3', size === 'sm' && 'h-2.5 w-2.5')} />}
-      {t(`common.${safeStatus.toLowerCase().replace(/\s+/g, '_')}`, { defaultValue: safeStatus })}
+      {showIcon && <Icon className={cn('h-3 w-3 shrink-0', size === 'sm' && 'h-2.5 w-2.5')} />}
+      <span>{displayLabel}</span>
     </span>
   );
 };

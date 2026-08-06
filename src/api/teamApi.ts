@@ -179,10 +179,25 @@ export interface PendingTeamMember {
     id: string;
     role?: string;
     status?: string;
-    participant: { id: string; firstName?: string; lastName?: string; email?: string; nationality?: string } | null;
+    participant: {
+        id: string;
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+        nationality?: string;
+        passportNumber?: string;
+        organization?: string;
+        jobTitle?: string;
+        teamRole?: string;
+    } | null;
     team: { id: string; name?: string } | null;
     delegation: { id: string; country?: string; managerName?: string | null } | null;
     eventName?: string | null;
+    registrationId?: string | null;
+    submittedAt?: string | null;
+    dietaryRequirements?: string | null;
+    documentCount?: number;
 }
 
 // Admin: list team members whose manager has sent the roster for review

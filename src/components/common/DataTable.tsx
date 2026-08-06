@@ -52,6 +52,7 @@ interface DataTableProps<T> {
   emptyMessage?: string;
   className?: string;
   onRowClick?: (row: T) => void;
+  rowClassName?: (row: T) => string | undefined;
 }
 
 type SortDirection = 'asc' | 'desc' | null;
@@ -69,6 +70,7 @@ export function DataTable<T>({
   emptyMessage = 'No data available',
   className,
   onRowClick,
+  rowClassName,
 }: DataTableProps<T>) {
   const { t } = useTranslation();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -218,24 +220,27 @@ export function DataTable<T>({
                   <TableHead
                     key={column.key}
                     className={cn(
+                      'text-start',
                       column.sortable && 'cursor-pointer select-none',
                       column.className,
-                      'text-start'
                     )}
                     onClick={() => column.sortable && handleSort(column.key)}
                   >
-                    <div className="flex items-center gap-2 justify-start">
+                    <div className={cn(
+                      'flex items-center gap-1.5',
+                      column.className?.includes('text-end') ? 'justify-end' : 'justify-start',
+                    )}>
                       {column.header}
                       {column.sortable && (
-                        <span className="text-muted-foreground">
+                        <span className="shrink-0 text-muted-foreground">
                           {sortKey === column.key ? (
                             sortDirection === 'asc' ? (
-                              <ArrowUp className="h-4 w-4" />
+                              <ArrowUp className="h-3.5 w-3.5" />
                             ) : (
-                              <ArrowDown className="h-4 w-4" />
+                              <ArrowDown className="h-3.5 w-3.5" />
                             )
                           ) : (
-                            <ArrowUpDown className="h-4 w-4 opacity-50" />
+                            <ArrowUpDown className="h-3.5 w-3.5 opacity-40" />
                           )}
                         </span>
                       )}
@@ -266,6 +271,7 @@ export function DataTable<T>({
                         'transition-colors',
                         isSelected && 'bg-accent/5',
                         onRowClick && 'cursor-pointer hover:bg-muted/50',
+                        rowClassName?.(row),
                       )}
                       onClick={() => onRowClick?.(row)}
                     >

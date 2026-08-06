@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { DataTable, Column } from '@/components/common/DataTable';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -30,11 +30,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import {
   Flag,
   Users,
   CheckCircle2,
@@ -42,31 +37,57 @@ import {
   Clock,
   MoreHorizontal,
   Eye,
-  ChevronDown,
+  AlertTriangle,
   ChevronRight,
   Home,
   Filter,
   FileText,
   Download,
   Loader2,
+  Sparkles,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { getAllDelegations, updateDelegationStatus, requestDelegationUpdate } from '@/api/delegationApi';
 import { getAllTeams, listTeamMembers, getPendingTeamMembers, approveTeamMember, rejectTeamMember, PendingTeamMember } from '@/api/teamApi';
 import { getEvents } from '@/api/eventApi';
-import { getRegistrationsByTeam } from '@/api/registrationApi';
+import { getRegistrationsByTeam, requestRegistrationUpdate, startRegistrationReview } from '@/api/registrationApi';
 
-// Shared look for the delegation table: fixed layout, airy rows, quiet header
+// Shared look for the delegation table
 const TABLE_SKIN = [
-  '[&>div.rounded-lg]:rounded-2xl [&>div.rounded-lg]:border-border/70 [&>div.rounded-lg]:shadow-sm',
+  '[&>div.rounded-lg]:overflow-hidden [&>div.rounded-lg]:rounded-2xl [&>div.rounded-lg]:border-border/70 [&>div.rounded-lg]:shadow-[0_10px_30px_-18px_hsl(var(--foreground)/0.14)]',
   '[&_table]:w-full [&_table]:table-fixed',
-  '[&_thead_tr]:border-b [&_thead_tr]:border-border/70 [&_thead_tr]:bg-muted/40 [&_thead_tr:hover]:bg-muted/40',
-  '[&_th]:h-12 [&_th]:px-3 [&_th]:text-[10px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.12em] [&_th]:text-muted-foreground/70',
-  '[&_td]:px-3 [&_td]:py-3.5',
-  '[&_tbody_tr]:border-b [&_tbody_tr]:border-border/40 [&_tbody_tr:last-child]:border-0',
-  '[&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-primary/[0.035]',
+  '[&_thead_tr]:border-b [&_thead_tr]:border-border/60 [&_thead_tr]:bg-muted/35 [&_thead_tr:hover]:bg-muted/35',
+  '[&_th]:h-11 [&_th]:px-4 [&_th]:text-[10px] [&_th]:font-semibold [&_th]:uppercase [&_th]:tracking-[0.08em] [&_th]:text-muted-foreground/70',
+  '[&_td]:overflow-hidden [&_td]:px-4 [&_td]:py-3.5',
+  '[&_tbody_tr]:border-b [&_tbody_tr]:border-border/35 [&_tbody_tr:last-child]:border-0',
+  '[&_tbody_tr]:transition-colors [&_tbody_tr:hover]:bg-muted/30',
 ].join(' ');
+
+const getDelegationKey = (d: { id?: string; delegationId?: string }) =>
+  String(d.delegationId || d.id || '');
+
+const memberBelongsToDelegation = (
+  member: PendingTeamMember,
+  delegation: DelegationWithDetails | null | undefined,
+) => {
+  if (!delegation) return false;
+  const delKey = getDelegationKey(delegation);
+  const memberDelKey = String(member.delegation?.id || '');
+  if (delKey && memberDelKey && delKey === memberDelKey) return true;
+
+  const teamIds = new Set(
+    [
+      ...(delegation.teamIds || []),
+      ...((delegation.teams || []).map((t: any) => t.id || t._id)),
+    ]
+      .filter(Boolean)
+      .map(String),
+  );
+  const memberTeamId = String(member.team?.id || '');
+  return Boolean(memberTeamId && teamIds.has(memberTeamId));
+};
 
 interface DelegationWithDetails {
   id: string;
@@ -108,6 +129,14 @@ const DelegationsPage: React.FC = () => {
   const [memberRejectDialogOpen, setMemberRejectDialogOpen] = useState(false);
   const [selectedMember, setSelectedMember] = useState<PendingTeamMember | null>(null);
   const [memberRejectReason, setMemberRejectReason] = useState('');
+  /** Which delegation the Review modal is scoped to. */
+  const [focusedDelegationId, setFocusedDelegationId] = useState<string | null>(null);
+  const [reviewDialogOpen, setReviewDialogOpen] = useState(false);
+  /** Per-member detail dialog, opened from a row in the Review modal's queue. */
+  const [detailMember, setDetailMember] = useState<PendingTeamMember | null>(null);
+  const [askChangesDialogOpen, setAskChangesDialogOpen] = useState(false);
+  const [askChangesReason, setAskChangesReason] = useState('');
+  const [isAskingChanges, setIsAskingChanges] = useState(false);
 
   const loadData = async () => {
     setIsLoading(true);
@@ -305,6 +334,7 @@ const DelegationsPage: React.FC = () => {
       await approveTeamMember(member.id);
       setPendingMembers(prev => prev.filter(m => m.id !== member.id));
       toast.success(`${member.participant?.firstName || 'Member'} approved`);
+      setDetailMember(prev => (prev?.id === member.id ? null : prev));
     } catch (error: any) {
       const msg = error?.response?.data?.message || error?.message || 'Failed to approve member';
       toast.error(msg);
@@ -330,10 +360,59 @@ const DelegationsPage: React.FC = () => {
       setPendingMembers(prev => prev.filter(m => m.id !== selectedMember.id));
       toast.success(`${selectedMember.participant?.firstName || 'Member'} rejected`);
       setMemberRejectDialogOpen(false);
+      setDetailMember(prev => (prev?.id === selectedMember.id ? null : prev));
       setSelectedMember(null);
       setMemberRejectReason('');
     } catch (error: any) {
       const msg = error?.response?.data?.message || error?.message || 'Failed to reject member';
+      toast.error(msg);
+    } finally {
+      setMemberActionId(null);
+    }
+  };
+
+  const openAskChangesDialog = (member: PendingTeamMember) => {
+    setSelectedMember(member);
+    setAskChangesReason('');
+    setAskChangesDialogOpen(true);
+  };
+
+  const handleAskForChanges = async () => {
+    if (!selectedMember || !askChangesReason.trim()) {
+      toast.error('Please describe what needs to change');
+      return;
+    }
+    if (!selectedMember.registrationId) {
+      toast.error("This member has no registration on file yet to send changes for");
+      return;
+    }
+    setIsAskingChanges(true);
+    try {
+      await requestRegistrationUpdate(selectedMember.registrationId, askChangesReason.trim());
+      toast.success(`Asked ${selectedMember.participant?.firstName || 'the member'} for changes`);
+      setAskChangesDialogOpen(false);
+      setDetailMember(prev => (prev?.id === selectedMember.id ? null : prev));
+      setSelectedMember(null);
+      setAskChangesReason('');
+    } catch (error: any) {
+      const msg = error?.response?.data?.message || error?.message || 'Failed to request changes';
+      toast.error(msg);
+    } finally {
+      setIsAskingChanges(false);
+    }
+  };
+
+  const handleDecideLater = async (member: PendingTeamMember) => {
+    if (!member.registrationId) {
+      setDetailMember(null);
+      return;
+    }
+    setMemberActionId(member.id);
+    try {
+      await startRegistrationReview(member.registrationId);
+      setDetailMember(null);
+    } catch (error: any) {
+      const msg = error?.response?.data?.message || error?.message || 'Failed to update';
       toast.error(msg);
     } finally {
       setMemberActionId(null);
@@ -353,6 +432,35 @@ const DelegationsPage: React.FC = () => {
     if (statusFilter !== 'all' && d.status !== statusFilter) return false;
     return true;
   });
+
+  const focusedDelegation = useMemo(
+    () =>
+      focusedDelegationId
+        ? delegations.find((d) => getDelegationKey(d) === focusedDelegationId) || null
+        : null,
+    [delegations, focusedDelegationId],
+  );
+
+  const pendingByDelegation = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const del of delegations) {
+      const key = getDelegationKey(del);
+      if (!key) continue;
+      const count = pendingMembers.filter((m) => memberBelongsToDelegation(m, del)).length;
+      if (count > 0) map.set(key, count);
+    }
+    return map;
+  }, [delegations, pendingMembers]);
+
+  const scopedPendingMembers = useMemo(() => {
+    if (!focusedDelegation) return [];
+    return pendingMembers.filter((m) => memberBelongsToDelegation(m, focusedDelegation));
+  }, [focusedDelegation, pendingMembers]);
+
+  const openReviewDialog = (delegation: DelegationWithDetails) => {
+    setFocusedDelegationId(getDelegationKey(delegation));
+    setReviewDialogOpen(true);
+  };
 
   const handleApprove = async (delegation: DelegationWithDetails) => {
     try {
@@ -467,51 +575,51 @@ const DelegationsPage: React.FC = () => {
     }
   };
 
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
-      case 'Athlete': return 'bg-status-info-bg text-status-info';
-      case 'Head Coach': return 'bg-accent/20 text-accent';
-      case 'Assistant Coach': return 'bg-accent/10 text-accent';
-      case 'Medical Doctor': return 'bg-status-error-bg text-status-error';
-      case 'Physiotherapist': return 'bg-status-warning-bg text-status-warning';
-      default: return 'bg-muted text-muted-foreground';
-    }
-  };
-
   const columns: Column<DelegationWithDetails>[] = [
     {
       key: 'country',
       header: 'Delegation',
       sortable: true,
-      className: 'min-w-0',
-      accessor: (row) => (
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent/20 to-accent/5 text-accent ring-1 ring-inset ring-accent/15">
-            <Flag className="h-4 w-4" />
+      className: 'w-[26%]',
+      accessor: (row) => {
+        const pendingCount = pendingByDelegation.get(getDelegationKey(row)) || 0;
+        const managerLabel =
+          row.manager?.firstName || row.manager?.lastName
+            ? `${row.manager?.firstName || ''} ${row.manager?.lastName || ''}`.trim()
+            : row.managerName;
+
+        return (
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
+              <Flag className="h-4 w-4" />
+              {pendingCount > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-status-warning px-1 text-[9px] font-bold leading-none text-white ring-2 ring-card">
+                  {pendingCount}
+                </span>
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-foreground">{row.country}</p>
+              {managerLabel && (
+                <p className="truncate text-xs text-muted-foreground">{managerLabel}</p>
+              )}
+            </div>
           </div>
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold leading-tight text-foreground">{row.country}</p>
-            <p className="truncate text-xs leading-tight text-muted-foreground">
-              {row.manager?.firstName || row.manager?.lastName
-                ? `${row.manager?.firstName || ''} ${row.manager?.lastName || ''}`.trim()
-                : row.managerName}
-            </p>
-          </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: 'event',
       header: 'Event',
-      className: 'w-[150px] min-w-0',
+      className: 'w-[14%]',
       accessor: (row) => (
-        <span className="block truncate text-[13px] text-foreground/80">{row.eventName}</span>
+        <span className="block truncate text-sm text-foreground/85">{row.eventName || '—'}</span>
       ),
     },
     {
       key: 'teams',
       header: 'Teams',
-      className: 'w-[170px] min-w-0',
+      className: 'w-[16%]',
       accessor: (row) => {
         const teamNames = row.teams && row.teams.length > 0
           ? row.teams.map((team: any) => team.name || team.sportCategory || 'Team')
@@ -520,21 +628,21 @@ const DelegationsPage: React.FC = () => {
             : [];
 
         if (teamNames.length === 0) {
-          return <span className="text-xs italic text-muted-foreground">Not assigned</span>;
+          return <span className="text-xs text-muted-foreground">—</span>;
         }
 
         return (
-          <div className="flex min-w-0 items-center gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
             <span
               title={teamNames.join(', ')}
-              className="min-w-0 truncate rounded-md border border-border/70 bg-muted/40 px-2 py-1 text-xs font-medium text-foreground/75"
+              className="min-w-0 truncate text-sm text-foreground/85"
             >
               {teamNames[0]}
             </span>
             {teamNames.length > 1 && (
               <span
                 title={teamNames.slice(1).join(', ')}
-                className="shrink-0 rounded-md bg-primary/10 px-1.5 py-1 text-xs font-semibold text-primary"
+                className="shrink-0 text-xs font-medium text-muted-foreground"
               >
                 +{teamNames.length - 1}
               </span>
@@ -546,29 +654,21 @@ const DelegationsPage: React.FC = () => {
     {
       key: 'members',
       header: 'Members',
-      className: 'w-[100px]',
+      className: 'w-[9%]',
       accessor: (row) => (
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-1 text-xs font-semibold text-foreground/80 transition-colors hover:border-primary/30 hover:bg-primary/5 hover:text-primary"
-          onClick={(event) => {
-            event.stopPropagation();
-            openViewMembersDialog(row);
-          }}
-          title="View members"
-        >
-          <Users className="h-3.5 w-3.5" />
+        <span className="inline-flex items-center gap-1.5 text-sm tabular-nums text-foreground/85">
+          <Users className="h-3.5 w-3.5 text-muted-foreground" />
           {row.totalMembers}
-        </button>
+        </span>
       ),
     },
     {
       key: 'submittedAt',
       header: 'Submitted',
       sortable: true,
-      className: 'w-[115px] min-w-0',
+      className: 'w-[12%]',
       accessor: (row) => (
-        <span className="block truncate text-[13px] text-muted-foreground">
+        <span className="block truncate text-sm tabular-nums text-muted-foreground">
           {row.submittedAt
             ? new Date(row.submittedAt).toLocaleDateString(undefined, {
                 day: 'numeric',
@@ -582,47 +682,92 @@ const DelegationsPage: React.FC = () => {
     {
       key: 'status',
       header: 'Status',
-      className: 'w-[130px]',
-      accessor: (row) => <StatusBadge status={row.status} />,
+      className: 'w-[150px]',
+      accessor: (row) => (
+        <StatusBadge
+          status={row.status}
+          size="sm"
+          label={row.status === 'Roster Submitted' ? 'Roster sent' : undefined}
+        />
+      ),
     },
     {
       key: 'actions',
       header: 'Actions',
-      className: 'w-[220px]',
+      className: 'w-[180px] text-end',
       accessor: (row) => {
         const canDecide = row.status === 'Submitted' || row.status === 'Under Review';
-
-        if (!canDecide) {
-          return <span className="text-xs text-muted-foreground">No action needed</span>;
-        }
+        const pendingCount = pendingByDelegation.get(getDelegationKey(row)) || 0;
+        const showMenu = canDecide || pendingCount > 0;
 
         return (
           <div
-            className="flex h-8 w-full items-center overflow-hidden rounded-md border border-border/80 bg-background"
+            className="flex items-center justify-end gap-1.5"
             onClick={(event) => event.stopPropagation()}
           >
-            <button
-              type="button"
-              onClick={() => handleApprove(row)}
-              className="inline-flex h-full flex-1 items-center justify-center gap-1 whitespace-nowrap bg-status-success px-1.5 text-[11px] font-semibold text-white transition-opacity hover:opacity-90"
-            >
-              <CheckCircle2 className="h-3 w-3" />
-              Approve
-            </button>
-            <button
-              type="button"
-              onClick={() => openRequestUpdateDialog(row)}
-              className="inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 px-1.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              Changes
-            </button>
-            <button
-              type="button"
-              onClick={() => openRejectDialog(row)}
-              className="inline-flex h-full flex-1 items-center justify-center whitespace-nowrap border-l border-border/80 px-1.5 text-[11px] font-medium text-status-error transition-colors hover:bg-status-error-bg"
-            >
-              Reject
-            </button>
+            {pendingCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => openReviewDialog(row)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-status-warning px-2.5 text-xs font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Review
+                <span className="rounded bg-white/20 px-1 py-px text-[10px] tabular-nums leading-none">
+                  {pendingCount}
+                </span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => openViewMembersDialog(row)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border/70 bg-background px-2.5 text-xs font-medium text-foreground/80 shadow-sm transition-colors hover:bg-muted"
+              >
+                Details
+              </button>
+            )}
+
+            {showMenu && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+                    aria-label="More actions"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {pendingCount > 0 && (
+                    <DropdownMenuItem onClick={() => openViewMembersDialog(row)}>
+                      <Eye className="mr-2 h-4 w-4" />
+                      View details
+                    </DropdownMenuItem>
+                  )}
+                  {canDecide && (
+                    <>
+                      {pendingCount > 0 && <DropdownMenuSeparator />}
+                      <DropdownMenuItem onClick={() => handleApprove(row)}>
+                        <CheckCircle2 className="mr-2 h-4 w-4 text-status-success" />
+                        Approve delegation
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openRequestUpdateDialog(row)}>
+                        <FileText className="mr-2 h-4 w-4" />
+                        Request changes
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="text-status-error focus:text-status-error"
+                        onClick={() => openRejectDialog(row)}
+                      >
+                        <XCircle className="mr-2 h-4 w-4" />
+                        Reject
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         );
       },
@@ -699,6 +844,20 @@ const DelegationsPage: React.FC = () => {
               <p className="text-sm leading-relaxed text-muted-foreground">
                 Review and approve team-based registrations from delegation managers.
               </p>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary ring-1 ring-inset ring-primary/15">
+                  <Flag className="h-3.5 w-3.5" />
+                  <span className="tabular-nums">{delegations.length}</span>
+                  delegations
+                </span>
+                {pendingMembers.length > 0 && (
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-status-warning-bg px-2.5 py-1 text-xs font-semibold text-status-warning ring-1 ring-inset ring-status-warning/20">
+                    <Users className="h-3.5 w-3.5" />
+                    <span className="tabular-nums">{pendingMembers.length}</span>
+                    pending members
+                  </span>
+                )}
+              </div>
             </div>
 
             <Button variant="outline" size="sm" className="h-9 shrink-0 gap-2 bg-card shadow-sm">
@@ -787,7 +946,7 @@ const DelegationsPage: React.FC = () => {
                   </span>
                 </h2>
                 <p className="truncate text-xs text-muted-foreground">
-                  Each row is one country's delegation for an event
+                  Use Review to approve or reject pending members, Details to see the full roster
                 </p>
               </div>
             </div>
@@ -841,105 +1000,268 @@ const DelegationsPage: React.FC = () => {
         </section>
       )}
 
-      {/* Pending Members (per-member review) */}
-      <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 bg-muted/20 px-4 py-3.5 sm:px-5">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-status-warning/20 to-status-warning/5 text-status-warning ring-1 ring-inset ring-status-warning/15">
-              <Users className="h-4 w-4" />
-            </span>
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold tracking-tight text-foreground">
-                Pending members
-                {pendingMembers.length > 0 && (
-                  <span className="ml-1.5 text-sm font-normal tabular-nums text-muted-foreground">
-                    ({pendingMembers.length})
-                  </span>
-                )}
-              </h2>
-              <p className="truncate text-xs text-muted-foreground">
-                Individual members sent for review, awaiting approval
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* Review Members Dialog — pending, per-member approve/reject for one delegation */}
+      <Dialog
+        open={reviewDialogOpen}
+        onOpenChange={(open) => {
+          setReviewDialogOpen(open);
+          if (!open) setFocusedDelegationId(null);
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Pending · {focusedDelegation?.country}
+              {scopedPendingMembers.length > 0 && (
+                <span className="ml-1.5 text-sm font-normal tabular-nums text-muted-foreground">
+                  ({scopedPendingMembers.length})
+                </span>
+              )}
+            </DialogTitle>
+            <DialogDescription>
+              {focusedDelegation?.eventName} — members awaiting your decision
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="p-4 sm:p-5">
-          {pendingMembersLoading ? (
-            <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-              <Loader2 className="h-5 w-5 animate-spin text-primary" />
-              Loading members…
-            </div>
-          ) : pendingMembers.length === 0 ? (
-            <div className="flex flex-col items-center gap-2 py-10 text-center">
-              <CheckCircle2 className="h-6 w-6 text-status-success/60" />
-              <p className="text-sm text-muted-foreground">Nothing waiting — all members are reviewed.</p>
-            </div>
-          ) : (
-            <div className="space-y-2.5">
-              {pendingMembers.map((member) => {
-                const isActing = memberActionId === member.id;
+          <div className="py-2">
+            {pendingMembersLoading ? (
+              <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                Loading members…
+              </div>
+            ) : scopedPendingMembers.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-10 text-center">
+                <CheckCircle2 className="h-6 w-6 text-status-success/60" />
+                <p className="text-sm font-medium text-foreground">No pending members</p>
+                <p className="text-xs text-muted-foreground">
+                  Everyone from {focusedDelegation?.country} is already reviewed.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {scopedPendingMembers.map((member) => {
+                  const isActing = memberActionId === member.id;
 
-                return (
-                  <div
-                    key={member.id}
-                    className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 transition-colors hover:border-primary/25 hover:bg-primary/[0.02] sm:flex-row sm:items-center sm:justify-between sm:p-3.5"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Avatar className="h-9 w-9 shrink-0 ring-1 ring-border">
-                        <AvatarFallback className="bg-gradient-to-br from-accent/20 to-accent/5 text-[11px] font-bold text-accent">
-                          {(member.participant?.firstName || '').charAt(0)}
-                          {(member.participant?.lastName || '').charAt(0)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-foreground">
-                          {member.participant?.firstName} {member.participant?.lastName}
-                        </p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {member.delegation?.country || 'Unknown'} · {member.team?.name || 'Unknown Team'}
-                          {member.eventName ? ` · ${member.eventName}` : ''}
-                        </p>
+                  return (
+                    <div
+                      key={member.id}
+                      className="group flex flex-col gap-3 rounded-xl border border-border/70 bg-gradient-to-br from-card to-muted/20 p-3.5 shadow-sm transition-all hover:border-primary/25 hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar className="h-10 w-10 shrink-0 ring-2 ring-background shadow-sm">
+                          <AvatarFallback className="bg-gradient-to-br from-accent/25 to-accent/5 text-[11px] font-bold uppercase text-accent">
+                            {(member.participant?.firstName || '').charAt(0)}
+                            {(member.participant?.lastName || '').charAt(0)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-foreground">
+                            {member.participant?.firstName} {member.participant?.lastName}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {member.team?.name || 'Unknown Team'}
+                            {member.eventName ? ` · ${member.eventName}` : ''}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 flex-wrap items-center gap-2">
+                        {member.role && (
+                          <span className="whitespace-nowrap rounded-lg border border-border/70 bg-muted/50 px-2.5 py-1 text-[11px] font-medium text-foreground/70">
+                            {member.role}
+                          </span>
+                        )}
+                        <Button
+                          size="sm"
+                          className="h-8 gap-1.5 bg-foreground text-xs text-background shadow-sm hover:bg-foreground/90"
+                          onClick={() => setDetailMember(member)}
+                          disabled={isActing}
+                        >
+                          {isActing ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          )}
+                          Review
+                        </Button>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-                    <div className="flex shrink-0 items-center gap-2">
-                      {member.role && (
-                        <span className="hidden whitespace-nowrap rounded-md border border-border/70 bg-muted/40 px-2 py-1 text-xs font-medium text-foreground/70 sm:inline-block">
-                          {member.role}
-                        </span>
-                      )}
-                      <Button
-                        size="sm"
-                        className="h-8 gap-1.5 bg-status-success text-xs text-white shadow-sm hover:bg-status-success/90"
-                        onClick={() => handleApproveMember(member)}
-                        disabled={isActing}
-                      >
-                        {isActing ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                        )}
-                        Approve
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 gap-1.5 border-status-error/30 text-xs text-status-error hover:bg-status-error-bg hover:text-status-error"
-                        onClick={() => openMemberRejectDialog(member)}
-                        disabled={isActing}
-                      >
-                        <XCircle className="h-3.5 w-3.5" />
-                        Reject
-                      </Button>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReviewDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Member Detail Review Dialog — opened from a row in the Review queue */}
+      <Dialog open={!!detailMember} onOpenChange={(open) => !open && setDetailMember(null)}>
+        <DialogContent className="max-w-2xl">
+          {detailMember && (
+            <>
+              <DialogHeader>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-11 w-11 shrink-0 ring-2 ring-background shadow-sm">
+                      <AvatarFallback className="bg-gradient-to-br from-accent/25 to-accent/5 text-xs font-bold uppercase text-accent">
+                        {(detailMember.participant?.firstName || '').charAt(0)}
+                        {(detailMember.participant?.lastName || '').charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0 text-start">
+                      <DialogTitle className="truncate text-base">
+                        {detailMember.participant?.firstName} {detailMember.participant?.lastName}
+                      </DialogTitle>
+                      <DialogDescription className="truncate">{detailMember.participant?.email}</DialogDescription>
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                    Waiting for your decision
+                    <StatusBadge status="Submitted" size="sm" />
+                  </div>
+                </div>
+              </DialogHeader>
+
+              <div className="grid gap-4 py-2 sm:grid-cols-2">
+                <div className="space-y-0.5 rounded-xl border border-border/70 bg-muted/20 p-3.5">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Participant details
+                  </p>
+                  {[
+                    ['Phone', detailMember.participant?.phone],
+                    ['Nationality', detailMember.participant?.nationality],
+                    ['Passport', detailMember.participant?.passportNumber],
+                    ['Role', detailMember.role],
+                    ['Organization', detailMember.participant?.organization],
+                    ['Job title', detailMember.participant?.jobTitle],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between gap-3 py-1.5">
+                      <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</span>
+                      <span className="truncate text-end text-sm font-medium text-foreground">{value || '—'}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="space-y-0.5 rounded-xl border border-border/70 bg-muted/20 p-3.5">
+                  <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Registration
+                  </p>
+                  <div className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Team</span>
+                    <span className="truncate text-end text-sm font-medium text-foreground">{detailMember.team?.name || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Submitted</span>
+                    <span className="truncate text-end text-sm font-medium text-foreground">
+                      {detailMember.submittedAt
+                        ? new Date(detailMember.submittedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Dietary notes</span>
+                    <span className="truncate text-end text-sm font-medium text-foreground">{detailMember.dietaryRequirements || '—'}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Documents</span>
+                    <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 px-2 py-0.5 text-xs font-medium text-foreground">
+                      <FileText className="h-3.5 w-3.5" />
+                      {detailMember.documentCount ? detailMember.documentCount : 'None'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 border-t border-border/70 pt-4">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  What would you like to do?
+                </p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Button
+                    size="sm"
+                    disabled={memberActionId === detailMember.id}
+                    className="h-9 justify-center gap-1.5 bg-status-success text-xs hover:bg-status-success/90"
+                    onClick={() => handleApproveMember(detailMember)}
+                  >
+                    {memberActionId === detailMember.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                    )}
+                    Approve
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={memberActionId === detailMember.id}
+                    className="h-9 justify-center gap-1.5 border-status-error/30 text-xs text-status-error hover:bg-status-error-bg hover:text-status-error"
+                    onClick={() => openMemberRejectDialog(detailMember)}
+                  >
+                    <XCircle className="h-3.5 w-3.5" />
+                    Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={memberActionId === detailMember.id}
+                    className="h-9 justify-center gap-1.5 text-xs"
+                    onClick={() => openAskChangesDialog(detailMember)}
+                  >
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    Ask for changes
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={memberActionId === detailMember.id}
+                    className="h-9 justify-center gap-1.5 text-xs"
+                    onClick={() => handleDecideLater(detailMember)}
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    Decide later
+                  </Button>
+                </div>
+              </div>
+            </>
           )}
-        </div>
-      </section>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ask for Changes Dialog */}
+      <Dialog open={askChangesDialogOpen} onOpenChange={(open) => !open && !isAskingChanges && setAskChangesDialogOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Ask for changes</DialogTitle>
+            <DialogDescription>
+              Describe what {selectedMember?.participant?.firstName || 'this member'} needs to change. They&apos;ll be able to edit and resubmit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-4">
+            <Label htmlFor="ask-changes-reason">Message</Label>
+            <Textarea
+              id="ask-changes-reason"
+              placeholder="Describe what needs to change..."
+              value={askChangesReason}
+              onChange={(e) => setAskChangesReason(e.target.value)}
+              rows={4}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAskChangesDialogOpen(false)} disabled={isAskingChanges}>
+              Cancel
+            </Button>
+            <Button onClick={handleAskForChanges} disabled={isAskingChanges}>
+              {isAskingChanges ? 'Sending...' : 'Send Request'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Reject Member Dialog */}
       <Dialog open={memberRejectDialogOpen} onOpenChange={setMemberRejectDialogOpen}>
@@ -1071,106 +1393,202 @@ const DelegationsPage: React.FC = () => {
 
       {/* View Members Dialog */}
       <Dialog open={viewMembersDialogOpen} onOpenChange={setViewMembersDialogOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{selectedDelegation?.country} Delegation - Members</DialogTitle>
-            <DialogDescription>
-              {selectedDelegation?.totalMembers} team members for {selectedDelegation?.eventName}
-            </DialogDescription>
+        <DialogContent className="flex w-[calc(100vw-1.5rem)] max-w-3xl flex-col gap-0 overflow-hidden rounded-2xl border bg-background p-0 shadow-2xl max-h-[90vh]">
+          <DialogHeader className="shrink-0 space-y-0 border-b bg-gradient-to-br from-primary/[0.07] via-card to-card px-6 py-5 pe-12 text-start">
+            <div className="flex items-start gap-3.5">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 text-primary ring-1 ring-inset ring-primary/15 shadow-sm">
+                <Users className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-primary/70">
+                  Delegation roster
+                </p>
+                <DialogTitle className="text-xl font-semibold tracking-tight">
+                  {selectedDelegation?.country || 'Delegation'}
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-relaxed">
+                  <span className="tabular-nums font-medium text-foreground/80">
+                    {selectedDelegation?.totalMembers ?? 0}
+                  </span>
+                  {' '}members · {selectedDelegation?.eventName || 'Event'}
+                </DialogDescription>
+              </div>
+            </div>
+
+            {!membersLoading && selectedDelegation?.members && selectedDelegation.members.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-1.5">
+                {Object.entries(
+                  (selectedDelegation.members as any[]).reduce((acc: Record<string, number>, member: any) => {
+                    const category = member.teamRole || member.role || 'Unassigned';
+                    acc[category] = (acc[category] || 0) + 1;
+                    return acc;
+                  }, {}),
+                ).map(([category, count]) => (
+                  <span
+                    key={category}
+                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[11px] font-medium text-foreground/75 shadow-sm"
+                    title={category}
+                  >
+                    <span className="tabular-nums font-semibold text-foreground">{count}</span>
+                    <span className="truncate">{category}</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </DialogHeader>
-          <div className="space-y-4 py-4">
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
             {membersLoading ? (
-              <div className="flex justify-center py-12">
+              <div className="flex flex-col items-center justify-center gap-3 py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Loading roster…</p>
               </div>
             ) : selectedDelegation?.teams && selectedDelegation.teams.length > 0 ? (
-              selectedDelegation.teams.map((team: any) => {
-                const sportLabel =
-                  typeof team.sportCategory === 'string'
-                    ? team.sportCategory
-                    : team.sportCategory?.subCategory || team.sportCategory?.name || team.sportName || '';
-                const teamMembers = (selectedDelegation.members || []).filter((m: any) =>
-                  (m.teamId === team.id || m.team_id === team.id || m.teamId === team._id || m.team_id === team._id ||
-                    m.team?.id === team.id || m.team?.id === team._id),
-                );
-                return (
-                  <Collapsible key={team.id || team._id} defaultOpen>
-                    <CollapsibleTrigger className="flex items-center justify-between w-full p-3 bg-muted/50 rounded-lg hover:bg-muted transition-colors">
-                      <div className="flex items-center gap-3">
-                        <span className="font-semibold">{team.name}</span>
-                        {sportLabel && <Badge variant="secondary">{sportLabel}</Badge>}
-                        <Badge variant="outline">{teamMembers.length} members</Badge>
-                      </div>
-                      <ChevronDown className="h-4 w-4" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-3">
-                      <div className="grid gap-2">
-                        {teamMembers.map((member: any) => {
-                          const p = member.participant || member;
-                          return (
-                            <div key={member.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors">
-                              <div className="flex items-center gap-3">
-                                <Avatar className="h-9 w-9">
-                                  <AvatarFallback className="bg-accent/10 text-accent text-xs">
-                                    {(p.firstName || '').charAt(0)}{(p.lastName || '').charAt(0)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div>
-                                  <p className="font-medium text-sm">{p.firstName} {p.lastName}</p>
-                                  <p className="text-xs text-muted-foreground">{p.email}</p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Badge className={getRoleBadgeColor(member.role)}>{member.role || 'No category'}</Badge>
-                                <Badge variant="outline" className="text-xs">{p.nationality || 'Unknown'}</Badge>
-                                <StatusBadge status={member.status || 'Draft'} />
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {teamMembers.length === 0 && (
-                          <p className="text-sm text-muted-foreground text-center py-3">No members in this team yet.</p>
-                        )}
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                );
-              })
-            ) : (
-              <div className="grid gap-2">
-                <p className="text-sm text-muted-foreground mb-2">Detailed team structure not found. Showing individual members:</p>
-                {(selectedDelegation?.members || []).length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-6">No members found for this delegation.</p>
-                ) : (
-                  (selectedDelegation?.members || []).map((member: any, idx: number) => {
-                    const p = member.participant || member;
-                    return (
-                      <div key={member.id || idx} className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/30 transition-colors">
-                        <div className="flex items-center gap-3">
-                          <Avatar className="h-9 w-9">
-                            <AvatarFallback className="bg-accent/10 text-accent text-xs">
-                              {(p.firstName || '').charAt(0)}{(p.lastName || '').charAt(0)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="font-medium text-sm">{p.firstName} {p.lastName}</p>
-                            <p className="text-xs text-muted-foreground">{p.email}</p>
+              <div className="space-y-4">
+                {selectedDelegation.teams.map((team: any) => {
+                  const sportLabel =
+                    typeof team.sportCategory === 'string'
+                      ? team.sportCategory
+                      : team.sportCategory?.subCategory || team.sportCategory?.name || team.sportName || '';
+                  const teamMembers = (selectedDelegation.members || []).filter((m: any) =>
+                    m.teamId === team.id ||
+                    m.team_id === team.id ||
+                    m.teamId === team._id ||
+                    m.team_id === team._id ||
+                    m.team?.id === team.id ||
+                    m.team?.id === team._id,
+                  );
+
+                  return (
+                    <section
+                      key={team.id || team._id}
+                      className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm"
+                    >
+                      <div className="flex items-center justify-between gap-3 border-b border-border/60 bg-muted/25 px-4 py-3">
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                            <Flag className="h-3.5 w-3.5" />
+                          </span>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {team.name || 'Team'}
+                            </p>
+                            {sportLabel && (
+                              <p className="truncate text-[11px] text-muted-foreground">{sportLabel}</p>
+                            )}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge className={getRoleBadgeColor(member.role)}>{member.role || 'No category'}</Badge>
-                          <Badge variant="outline" className="text-xs">{p.nationality || 'Unknown'}</Badge>
-                          <StatusBadge status={member.status || 'Draft'} />
+                        <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-[11px] font-semibold tabular-nums text-muted-foreground">
+                          {teamMembers.length} {teamMembers.length === 1 ? 'member' : 'members'}
+                        </span>
+                      </div>
+
+                      {teamMembers.length === 0 ? (
+                        <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+                          No members in this team yet.
+                        </p>
+                      ) : (
+                        <div className="divide-y divide-border/50">
+                          <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_7rem_7.5rem] gap-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 sm:grid">
+                            <span>Member</span>
+                            <span>Role</span>
+                            <span>Country</span>
+                            <span className="text-end">Status</span>
+                          </div>
+                          {teamMembers.map((member: any) => {
+                            const p = member.participant || member;
+                            const role = member.teamRole || member.role || 'Unassigned';
+                            const nationality = p.nationality || '—';
+                            return (
+                              <div
+                                key={member.id}
+                                className="grid grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-muted/20 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_7rem_7.5rem] sm:items-center sm:gap-3"
+                              >
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <Avatar className="h-9 w-9 shrink-0 ring-1 ring-border/60">
+                                    <AvatarFallback className="bg-accent/10 text-[11px] font-bold uppercase text-accent">
+                                      {(p.firstName || '').charAt(0)}
+                                      {(p.lastName || '').charAt(0)}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-semibold text-foreground">
+                                      {p.firstName} {p.lastName}
+                                    </p>
+                                    <p className="truncate text-xs text-muted-foreground">{p.email || '—'}</p>
+                                  </div>
+                                </div>
+                                <p className="truncate text-sm text-foreground/80" title={role}>
+                                  {role}
+                                </p>
+                                <p className="truncate text-sm text-muted-foreground">{nationality}</p>
+                                <div className="flex sm:justify-end">
+                                  <StatusBadge status={member.status || 'Draft'} size="sm" />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            ) : (selectedDelegation?.members || []).length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-border py-14 text-center">
+                <Users className="h-8 w-8 text-muted-foreground/40" />
+                <p className="text-sm font-medium text-foreground">No members found</p>
+                <p className="text-xs text-muted-foreground">This delegation has no roster yet.</p>
+              </div>
+            ) : (
+              <section className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
+                <div className="divide-y divide-border/50">
+                  <div className="hidden grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_7rem_7.5rem] gap-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 sm:grid">
+                    <span>Member</span>
+                    <span>Role</span>
+                    <span>Country</span>
+                    <span className="text-end">Status</span>
+                  </div>
+                  {(selectedDelegation?.members || []).map((member: any, idx: number) => {
+                    const p = member.participant || member;
+                    const role = member.teamRole || member.role || 'Unassigned';
+                    const nationality = p.nationality || '—';
+                    return (
+                      <div
+                        key={member.id || idx}
+                        className="grid grid-cols-1 gap-2 px-4 py-3 transition-colors hover:bg-muted/20 sm:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_7rem_7.5rem] sm:items-center sm:gap-3"
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar className="h-9 w-9 shrink-0 ring-1 ring-border/60">
+                            <AvatarFallback className="bg-accent/10 text-[11px] font-bold uppercase text-accent">
+                              {(p.firstName || '').charAt(0)}
+                              {(p.lastName || '').charAt(0)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-foreground">
+                              {p.firstName} {p.lastName}
+                            </p>
+                            <p className="truncate text-xs text-muted-foreground">{p.email || '—'}</p>
+                          </div>
+                        </div>
+                        <p className="truncate text-sm text-foreground/80" title={role}>
+                          {role}
+                        </p>
+                        <p className="truncate text-sm text-muted-foreground">{nationality}</p>
+                        <div className="flex sm:justify-end">
+                          <StatusBadge status={member.status || 'Draft'} size="sm" />
                         </div>
                       </div>
                     );
-                  })
-                )}
-              </div>
+                  })}
+                </div>
+              </section>
             )}
           </div>
-          <DialogFooter>
-            <Button onClick={() => setViewMembersDialogOpen(false)}>
+
+          <DialogFooter className="shrink-0 gap-2 border-t bg-muted/20 px-6 py-3.5 sm:justify-end">
+            <Button variant="outline" className="h-9" onClick={() => setViewMembersDialogOpen(false)}>
               Close
             </Button>
           </DialogFooter>
